@@ -40,6 +40,8 @@ public final class BookTextActivity extends Activity {
     private String folderSettingsScope="";
     private String fullText="",bookKey,fileName,historyId;
     private LargeTextBook largeBook;
+    /** Restores original-file offsets for saved progress and bookmarks. */
+    private TxtBlankLineAutoCleaner.OffsetMap blankLineMap;
     private long largeAnchor,largeWindowStart,largeWindowEnd,largePageStart;
     private String largePageText="";
     private List<Integer> pages;
@@ -117,13 +119,16 @@ public final class BookTextActivity extends Activity {
         header.addView(bookmark,Ui.lp(this,48,-1));
         bookmark.setOnClickListener(v->{
             if(largeBook!=null){
+                long sourceLength=originalLength();
                 int fraction=(int)Math.min(1000000L,
-                        largeAnchor*1000000L/largeBook.length());
+                        Math.round(1000000d*originalOffset(largeAnchor)/sourceLength));
                 ReaderBookmarkDialog.show(this,historyId,fraction,false,
                         1000000,marker->jumpToLargeOffset(
-                                largeBook.length()*marker/1000000L));
+                                displayOffset(sourceLength*marker/1000000L)));
             }else if(!fullText.isEmpty())ReaderBookmarkDialog.show(this,
-                    historyId,anchor,false,fullText.length(),this::jumpToOffset);
+                    historyId,(int)originalOffset(anchor),false,
+                    (int)originalLength(),
+                    position->jumpToOffset((int)displayOffset(position)));
         });
         TextView customize=Ui.text(this,"Aa",19,foregrounds[themeIndex],true);
         customize.setContentDescription("폰트, 글씨 크기, 줄간격, 배경 설정");
@@ -222,7 +227,9 @@ public final class BookTextActivity extends Activity {
             try(InputStream input=ReaderSource.open(this,getIntent())){
                 // Convert and index on disk in a stream: no 12MB byte cap,
                 // and very large books do not occupy a giant String.
-                LargeTextBook staged=LargeTextBook.stage(input,getCacheDir());
+                LargeTextBook raw=LargeTextBook.stage(input,getCacheDir());
+                final LargeTextBook staged=raw.autoCleanBlankLines();
+                final TxtBlankLineAutoCleaner.OffsetMap mapping=staged.offsets();
                 final boolean small=staged.length()<=5000000L;
                 final String loaded=small?
                         staged.slice(0,(int)staged.length()):null;
@@ -232,6 +239,9 @@ public final class BookTextActivity extends Activity {
                         if(!small)try{staged.close();}catch(Exception ignored){}
                         return;
                     }
+                    blankLineMap=mapping;
+                    anchor=(int)displayOffset(anchor);
+                    largeAnchor=displayOffset(largeAnchor);
                     if(small)fullText=loaded;
                     else largeBook=staged;
                     if(displayMode==1)useReadingMode();
@@ -268,6 +278,15 @@ public final class BookTextActivity extends Activity {
     }
     private long bookLength(){
         return largeBook!=null?largeBook.length():fullText.length();
+    }
+    private long originalLength(){
+        return blankLineMap==null?bookLength():blankLineMap.rawLength();
+    }
+    private long originalOffset(long display){
+        return blankLineMap==null?display:blankLineMap.toOriginal(display);
+    }
+    private long displayOffset(long original){
+        return blankLineMap==null?original:blankLineMap.toDisplay(original);
     }
     private boolean isFoldWide(){
         return getResources().getConfiguration().screenWidthDp>=600;
@@ -408,8 +427,11 @@ public final class BookTextActivity extends Activity {
         }
         anchor=scrollWindowStart+layout.getLineStart(topLine);
         int end=scrollWindowStart+layout.getLineEnd(bottomLine);
-        history.edit().putInt("offset_"+bookKey,anchor).apply();
-        ReaderHistory.save(this,historyId,anchor,end,fullText.length());
+        history.edit().putInt("offset_"+bookKey,
+                (int)originalOffset(anchor)).apply();
+        ReaderHistory.save(this,historyId,
+                (int)originalOffset(anchor),(int)originalOffset(end),
+                (int)originalLength());
         int percent=Math.min(100,Math.round(100f*end/fullText.length()));
         pageCount.setText("스크롤 읽기  ·  "+percent+"%");
         if(!seekDragging)progress.setProgress(
@@ -430,10 +452,10 @@ public final class BookTextActivity extends Activity {
         if(largeBook==null)return;
         largeAnchor=Math.max(0,Math.min(largeBook.length(),position));
         getSharedPreferences("large_txt_read_positions",MODE_PRIVATE)
-                .edit().putLong(historyId,largeAnchor).apply();
-        long total=largeBook.length();
+                .edit().putLong(historyId,originalOffset(largeAnchor)).apply();
+        long total=originalLength();
         int scaled=(int)Math.min(1000000L,
-                Math.min(total,visibleEnd)*1000000.0/total);
+                Math.min(total,originalOffset(visibleEnd))*1000000.0/total);
         ReaderHistory.save(this,historyId,scaled,scaled,1000000);
         int percent=(int)Math.min(100,
                 Math.min(total,visibleEnd)*100.0/total);
@@ -686,9 +708,11 @@ public final class BookTextActivity extends Activity {
         }else{
             anchor=(int)(largePageStart+start);
             int shownEnd=(int)(largePageStart+last);
-            history.edit().putInt("offset_"+bookKey,anchor).apply();
-            ReaderHistory.save(this,historyId,anchor,shownEnd,
-                    fullText.length());
+            history.edit().putInt("offset_"+bookKey,
+                    (int)originalOffset(anchor)).apply();
+            ReaderHistory.save(this,historyId,
+                    (int)originalOffset(anchor),(int)originalOffset(shownEnd),
+                    (int)originalLength());
             updateWindowPageLabel(anchor,shownEnd);
         }
         loadMessage.setVisibility(View.GONE);
@@ -715,8 +739,11 @@ public final class BookTextActivity extends Activity {
             }else secondPage.setText("");
         }
         anchor=start;
-        history.edit().putInt("offset_"+bookKey,start).apply();
-        ReaderHistory.save(this,historyId,start,lastDisplayed,fullText.length());
+        history.edit().putInt("offset_"+bookKey,
+                (int)originalOffset(start)).apply();
+        ReaderHistory.save(this,historyId,
+                (int)originalOffset(start),(int)originalOffset(lastDisplayed),
+                (int)originalLength());
         textPage.setText(fullText.substring(start,Math.max(start,end)));
         schedulePageFitVerification();
         int displayedLast=Math.min(pages.size(),pageIndex+(twoColumn()?2:1));

@@ -15,13 +15,59 @@ final class LargeTextBook implements Closeable {
     private final File file;
     private final RandomAccessFile input;
     private final long chars;
+    private final TxtBlankLineAutoCleaner.OffsetMap offsetMap;
 
     private LargeTextBook(File file,long chars)throws IOException {
+        this(file,chars,null);
+    }
+    private LargeTextBook(File file,long chars,
+                          TxtBlankLineAutoCleaner.OffsetMap offsetMap)throws IOException {
         this.file=file;
         this.chars=chars;
+        this.offsetMap=offsetMap;
         this.input=new RandomAccessFile(file,"r");
     }
     long length(){return chars;}
+    TxtBlankLineAutoCleaner.OffsetMap offsets(){return offsetMap;}
+
+    /**
+     * Detect from an in-memory sample, then optionally rewrite only the
+     * temporary UTF16 cache. The original TXT/NAS file is never modified.
+     */
+    LargeTextBook autoCleanBlankLines()throws Exception {
+        int probe=(int)Math.min(chars,160000L);
+        TxtBlankLineAutoCleaner.Pattern pattern=
+                TxtBlankLineAutoCleaner.detect(slice(0,probe));
+        if(pattern==null)return this;
+        File output=new File(file.getParentFile(),
+                "txt_clean_"+UUID.randomUUID()+".utf16");
+        TxtBlankLineAutoCleaner.WriterState repair=
+                new TxtBlankLineAutoCleaner.WriterState(pattern);
+        try {
+            try(Writer writer=new BufferedWriter(new OutputStreamWriter(
+                    new FileOutputStream(output),StandardCharsets.UTF_16BE),65536)){
+                long at=0;
+                while(at<chars){
+                    if(Thread.currentThread().isInterrupted())
+                        throw new InterruptedIOException("TXT 자동 정리가 중단됐습니다.");
+                    String block=slice(at,(int)Math.min(16384,chars-at));
+                    repair.append(block,writer);
+                    at+=block.length();
+                }
+                repair.finish(writer);
+            }
+            TxtBlankLineAutoCleaner.OffsetMap mapping=repair.offsets();
+            if(!mapping.changed()){output.delete();return this;}
+            LargeTextBook cleaned=new LargeTextBook(
+                    output,repair.written(),mapping);
+            // Both temporary files belong to this reader, never to the source.
+            close();
+            return cleaned;
+        }catch(Exception failure){
+            output.delete();
+            throw failure;
+        }
+    }
 
     static LargeTextBook stage(InputStream source,File cacheDir)throws Exception{
         if(!cacheDir.isDirectory()&&!cacheDir.mkdirs())

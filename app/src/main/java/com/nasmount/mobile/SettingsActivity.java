@@ -231,7 +231,7 @@ public final class SettingsActivity extends Activity {
                                     recreate();
                                 }).setNegativeButton("취소", null).show());
         note("시스템 설정에 맞춤을 선택하면 Android의 라이트/다크 설정을 따릅니다.");
-        action("현재 앱","FileHub AIO v0.1.90",
+        action("현재 앱","FileHub AIO v0.1.91",
                 ()->new AlertDialog.Builder(this).setTitle("FileHub AIO")
                         .setMessage("개별 폴더 설정과 기존 원격 저장소 연결 정보는 유지됩니다.")
                         .setPositiveButton("확인",null).show());
@@ -512,6 +512,8 @@ public final class SettingsActivity extends Activity {
         section("TXT 텍스트뷰어 · 기본값",
                 "TXT 소설의 기본 글꼴·줄간격·여백·독서 모드입니다.");
         appendReaderPreview(category);
+        note("TXT 빈 줄 자동 정리: 기본 적용 · 규칙적으로 늘어난 줄바꿈만 감지해 "+
+                "독서 화면에서 복원합니다. 원본 파일은 수정하지 않습니다.");
         readerSelect("TXT 기본 읽기 방식",
                 new String[]{"좌우 페이지 넘김","세로 연속 스크롤"},
                 ReaderDefaultSettings.integer(this,category,"view_mode",0),
@@ -651,7 +653,9 @@ public final class SettingsActivity extends Activity {
                                 runOnUiThread(() -> progress.setText(
                                         index + "번째 파일 확인 중: " + filename)));
                 runOnUiThread(() -> {
-                    if (isFinishing() || isDestroyed()) return;
+                    if (isFinishing() || isDestroyed()) {
+                        return;
+                    }
                     progressDialog.dismiss();
                     render();
                     new AlertDialog.Builder(this).setTitle("코덱 가져오기 결과")
@@ -660,7 +664,9 @@ public final class SettingsActivity extends Activity {
                 });
             } catch (Exception error) {
                 runOnUiThread(() -> {
-                    if (isFinishing() || isDestroyed()) return;
+                    if (isFinishing() || isDestroyed()) {
+                        return;
+                    }
                     progressDialog.dismiss();
                     new AlertDialog.Builder(this).setTitle("코덱 가져오기 실패")
                             .setMessage(error.getMessage())
