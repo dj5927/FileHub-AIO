@@ -12,7 +12,7 @@ final class EpubChromeReflow {
     static int horizontalSnap(int progressOutOf9999,int extent,int viewport){
         int fraction=Math.max(0,Math.min(9999,progressOutOf9999));
         int raw=Math.round(Math.max(0,extent)*fraction/9999f);
-        return EpubPaginationPolicy.restoreTarget(raw,viewport,extent);
+        return EpubPaginationPolicy.restoreNearest(raw,viewport,extent);
     }
 
     static int verticalRestore(int progressOutOf9999,int extent){

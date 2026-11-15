@@ -59,6 +59,7 @@ public final class EpubReaderActivity extends Activity {
     private File stagedFile;
     private boolean removeStaged;
     private int chapterIndex,restoreFraction,mode,fontSize,theme,lineSpacing,sideMargin;
+    private boolean restoreChapterEnd;
     private int pageEffect;
     private int pendingTurnDirection;
     private boolean slowPageTurn,turnBusy,pendingChapterTurn;
@@ -679,7 +680,7 @@ public final class EpubReaderActivity extends Activity {
                 "color:"+inkHex+" !important;}body{box-sizing:border-box;"+
                 "font-size:"+fontSize+"px !important;"+
                 "line-height:"+(lineSpacing/100f)+" !important;"+
-                "padding:10px "+sideMargin+"px !important;"+
+                "padding:10px "+(mode==0?0:sideMargin)+"px !important;"+
                 "overflow-wrap:break-word;}"+
                 "p,li,div{line-height:inherit;}"+
                 "img,svg{max-width:100%;height:auto;}"+pageMode+"</style>";
@@ -694,7 +695,9 @@ public final class EpubReaderActivity extends Activity {
     private void openChapter(int number,int fraction){
         if(archive==null||number<0||number>=archive.chapters.size())return;
         ++chapterLayoutGeneration;
+        ++barReflowGeneration;
         chapterIndex=number;
+        restoreChapterEnd=fraction<0;
         restoreFraction=Math.max(0,Math.min(9999,fraction));
         loadingChapter=true;
         // No loading overlay or "body rendering" message is ever displayed,
@@ -751,12 +754,16 @@ public final class EpubReaderActivity extends Activity {
         float fraction=restoreFraction/10000f;
         if(mode==0){
             int max=web.maximumX();
-            web.scrollTo(EpubPaginationPolicy.restoreTarget(
-                    Math.round(max*fraction),web.getWidth(),max),0);
+            int target=restoreChapterEnd?
+                    EpubPaginationPolicy.lastPageStart(web.getWidth(),max):
+                    EpubPaginationPolicy.restoreNearest(
+                            Math.round(max*fraction),web.getWidth(),max);
+            web.scrollTo(target,0);
         }else{
             int max=web.maximumY();
-            web.scrollTo(0,Math.round(max*fraction));
+            web.scrollTo(0,restoreChapterEnd?max:Math.round(max*fraction));
         }
+        restoreChapterEnd=false;
         updateLabel();
     }
     private int currentPosition(){
@@ -804,9 +811,10 @@ public final class EpubReaderActivity extends Activity {
                 progressMap.percentAt(location);
         String chapterPage="";
         if(mode==0&&web.getWidth()>0){
-            int currentPage=1+Math.max(0,web.getScrollX())/web.getWidth();
-            int totalPages=1+(Math.max(0,web.maximumX())+
-                    web.getWidth()-1)/web.getWidth();
+            int currentPage=1+EpubPaginationPolicy.pageIndex(
+                    web.getScrollX(),web.getWidth());
+            int totalPages=EpubPaginationPolicy.pageCount(
+                    web.getWidth(),web.maximumX());
             chapterPage=" · "+Math.min(totalPages,currentPage)+"/"+
                     Math.max(1,totalPages)+"쪽";
         }
@@ -902,7 +910,7 @@ public final class EpubReaderActivity extends Activity {
                 updateEpubFinger(fingerLastX,fingerLastY);
             }
             if(fingerCrossChapter){
-                openChapter(fingerOldChapter+direction,direction<0?9999:0);
+                openChapter(fingerOldChapter+direction,direction<0?-1:0);
             }else{
                 web.scrollTo(fingerTargetScrollX,0);
                 if(fingerDirection<0)capturePreviousSheetForFinger();
@@ -1074,7 +1082,7 @@ public final class EpubReaderActivity extends Activity {
                 chapterIndex+direction<archive.chapters.size()){
             recordProgress();
             final int nextChapter=chapterIndex+direction;
-            final int nextLocation=direction<0?9999:0;
+            final int nextLocation=direction<0?-1:0;
             animatePageTurn(direction,
                     ()->openChapter(nextChapter,nextLocation),true);
         }else if(direction>0){
