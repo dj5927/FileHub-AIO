@@ -1492,13 +1492,6 @@ public class MainActivity extends Activity {
         tile(features,"소설책","book",0xFF6B99C2,"",
                 ()->showAssignedFolders(AssignedFolderCatalog.TEXT));
         Ui.gap(page,this,14);
-        if (tvDevice) {
-            heading("Android TV",15);
-            row(page,"휴대폰에서 TV로 로그인 · QR 연결",
-                    "같은 Wi-Fi에서 NAS·클라우드 계정 보내기",
-                    "remote",Ui.TEAL,this::startTvPairing,null);
-            Ui.gap(page,this,12);
-        }
         heading("원격 저장소", 15);
         LinearLayout remoteEntry = Ui.horizontal(this);
         remoteEntry.setPadding(dp(16), dp(12), dp(12), dp(12));
@@ -2143,22 +2136,16 @@ public class MainActivity extends Activity {
         col.setOnClickListener(v -> click.run());
     }
     private void menu() {
-        String[] entries = {"즐겨찾기 보기", "원격 저장소 연결", "저장소 접근 권한",
-                "앱 정보",tvDevice ? "TV QR 연결 시작" : "휴대폰에서 TV로 계정 보내기",
-                "업데이트 확인"};
-        new AlertDialog.Builder(this).setItems(entries, (d, i) -> {
-            if (i==0) showFavorites();
-            if (i==1) showRemoteList();
-            if (i==2) requestAllFiles();
-            if (i==3) new AlertDialog.Builder(this).setTitle("FileHub AIO")
-                    .setMessage("버전 0.1.83\n즐겨찾기 길게 눌러 순서 변경\n" +
-                            "내장 저장소 · SD · SMB · FTP · SFTP · WebDAV · TeraBox · MYBOX")
-                    .setPositiveButton("확인", null).show();
-            if (i==4) {
-                if (tvDevice) startTvPairing();
-                else showSendToTv("");
+        new AlertDialog.Builder(this).setItems(OverflowMenuItems.labels(), (d, i) -> {
+            switch (i) {
+                case OverflowMenuItems.FAVORITES: showFavorites(); break;
+                case OverflowMenuItems.REMOTES: showRemoteList(); break;
+                case OverflowMenuItems.STORAGE_PERMISSION: requestAllFiles(); break;
+                case OverflowMenuItems.UPDATE:
+                    if (otaUpdater != null) otaUpdater.manualCheck();
+                    break;
+                default: break;
             }
-            if(i==5 && otaUpdater!=null)otaUpdater.manualCheck();
         }).show();
     }
     private TvPairingUi pairingUi() {

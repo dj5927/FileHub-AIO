@@ -49,7 +49,8 @@ final class SettingsBackupUi {
                 Ui.dp(activity,16),Ui.dp(activity,10));
         scroll.addView(content);
         TextView help=Ui.text(activity,
-                "다른 기기로 설정을 옮기거나 백업 파일로 보관할 수 있어요.",
+                "TV에서 '가져오기'를 먼저 누르고, 휴대폰에서 '내보내기'를 누르면 " +
+                "같은 네트워크의 TV를 자동으로 찾습니다.",
                 13,Ui.MUTED,false);
         content.addView(help,Ui.lp(activity,-1,-2));
         Ui.gap(content,activity,15);
@@ -79,20 +80,6 @@ final class SettingsBackupUi {
         addTwoActions(device.details,
                 "내보내기",()->{dialog.dismiss();startLanExport();},
                 "가져오기",()->{dialog.dismiss();startLanImport();});
-        TextView qr=Ui.text(activity,"QR로 연결하기  ›",13,Ui.TEAL,false);
-        qr.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);
-        qr.setPadding(Ui.dp(activity,8),Ui.dp(activity,10),Ui.dp(activity,8),
-                Ui.dp(activity,7));
-        qr.setClickable(true);
-        qr.setFocusable(true);
-        qr.setContentDescription("기존 QR 방식으로 연결하기");
-        qr.setOnClickListener(v->{
-            dialog.dismiss();
-            if(activity instanceof MainActivity)
-                ((MainActivity)activity).startPhoneToTvPairing();
-        });
-        device.details.addView(qr,Ui.lp(activity,-1,42));
-
         addTwoActions(file.details,
                 "파일로 저장",()->{dialog.dismiss();askExportPassword();},
                 "파일 불러오기",()->{dialog.dismiss();pickImportFile();});
