@@ -19,6 +19,7 @@ import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
+import android.widget.AdapterView;
 import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
@@ -230,7 +231,7 @@ public final class SettingsActivity extends Activity {
                                     recreate();
                                 }).setNegativeButton("취소", null).show());
         note("시스템 설정에 맞춤을 선택하면 Android의 라이트/다크 설정을 따릅니다.");
-        action("현재 앱","FileHub AIO v0.1.89",
+        action("현재 앱","FileHub AIO v0.1.90",
                 ()->new AlertDialog.Builder(this).setTitle("FileHub AIO")
                         .setMessage("개별 폴더 설정과 기존 원격 저장소 연결 정보는 유지됩니다.")
                         .setPositiveButton("확인",null).show());
@@ -341,6 +342,60 @@ public final class SettingsActivity extends Activity {
     private void defaultBoolean(String category,String key,boolean value){
         ReaderDefaultSettings.prefs(this,category).edit().putBoolean(key,value).apply();
     }
+    private void appendReaderPreview(String category){
+        ReaderSettingsPreview preview=new ReaderSettingsPreview(this,category);
+        LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(-1,-2);
+        params.topMargin=dp(10);
+        params.bottomMargin=dp(13);
+        content.addView(preview,params);
+    }
+    /** Reader-only picker: selecting an option previews it before Apply. */
+    private void readerSelect(String title,String[] choices,int current,
+                              String category,String key,
+                              java.util.function.IntConsumer changed){
+        int safe=Math.max(0,Math.min(choices.length-1,current));
+        action(title,choices[safe],()->{
+            LinearLayout pane=Ui.vertical(this);
+            pane.setPadding(dp(18),dp(10),dp(18),dp(12));
+            TextView instruction=label("값을 선택하면 아래 예시가 바로 바뀝니다.",12,MUTED);
+            pane.addView(instruction,new LinearLayout.LayoutParams(-1,dp(34)));
+            Spinner picker=new Spinner(this);
+            picker.setAdapter(new ArrayAdapter<>(this,
+                    android.R.layout.simple_spinner_dropdown_item,choices));
+            picker.setSelection(safe);
+            pane.addView(picker,new LinearLayout.LayoutParams(-1,dp(54)));
+            ReaderSettingsPreview preview=new ReaderSettingsPreview(this,category);
+            LinearLayout.LayoutParams pp=new LinearLayout.LayoutParams(-1,-2);
+            pp.topMargin=dp(13);
+            pane.addView(preview,pp);
+            picker.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
+                @Override public void onItemSelected(AdapterView<?> parent,View selected,
+                        int position,long id){
+                    boolean choiceIsTrueAtZero=
+                            "grayscale".equals(key)||"fit_width".equals(key)||
+                            "fold_two_pages".equals(key)||
+                            "fold_columns".equals(key);
+                    preview.change(key,choiceIsTrueAtZero?1-position:position);
+                }
+                @Override public void onNothingSelected(AdapterView<?> parent){}
+            });
+            ScrollView scroll=new ScrollView(this);
+            scroll.setFillViewport(false);
+            scroll.addView(pane);
+            new AlertDialog.Builder(this).setTitle(title)
+                    .setView(scroll).setNegativeButton("취소",null)
+                    .setPositiveButton("적용",(dialog,which)->{
+                        changed.accept(picker.getSelectedItemPosition());
+                        render();
+                    }).show();
+        });
+    }
+    private void readerToggle(String title,String description,boolean current,
+                              String category,String key,
+                              java.util.function.Consumer<Boolean> changed){
+        readerSelect(title,new String[]{"사용","사용 안 함"},
+                current?0:1,category,key,index->changed.accept(index==0));
+    }
     private void toggle(String title,String description,boolean current,
                         java.util.function.Consumer<Boolean> changed){
         action(title,description+" · "+(current?"켜짐":"꺼짐"),()->
@@ -353,7 +408,8 @@ public final class SettingsActivity extends Activity {
                                 }).setNegativeButton("취소",null).show());
     }
     private void number(String title,String suffix,int min,int max,
-                        int current,java.util.function.IntConsumer changed){
+                        int current,String category,String key,
+                        java.util.function.IntConsumer changed){
         int safe=Math.max(min,Math.min(max,current));
         action(title,safe+suffix,()->{
             LinearLayout pane=new LinearLayout(this);
@@ -366,19 +422,28 @@ public final class SettingsActivity extends Activity {
             bar.setMax(max-min);
             bar.setProgress(safe-min);
             pane.addView(bar,new LinearLayout.LayoutParams(-1,dp(56)));
+            ReaderSettingsPreview preview=new ReaderSettingsPreview(this,category);
+            LinearLayout.LayoutParams previewParams=
+                    new LinearLayout.LayoutParams(-1,-2);
+            previewParams.topMargin=dp(8);
+            pane.addView(preview,previewParams);
+            preview.change(key,safe);
             bar.setOnSeekBarChangeListener(
                     new android.widget.SeekBar.OnSeekBarChangeListener(){
                         @Override public void onProgressChanged(
                                 android.widget.SeekBar s,int n,boolean user){
                             text.setText((min+n)+suffix);
+                            preview.change(key,min+n);
                         }
                         @Override public void onStartTrackingTouch(
                                 android.widget.SeekBar s){}
                         @Override public void onStopTrackingTouch(
                                 android.widget.SeekBar s){}
                     });
+            ScrollView scroll=new ScrollView(this);
+            scroll.addView(pane);
             new AlertDialog.Builder(this).setTitle(title)
-                    .setView(pane).setNegativeButton("취소",null)
+                    .setView(scroll).setNegativeButton("취소",null)
                     .setPositiveButton("적용",(dialog,index)->{
                         changed.accept(min+bar.getProgress());
                         render();
@@ -386,14 +451,17 @@ public final class SettingsActivity extends Activity {
         });
     }
     private void readerTurnDefaults(String category){
-        select("기본 페이지 넘김 효과",ReaderTurnPreferences.STYLES,
+        readerSelect("기본 페이지 넘김 효과",ReaderTurnPreferences.STYLES,
                 ReaderTurnPreferences.toIndex(
-                        ReaderDefaultSettings.turn(this,category)),value->
+                        ReaderDefaultSettings.turn(this,category)),
+                category,FolderMediaSettings.EPUB.equals(category)?
+                        "page_turn_effect":"turn_effect",value->
                         ReaderDefaultSettings.setTurn(this,category,
                                 ReaderTurnPreferences.fromIndex(value),
                                 ReaderDefaultSettings.slow(this,category)));
-        select("기본 책 넘김 속도",ReaderTurnPreferences.SPEEDS,
-                ReaderDefaultSettings.slow(this,category)?1:0,value->
+        readerSelect("기본 책 넘김 속도",ReaderTurnPreferences.SPEEDS,
+                ReaderDefaultSettings.slow(this,category)?1:0,
+                category,"slow_page_turn",value->
                         ReaderDefaultSettings.setTurn(this,category,
                                 ReaderDefaultSettings.turn(this,category),
                                 value==1));
@@ -402,30 +470,38 @@ public final class SettingsActivity extends Activity {
         String category=FolderMediaSettings.COMIC;
         section("만화책 뷰어 · 기본값",
                 "책이나 폴더에서 따로 설정하지 않은 만화책에만 적용됩니다.");
-        select("기본 읽기 방향",
+        appendReaderPreview(category);
+        readerSelect("기본 읽기 방향",
                 new String[]{"한국식 · 왼쪽→오른쪽",
                         "일본식 · 오른쪽→왼쪽"},
                 ReaderDefaultSettings.bool(this,category,"rtl",false)?1:0,
+                category,"rtl",
                 value->defaultBoolean(category,"rtl",value==1));
-        select("좌우 합본 이미지 자동 분할",
+        readerSelect("좌우 합본 이미지 자동 분할",
                 new String[]{"자동 감지 (권장)","분할하지 않음","민감하게 감지"},
                 ReaderDefaultSettings.integer(this,category,
                         "double_page_split",ComicPageLayout.AUTO),
+                category,"double_page_split",
                 value->defaultNumber(category,"double_page_split",value));
-        toggle("폴드 펼침 두 페이지 보기","펼친 화면에서 좌우 두 쪽",
+        readerToggle("폴드 펼침 두 페이지 보기","펼친 화면에서 좌우 두 쪽",
                 ReaderDefaultSettings.bool(this,category,"fold_two_pages",true),
+                category,"fold_two_pages",
                 value->defaultBoolean(category,"fold_two_pages",value));
-        toggle("기본 가로 폭 맞춤","원본 페이지가 화면 너비에 맞게 확대됨",
+        readerToggle("기본 가로 폭 맞춤","원본 페이지가 화면 너비에 맞게 확대됨",
                 ReaderDefaultSettings.bool(this,category,"fit_width",false),
+                category,"fit_width",
                 value->defaultBoolean(category,"fit_width",value));
-        toggle("기본 흑백 모드","색상 대신 흑백으로 표시",
+        readerToggle("기본 흑백 모드","색상 대신 흑백으로 표시",
                 ReaderDefaultSettings.bool(this,category,"grayscale",false),
+                category,"grayscale",
                 value->defaultBoolean(category,"grayscale",value));
         number("기본 명암 대비","%",50,200,
                 ReaderDefaultSettings.integer(this,category,"contrast",100),
+                category,"contrast",
                 value->defaultNumber(category,"contrast",value));
         number("기본 밝기","", -100,100,
                 ReaderDefaultSettings.integer(this,category,"brightness",0),
+                category,"brightness",
                 value->defaultNumber(category,"brightness",value));
         readerTurnDefaults(category);
         note("예: 만화책/A만화의 1권에서 일본식으로 변경하면 A만화 폴더의 "+
@@ -435,60 +511,78 @@ public final class SettingsActivity extends Activity {
         String category=FolderMediaSettings.TEXT;
         section("TXT 텍스트뷰어 · 기본값",
                 "TXT 소설의 기본 글꼴·줄간격·여백·독서 모드입니다.");
-        select("TXT 기본 읽기 방식",
+        appendReaderPreview(category);
+        readerSelect("TXT 기본 읽기 방식",
                 new String[]{"좌우 페이지 넘김","세로 연속 스크롤"},
                 ReaderDefaultSettings.integer(this,category,"view_mode",0),
+                category,"view_mode",
                 value->defaultNumber(category,"view_mode",value));
-        select("TXT 기본 글꼴",
+        readerSelect("TXT 기본 글꼴",
                 new String[]{"명조 · 책 본문","고딕 · 선명한 글씨","고정폭"},
                 ReaderDefaultSettings.integer(this,category,"font",0),
+                category,"font",
                 value->defaultNumber(category,"font",value));
         number("TXT 기본 글씨 크기","sp",12,38,
                 ReaderDefaultSettings.integer(this,category,"size",20),
+                category,"size",
                 value->defaultNumber(category,"size",value));
         number("TXT 기본 줄간격","%",100,240,
                 ReaderDefaultSettings.integer(this,category,"spacing",145),
+                category,"spacing",
                 value->defaultNumber(category,"spacing",value));
         number("TXT 기본 좌우 여백","dp",9,44,
                 ReaderDefaultSettings.integer(this,category,"margin",19),
+                category,"margin",
                 value->defaultNumber(category,"margin",value));
-        select("TXT 기본 독서 배경",
+        readerSelect("TXT 기본 독서 배경",
                 new String[]{"아이보리 종이","흰 종이","오래된 세피아 종이","야간 독서"},
                 ReaderDefaultSettings.integer(this,category,"theme",0),
+                category,"theme",
                 value->defaultNumber(category,"theme",value));
-        toggle("TXT 폴드 두 페이지 보기","펼침 화면에서 좌우로 나누어 읽기",
+        readerToggle("TXT 폴드 두 페이지 보기","펼침 화면에서 좌우로 나누어 읽기",
                 ReaderDefaultSettings.bool(this,category,"fold_columns",true),
+                category,"fold_columns",
                 value->defaultBoolean(category,"fold_columns",value));
         readerTurnDefaults(category);
 
         // EPUB has its own defaults, independent of TXT within this tab.
         section("EPUB 전자책 · 기본값",
                 "같은 텍스트뷰어 탭에서 EPUB의 읽기 방식과 본문 설정도 관리합니다.");
-        select("EPUB 기본 읽기 방식",
+        appendReaderPreview(FolderMediaSettings.EPUB);
+        readerSelect("EPUB 기본 읽기 방식",
                 new String[]{"좌우 페이지 넘김","세로 연속 스크롤"},
                 ReaderDefaultSettings.integer(this,FolderMediaSettings.EPUB,
                         "mode",0),
+                FolderMediaSettings.EPUB,"mode",
                 value->defaultNumber(FolderMediaSettings.EPUB,"mode",value));
         number("EPUB 기본 글씨 크기","sp",12,36,
                 ReaderDefaultSettings.integer(this,FolderMediaSettings.EPUB,
                         "font_size",19),
+                FolderMediaSettings.EPUB,"font_size",
                 value->defaultNumber(FolderMediaSettings.EPUB,"font_size",value));
         number("EPUB 기본 줄간격","%",110,230,
                 ReaderDefaultSettings.integer(this,FolderMediaSettings.EPUB,
                         "line_spacing",155),
+                FolderMediaSettings.EPUB,"line_spacing",
                 value->defaultNumber(FolderMediaSettings.EPUB,"line_spacing",value));
         number("EPUB 기본 좌우 여백","dp",8,50,
                 ReaderDefaultSettings.integer(this,FolderMediaSettings.EPUB,
                         "side_margin",18),
+                FolderMediaSettings.EPUB,"side_margin",
                 value->defaultNumber(FolderMediaSettings.EPUB,"side_margin",value));
-        select("EPUB 기본 독서 배경",
+        readerSelect("EPUB 기본 독서 배경",
                 new String[]{"아이보리","흰색","세피아","야간"},
                 ReaderDefaultSettings.integer(this,FolderMediaSettings.EPUB,
                         "theme",0),
+                FolderMediaSettings.EPUB,"theme",
                 value->defaultNumber(FolderMediaSettings.EPUB,"theme",value));
         readerTurnDefaults(FolderMediaSettings.EPUB);
         note("위 설정은 새 폴더에 적용되는 기본값입니다. 책 안의 Aa 설정을 "+
                 "변경하면 해당 소설이 들어 있는 폴더의 TXT 또는 EPUB에만 적용됩니다.");
+        section("PDF 문서 · 책 뷰어",
+                "PDF도 FileHub 안에서 바로 열 수 있습니다. 로컬·SD/USB·NAS 파일을 지원합니다.");
+        note("PDF는 원본 문서의 글과 그림 위치를 유지합니다. 읽는 중 상단 +/−로 "+
+                "확대하고 하단에서 페이지를 이동할 수 있으며, 읽던 위치를 저장합니다.");
     }
 
     private String detectEac3() {

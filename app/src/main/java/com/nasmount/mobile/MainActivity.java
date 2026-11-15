@@ -2889,7 +2889,8 @@ public class MainActivity extends Activity {
             return -1;
         String mode=ComicArchive.supports(entry.name)?ReaderFolders.COMIC:
                 (entry.name.toLowerCase(Locale.ROOT).endsWith(".txt") ||
-                 entry.name.toLowerCase(Locale.ROOT).endsWith(".epub"))?
+                 entry.name.toLowerCase(Locale.ROOT).endsWith(".epub") ||
+                 PdfBookTypes.supports(entry.name))?
                         ReaderFolders.TEXT:null;
         if(mode==null)return -1;
         String owner="",folder,path=null,uri=null;
@@ -4180,6 +4181,11 @@ public class MainActivity extends Activity {
                     f.getAbsolutePath(),null,null);
             return;
         }
+        if(PdfBookTypes.supports(f.getName())){
+            openBookReader(PdfBookActivity.class,"local",f.getName(),
+                    f.getAbsolutePath(),null,null);
+            return;
+        }
         if (ArchiveCodec.isArchive(f.getName())) {
             offerExtractArchive(FileTransferEngine.local(f));
             return;
@@ -4214,6 +4220,8 @@ public class MainActivity extends Activity {
                 readerFolders.allowed(ReaderFolders.TEXT,"saf",
                         activeTreeUri,safRelative)) {
             openBookReader(EpubReaderActivity.class,"saf",name,null,uri,null);
+        } else if(PdfBookTypes.supports(name)){
+            openBookReader(PdfBookActivity.class,"saf",name,null,uri,null);
         } else if(MediaFileTypes.isAudio(name)){
             playMusic(uri,name);
         } else if(MediaFileTypes.isImage(name)){
@@ -5581,6 +5589,11 @@ public class MainActivity extends Activity {
                 readerFolders.allowed(ReaderFolders.TEXT,"remote",p.id,
                         RemoteProvider.parent(entry.path))) {
             openBookReader(EpubReaderActivity.class,"remote",entry.name,
+                    entry.path,null,p);
+            return;
+        }
+        if(PdfBookTypes.supports(entry.name)){
+            openBookReader(PdfBookActivity.class,"remote",entry.name,
                     entry.path,null,p);
             return;
         }
