@@ -32,3 +32,6 @@ hs_err_pid*
 NUL
 _trash/
 작업일지.md
+
+# Reconstructed from versioned compressed parts for complete Git source checkouts
+/app/src/main/assets/office_hwp/assets/*.wasm

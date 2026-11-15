@@ -940,4 +940,76 @@ export class PptxWriter {
     <p:sp>
       <p:nvSpPr><p:cNvPr id="2" name="Notes Placeholder 1"/>
         <p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr>
-        <p:nv
+        <p:nvPr><p:ph type="body" idx="1"/></p:nvPr>
+      </p:nvSpPr>
+      <p:spPr/>
+      <p:txBody><a:bodyPr/><a:lstStyle/>
+        <a:p><a:r><a:t>${text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</a:t></a:r></a:p>
+      </p:txBody>
+    </p:sp>
+  </p:spTree></p:cSld>
+</p:notes>`;
+
+    this._files[notesPath] = enc.encode(notesXml);
+
+    const newRId = nextRId(slideRels);
+    slideRels[newRId] = {
+      id: newRId,
+      type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide',
+      target: `../notesSlides/notesSlide${num}.xml`,
+      fullPath: notesPath,
+    };
+    this._files[relsPath(slidePath)] = xmlBytes(buildRelsDoc(slideRels));
+  }
+
+  // ── Serialisation ─────────────────────────────────────────────────────────────
+
+  /**
+   * Serialize the edited PPTX to bytes.
+   * @returns {Promise<Uint8Array>}
+   */
+  async save() {
+    return writeZip(this._files);
+  }
+
+  /**
+   * Download as a PPTX file in the browser.
+   * @param {string} [filename='edited.pptx']
+   */
+  async download(filename = 'edited.pptx') {
+    const bytes = await this.save();
+    const blob  = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' });
+    const url   = URL.createObjectURL(blob);
+    const a     = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
+  // ── Utility ───────────────────────────────────────────────────────────────────
+
+  /**
+   * List all shape names on a slide.
+   * @param {number} slideIdx
+   * @returns {Array<{id, name, type}>}
+   */
+  listShapes(slideIdx) {
+    const doc    = this._slideDoc(slideIdx);
+    const spTree = getSpTree(doc);
+    if (!spTree) return [];
+    const shapes = [];
+    for (const child of spTree.children) {
+      const ln = child.localName;
+      if (!['sp','pic','cxnSp','graphicFrame'].includes(ln)) continue;
+      const nvEl  = g1(child, 'nvSpPr') || g1(child, 'nvPicPr') || g1(child, 'nvGraphicFramePr') || g1(child, 'nvCxnSpPr');
+      const cNvPr = nvEl ? g1(nvEl, 'cNvPr') : null;
+      shapes.push({
+        id:   cNvPr?.getAttribute('id') || '',
+        name: cNvPr?.getAttribute('name') || '',
+        type: ln,
+      });
+    }
+    return shapes;
+  }
+}

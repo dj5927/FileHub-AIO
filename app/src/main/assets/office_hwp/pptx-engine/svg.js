@@ -530,4 +530,199 @@ async function shapeToSvg(spEl, themeColors, themeData, defs) {
   // Path
   let pathSvg = '';
   if (prst === 'rect' || (!prstGeom && !custGeom)) {
-    pathSvg = `<rect x="${px(b.x)}" y="${px(b.y)}" width="${px(b.w)}" height="${px(b.h)}" fill="${esc(fill)}"${
+    pathSvg = `<rect x="${px(b.x)}" y="${px(b.y)}" width="${px(b.w)}" height="${px(b.h)}" fill="${esc(fill)}"${fillAttrs}${stroke}${filt}${transform}/>`;
+  } else {
+    const d = presetToSvgPath(prst, b.x, b.y, b.w, b.h, {});
+    pathSvg = `<path d="${esc(d)}" fill="${esc(fill)}"${fillAttrs}${stroke}${filt}${transform}/>`;
+  }
+
+  // Text
+  const txBody = g1(spEl, 'txBody');
+  const textSvg = txBody ? textBodyToSvg(txBody, b.x, b.y, b.w, b.h, themeColors, themeData, defs) : '';
+
+  return `<g>${pathSvg}${textSvg}</g>`;
+}
+
+async function pictureToSvg(picEl, rels, files, themeColors, defs) {
+  const spPr = g1(picEl, 'spPr');
+  const xfrm = g1(spPr, 'xfrm');
+  const b    = xfrmBounds(xfrm);
+  if (!b) return '';
+
+  const blipFill = g1(picEl, 'blipFill');
+  const blip     = blipFill ? g1(blipFill, 'blip') : null;
+  const rId      = blip ? (blip.getAttribute('r:embed') || blip.getAttribute('embed')) : null;
+  const rel      = rId ? rels[rId] : null;
+  const imgData  = rel ? files[rel.fullPath] : null;
+
+  const transform = xfrmAttrs(xfrm);
+  const effectLst = g1(spPr, 'effectLst');
+  const filt = shadowFilter(effectLst, defs);
+
+  if (!imgData) {
+    return `<rect x="${px(b.x)}" y="${px(b.y)}" width="${px(b.w)}" height="${px(b.h)}" fill="#e0e0e0"${transform}/>`;
+  }
+
+  // Convert to base64
+  const ext  = rel.fullPath.split('.').pop().toLowerCase();
+  const mime = ext === 'png' ? 'image/png' : ext === 'gif' ? 'image/gif'
+    : ext === 'svg' ? 'image/svg+xml' : 'image/jpeg';
+  const raw  = imgData instanceof Uint8Array ? imgData : new Uint8Array(imgData);
+  const b64  = btoa(Array.from(raw, b => String.fromCharCode(b)).join(''));
+
+  // Clip to shape bounds
+  const clipId = uid('pic');
+  defs.push(`<clipPath id="${clipId}"><rect x="${px(b.x)}" y="${px(b.y)}" width="${px(b.w)}" height="${px(b.h)}"/></clipPath>`);
+
+  return `<image x="${px(b.x)}" y="${px(b.y)}" width="${px(b.w)}" height="${px(b.h)}" href="data:${mime};base64,${b64}" clip-path="url(#${clipId})"${filt}${transform} preserveAspectRatio="xMidYMid slice"/>`;
+}
+
+async function connectorToSvg(cxnSpEl, themeColors, defs) {
+  const spPr = g1(cxnSpEl, 'spPr');
+  const xfrm = g1(spPr, 'xfrm');
+  const b    = xfrmBounds(xfrm);
+  if (!b) return '';
+  const lnEl = g1(spPr, 'ln');
+  const stroke = strokeAttrs(lnEl, themeColors, 1);
+  const transform = xfrmAttrs(xfrm);
+  return `<line x1="${px(b.x)}" y1="${px(b.y)}" x2="${px(b.x+b.w)}" y2="${px(b.y+b.h)}" fill="none"${stroke}${transform}/>`;
+}
+
+async function groupToSvg(grpSpEl, rels, files, themeColors, themeData, defs) {
+  const spPr = g1(grpSpEl, 'grpSpPr');
+  const xfrm = g1(spPr, 'xfrm');
+  const b    = xfrmBounds(xfrm);
+  const transform = xfrm ? xfrmAttrs(xfrm) : '';
+  const children = await shapesToSvg(grpSpEl, rels, files, themeColors, themeData, defs);
+  return `<g${transform}>${children}</g>`;
+}
+
+async function graphicFrameToSvg(graphicFrame, themeColors, defs) {
+  const xfrm = g1(graphicFrame, 'xfrm');
+  const b    = xfrmBounds(xfrm);
+  if (!b) return '';
+  // Placeholder (charts/SmartArt SVG rendering is complex; show clean box)
+  return `<rect x="${px(b.x)}" y="${px(b.y)}" width="${px(b.w)}" height="${px(b.h)}" fill="#f4f4f8" stroke="#ccc" stroke-width="1"/>` +
+         `<text x="${px(b.x+b.w/2)}" y="${px(b.y+b.h/2)}" text-anchor="middle" font-size="14" fill="#999">Chart</text>`;
+}
+
+// ── Background → SVG ──────────────────────────────────────────────────────────
+async function backgroundToSvg(slideDoc, masterDoc, layoutDoc, files, masterRels, themeColors, slideW, slideH, defs) {
+  const getbg = (doc) => {
+    const cSld = g1(doc, 'cSld');
+    const bg   = cSld ? g1(cSld, 'bg') : null;
+    if (!bg) return null;
+    return { bgPr: g1(bg, 'bgPr'), bgRef: g1(bg, 'bgRef') };
+  };
+  const bgData = getbg(slideDoc) || getbg(layoutDoc) || getbg(masterDoc);
+  if (!bgData) return `<rect width="${px(slideW)}" height="${px(slideH)}" fill="white"/>`;
+
+  const { bgPr, bgRef } = bgData;
+  if (bgPr) {
+    const fills = ['noFill','solidFill','gradFill','blipFill','pattFill'];
+    for (const fn of fills) {
+      const fillEl = g1(bgPr, fn);
+      if (fillEl) {
+        if (fn === 'blipFill') {
+          const blip = g1(fillEl, 'blip');
+          const rId  = blip ? (blip.getAttribute('r:embed') || blip.getAttribute('embed')) : null;
+          const rel  = rId && masterRels ? masterRels[rId] : null;
+          const imgData = rel ? files[rel.fullPath] : null;
+          if (imgData) {
+            const ext  = rel.fullPath.split('.').pop().toLowerCase();
+            const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+            const raw  = imgData instanceof Uint8Array ? imgData : new Uint8Array(imgData);
+            const b64  = btoa(Array.from(raw, b => String.fromCharCode(b)).join(''));
+            return `<image width="${px(slideW)}" height="${px(slideH)}" href="data:${mime};base64,${b64}" preserveAspectRatio="xMidYMid slice"/>`;
+          }
+        }
+        const { fill, fillAttrs } = fillAttr(fillEl, defs, themeColors, 0, 0, slideW, slideH);
+        return `<rect width="${px(slideW)}" height="${px(slideH)}" fill="${esc(fill)}"${fillAttrs}/>`;
+      }
+    }
+  }
+  if (bgRef) {
+    const cc = findFirstColorChild(bgRef);
+    const c  = resolveColorElement(cc, themeColors);
+    if (c) return `<rect width="${px(slideW)}" height="${px(slideH)}" fill="${esc(colorToCss(c))}"/>`;
+  }
+  return `<rect width="${px(slideW)}" height="${px(slideH)}" fill="white"/>`;
+}
+
+// ── Main entry ────────────────────────────────────────────────────────────────
+
+/**
+ * Render a single slide to an SVG string.
+ *
+ * @param {number}          slideIndex
+ * @param {PptxRenderer}    renderer    — loaded renderer instance
+ * @returns {Promise<string>}           — complete SVG markup
+ */
+export async function renderSlideToSvg(slideIndex, renderer) {
+  const { _files: files, slidePaths, slideSize, themeColors, themeData,
+          masterDoc, masterRels } = renderer;
+
+  if (slideIndex < 0 || slideIndex >= slidePaths.length) throw new Error('Slide index out of range');
+
+  const slidePath = slidePaths[slideIndex];
+  const slideXml  = files[slidePath] ? new TextDecoder().decode(files[slidePath]) : null;
+  if (!slideXml) throw new Error(`Cannot read slide ${slideIndex}`);
+
+  const slideDoc   = parseXml(slideXml);
+  const slideRels  = await getRels(files, slidePath);
+
+  // Layout
+  const layoutRel = Object.values(slideRels).find(r => r.type?.includes('slideLayout'));
+  const layoutDoc = layoutRel && files[layoutRel.fullPath]
+    ? parseXml(new TextDecoder().decode(files[layoutRel.fullPath])) : null;
+  const layoutRels = layoutRel ? await getRels(files, layoutRel.fullPath) : {};
+
+  // Slide dimensions in px (96 dpi)
+  const W = slideSize.cx / 914400 * 96;
+  const H = slideSize.cy / 914400 * 96;
+
+  const defs = [];
+
+  // Background
+  const bgSvg = await backgroundToSvg(slideDoc, masterDoc, layoutDoc, files,
+    masterRels, themeColors, W, H, defs);
+
+  // Master / layout decorative shapes
+  const masterTree = g1(g1(masterDoc, 'cSld'), 'spTree');
+  const layoutTree = layoutDoc ? g1(g1(layoutDoc, 'cSld'), 'spTree') : null;
+  const slideTree  = g1(g1(slideDoc, 'cSld'), 'spTree');
+
+  const masterSvg = masterTree
+    ? await shapesToSvg(masterTree, masterRels, files, themeColors, themeData, defs) : '';
+  const layoutSvg = layoutTree
+    ? await shapesToSvg(layoutTree, layoutRels, files, themeColors, themeData, defs) : '';
+  const slideSvg  = slideTree
+    ? await shapesToSvg(slideTree, slideRels, files, themeColors, themeData, defs) : '';
+
+  const defsBlock = defs.length ? `<defs>${defs.join('\n')}</defs>` : '';
+
+  return [
+    `<?xml version="1.0" encoding="UTF-8"?>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"`,
+    `  width="${px(W)}" height="${px(H)}" viewBox="0 0 ${px(W)} ${px(H)}">`,
+    defsBlock,
+    bgSvg,
+    masterSvg,
+    layoutSvg,
+    slideSvg,
+    `</svg>`,
+  ].join('\n');
+}
+
+/**
+ * Render all slides to SVG strings.
+ * @param {PptxRenderer} renderer
+ * @returns {Promise<string[]>}
+ */
+export async function renderAllSlidesToSvg(renderer) {
+  const results = [];
+  for (let i = 0; i < renderer.slideCount; i++) {
+    results.push(await renderSlideToSvg(i, renderer));
+  }
+  return results;
+}

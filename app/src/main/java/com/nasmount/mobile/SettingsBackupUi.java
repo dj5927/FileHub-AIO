@@ -351,4 +351,153 @@ final class SettingsBackupUi {
     }
 
     boolean handleResult(int request,int result,Intent data) {
-        if(request!=EXPORT_REQUEST && request!=IMPOR
+        if(request!=EXPORT_REQUEST && request!=IMPORT_REQUEST)return false;
+        if(result!=Activity.RESULT_OK || data==null || data.getData()==null){
+            clearPending();return true;
+        }
+        Uri uri=data.getData();
+        if(request==EXPORT_REQUEST){
+            char[] password=pendingPassword;pendingPassword=null;
+            if(password!=null)doExport(uri,password);
+        }else askImportPassword(uri);
+        return true;
+    }
+
+    private void doExport(Uri destination,char[] password) {
+        if(busy){Arrays.fill(password,'\0');return;}
+        busy=true;
+        executor.execute(()->{
+            String failure=null;
+            try {
+                JSONObject snapshot=SettingsBackup.snapshot(activity,store);
+                byte[] plain=snapshot.toString().getBytes(StandardCharsets.UTF_8);
+                byte[] encrypted=SettingsBackupCodec.encrypt(plain,password);
+                Arrays.fill(plain,(byte)0);
+                try(OutputStream output=activity.getContentResolver().openOutputStream(
+                        destination,"wt")) {
+                    if(output==null)throw new java.io.IOException("파일을 만들 수 없습니다.");
+                    output.write(encrypted);output.flush();
+                }
+                Arrays.fill(encrypted,(byte)0);
+            }catch(Exception e){failure="설정 파일을 저장하지 못했습니다: " + e.getClass().getSimpleName();}
+            finally{Arrays.fill(password,'\0');}
+            String result=failure;
+            activity.runOnUiThread(()->{
+                busy=false;
+                alert(result==null ? "암호화 설정 백업이 저장됐습니다.\n"+
+                        "TV로 파일을 옮긴 뒤 같은 비밀번호로 가져오세요." : result);
+            });
+        });
+    }
+
+    private void askImportPassword(Uri uri) {
+        EditText pass=passwordInput();
+        LinearLayout box=Ui.vertical(activity);
+        box.setPadding(Ui.dp(activity,16),Ui.dp(activity,12),Ui.dp(activity,16),0);
+        box.addView(Ui.text(activity,
+                "내보낼 때 설정한 비밀번호를 입력해 주세요. " +
+                "내용 확인 후 기존 설정과 병합하거나 교체할 수 있습니다.",
+                13,Ui.TEXT,false),Ui.lp(activity,-1,-2));
+        box.addView(pass,Ui.lp(activity,-1,65));
+        new AlertDialog.Builder(activity).setTitle("설정 백업 열기")
+                .setView(box).setNegativeButton("취소",null)
+                .setPositiveButton("파일 확인",(d,w)->{
+                    char[] password=pass.getText().toString().toCharArray();
+                    doImportPreview(uri,password);
+                }).show();
+    }
+
+    private void doImportPreview(Uri uri,char[] password) {
+        if(busy){Arrays.fill(password,'\0');return;}
+        busy=true;
+        executor.execute(()->{
+            JSONObject result=null;
+            String failure=null;
+            try {
+                byte[] encrypted;
+                try(InputStream input=activity.getContentResolver().openInputStream(uri)){
+                    if(input==null)throw new java.io.IOException("백업 파일을 읽을 수 없습니다.");
+                    ByteArrayOutputStream output=new ByteArrayOutputStream();
+                    byte[] buffer=new byte[8192];
+                    int count;
+                    while((count=input.read(buffer))>=0) {
+                        if(count==0)continue;
+                        if(output.size()+count>SettingsBackupCodec.MAX_FILE_BYTES)
+                            throw new IllegalArgumentException("백업 파일이 너무 큽니다.");
+                        output.write(buffer,0,count);
+                    }
+                    encrypted=output.toByteArray();
+                }
+                byte[] plain=SettingsBackupCodec.decrypt(encrypted,password);
+                result=new JSONObject(new String(plain,StandardCharsets.UTF_8));
+                Arrays.fill(plain,(byte)0);
+                SettingsBackup.validate(result);
+            }catch(Exception e){failure="백업 비밀번호 또는 파일 형식을 확인하세요.";}
+            finally{Arrays.fill(password,'\0');}
+            JSONObject snapshot=result;
+            String problem=failure;
+            activity.runOnUiThread(()->{
+                busy=false;
+                if(problem!=null){alert(problem);return;}
+                previewRestore(snapshot);
+            });
+        });
+    }
+
+    private void previewRestore(JSONObject snapshot) {
+        int remoteCount=snapshot.optJSONArray("remotes").length();
+        int favoriteCount=snapshot.optJSONArray("favorites").length();
+        new AlertDialog.Builder(activity)
+                .setTitle("설정 가져오기 · 내용 확인")
+                .setMessage("원격 연결 " + remoteCount + "개, 즐겨찾기 " + favoriteCount+
+                        "개 및 동영상·만화책·소설책·사용자 설정을 복원합니다.\n\n" +
+                        "기기별 SD카드 접근 권한이나 코덱 파일은 별도로 지정해야 합니다.\n\n" +
+                        "병합: 기존 연결을 유지하고 가져온 설정을 반영\n" +
+                        "교체: 기존 연결·즐겨찾기·대상 설정을 새 백업으로 변경")
+                .setNegativeButton("취소",null)
+                .setNeutralButton("병합",(d,w)->confirmRestore(snapshot,false))
+                .setPositiveButton("전체 교체",(d,w)->confirmRestore(snapshot,true))
+                .show();
+    }
+
+    private void confirmRestore(JSONObject snapshot,boolean replace) {
+        if(replace) {
+            new AlertDialog.Builder(activity).setTitle("전체 설정을 교체할까요?")
+                    .setMessage("현재 TV/휴대폰의 연결 및 설정이 백업 내용으로 교체됩니다. " +
+                            "필요하면 현재 설정을 먼저 내보내세요.")
+                    .setNegativeButton("취소",null)
+                    .setPositiveButton("교체 실행",(d,w)->restore(snapshot,true)).show();
+        }else restore(snapshot,false);
+    }
+
+    private void restore(JSONObject snapshot,boolean replace) {
+        if(busy)return;
+        busy=true;
+        executor.execute(()->{
+            String error=null;int count=0;
+            try{count=SettingsBackup.restore(activity,store,snapshot,replace);}
+            catch(Exception ex){error="설정 복원 오류: " + ex.getClass().getSimpleName();}
+            int restored=count;String problem=error;
+            activity.runOnUiThread(()->{
+                busy=false;
+                if(problem!=null){alert(problem);return;}
+                alert("연결 " + restored + "개 및 백업 설정 복원 완료.\n" +
+                        "일부 화면은 앱을 다시 실행해야 반영됩니다.");
+                onRestored.run();
+            });
+        });
+    }
+
+    private void clearPending() {
+        if(pendingPassword!=null)Arrays.fill(pendingPassword,'\0');
+        pendingPassword=null;
+    }
+
+    void shutdown(){closeLan();clearPending();executor.shutdownNow();}
+
+    private void alert(String text){
+        if(activity.isFinishing() || activity.isDestroyed())return;
+        new AlertDialog.Builder(activity).setTitle("FileHub 설정 백업")
+                .setMessage(text).setPositiveButton("확인",null).show();
+    }
+}

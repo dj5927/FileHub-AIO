@@ -2,6 +2,63 @@ plugins {
     id 'com.android.application'
 }
 
+// Office renderer WASM binaries are stored as losslessly compressed chunks in
+// app/office-assets. Fresh public Git clones reconstruct them before Android
+// asset packaging, avoiding GitHub's per-request upload limits. Neither the
+// signing credentials nor any user configuration are part of these chunks.
+def officeAssetBundles = [
+    [file: 'canvaskit-SCAxUyCS.wasm', count: 2,
+     sha256: '25EBED8E60158C5854F8DC807B936DACA21354F8BFB6A2231266B0A93812F301'],
+    [file: 'rhwp_bg-CsZhyUHZ.wasm', count: 6,
+     sha256: '33BC8F9D3A3FE892ED3B73E3102FB6CADC37F7A5B640F4AF677C357DF253CBBC']
+]
+
+tasks.register('restoreBundledOfficeAssets') {
+    doLast {
+        officeAssetBundles.each { bundle ->
+            def output = file('src/main/assets/office_hwp/assets/' + bundle.file)
+            def checksum = { File input ->
+                def md = java.security.MessageDigest.getInstance('SHA-256')
+                input.withInputStream { stream ->
+                    byte[] buffer = new byte[65536]
+                    int count
+                    while ((count = stream.read(buffer)) >= 0)
+                        if (count > 0) md.update(buffer, 0, count)
+                }
+                return md.digest().encodeHex().toString().toUpperCase(java.util.Locale.ROOT)
+            }
+            if (output.isFile() && checksum(output) == bundle.sha256) return
+            def pieces = (0..<bundle.count).collect { index ->
+                file('office-assets/' + bundle.file + '.gz.part' + String.format('%02d', index))
+            }
+            if (pieces.any { !it.isFile() })
+                throw new GradleException('Office asset chunks missing: ' + bundle.file)
+            output.parentFile.mkdirs()
+            def temp = file("${buildDir}/tmp/office-restore/${bundle.file}")
+            temp.parentFile.mkdirs()
+            def streams = pieces.collect { new FileInputStream(it) }
+            def concat = new java.io.SequenceInputStream(java.util.Collections.enumeration(streams))
+            try {
+                new java.util.zip.GZIPInputStream(concat).withCloseable { inflated ->
+                    temp.withOutputStream { destination ->
+                        byte[] buffer = new byte[65536]
+                        int count
+                        while ((count = inflated.read(buffer)) >= 0)
+                            if (count > 0) destination.write(buffer, 0, count)
+                    }
+                }
+            } finally { concat.close() }
+            if (checksum(temp) != bundle.sha256)
+                throw new GradleException('Office asset SHA256 mismatch: ' + bundle.file)
+            java.nio.file.Files.move(temp.toPath(), output.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+}
+tasks.matching { it.name == 'preBuild' }.configureEach {
+    dependsOn tasks.named('restoreBundledOfficeAssets')
+}
+
 def releaseSigning = new Properties()
 def releaseSigningFile = rootProject.file('../signing/signing.properties')
 if (releaseSigningFile.exists()) {

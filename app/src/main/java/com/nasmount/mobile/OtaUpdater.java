@@ -198,4 +198,44 @@ final class OtaUpdater {
             throw new SecurityException("Unexpected APK version");
         android.content.pm.Signature[] expected=Build.VERSION.SDK_INT>=28?
                 current.signingInfo.getApkContentsSigners():current.signatures;
-       
+        android.content.pm.Signature[] incoming=Build.VERSION.SDK_INT>=28?
+                archive.signingInfo.getApkContentsSigners():archive.signatures;
+        if(expected==null || incoming==null || expected.length!=incoming.length)
+            throw new SecurityException("Signing identity missing");
+        java.util.Set<String> signatures=new java.util.HashSet<>();
+        for(android.content.pm.Signature item:expected)signatures.add(item.toCharsString());
+        for(android.content.pm.Signature item:incoming)
+            if(!signatures.remove(item.toCharsString()))
+                throw new SecurityException("Unexpected APK signing certificate");
+    }
+
+    private void install(File apk) {
+        try{
+            if(Build.VERSION.SDK_INT>=26 &&
+                    !activity.getPackageManager().canRequestPackageInstalls()){
+                new AlertDialog.Builder(activity).setTitle("APK 설치 허용 필요")
+                        .setMessage("FileHub에서 다운로드한 업데이트를 설치하려면 " +
+                                "이 출처의 앱 설치를 허용해야 합니다. 허용 후 메뉴에서 업데이트를 다시 선택하세요.")
+                        .setNegativeButton("취소",null)
+                        .setPositiveButton("설정 열기",(d,w)->{
+                            Intent settings=new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                    Uri.parse("package:"+activity.getPackageName()));
+                            activity.startActivity(settings);
+                        }).show();
+                return;
+            }
+            Uri uri=FileProvider.getUriForFile(activity,
+                    activity.getPackageName()+".files",apk);
+            Intent intent=new Intent(Intent.ACTION_VIEW);
+            intent.setDataAndType(uri,"application/vnd.android.package-archive");
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            activity.startActivity(intent);
+        }catch(Exception e){
+            new AlertDialog.Builder(activity).setTitle("설치 화면 실행 실패")
+                    .setMessage("APK 다운로드는 완료됐으나 설치 화면을 열지 못했습니다.")
+                    .setPositiveButton("확인",null).show();
+        }
+    }
+
+    void close(){closed=true;io.shutdownNow();}
+}

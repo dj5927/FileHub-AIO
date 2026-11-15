@@ -339,4 +339,62 @@ public final class BuiltInOfficeActivity extends Activity {
         }
 
         @JavascriptInterface public synchronized String appendSave(String token,
-                                                           
+                                                                    String chunk) {
+            if (!saveToken.equals(token) || !accepting || receiver == null ||
+                    chunk == null || chunk.length() > 48000) return "ERROR";
+            try {
+                byte[] bytes = Base64.decode(chunk, Base64.NO_WRAP);
+                if (received > expected - bytes.length) return "ERROR";
+                receiver.write(bytes);
+                received += bytes.length;
+                return "OK";
+            } catch (Exception e) { return "ERROR"; }
+        }
+
+        @JavascriptInterface public synchronized String finishSave(String token) {
+            if (!saveToken.equals(token) || !accepting || receiver == null ||
+                    received != expected) return "ERROR";
+            try {
+                receiver.close();
+                receiver = null;
+                accepting = false;
+                executeSave(edited);
+                return "OK";
+            } catch (IOException e) { return "ERROR"; }
+        }
+
+        @JavascriptInterface public synchronized void cancelSave(String token) {
+            if (!saveToken.equals(token)) return;
+            if (receiver != null) try { receiver.close(); } catch (Exception ignored) {}
+            receiver = null;
+            accepting = false;
+            busy = false;
+            if (edited != null && edited.exists()) edited.delete();
+        }
+    }
+
+    private void askClose() {
+        if (busy) {
+            new AlertDialog.Builder(this).setTitle("저장 진행 중")
+                    .setMessage("원본 저장이 완료된 뒤 닫으세요.")
+                    .setPositiveButton("확인", null).show();
+            return;
+        }
+        new AlertDialog.Builder(this).setTitle("문서 편집 종료")
+                .setMessage("저장하지 않은 변경 내용은 사라질 수 있습니다. 종료하시겠습니까?")
+                .setNegativeButton("계속 편집", null)
+                .setPositiveButton("종료", (dialog, which) -> finish()).show();
+    }
+
+    @Override public void onBackPressed() { askClose(); }
+
+    @Override protected void onDestroy() {
+        if (web != null) {
+            web.removeJavascriptInterface("NasOfficeBridge");
+            web.loadUrl("about:blank");
+            web.destroy();
+        }
+        worker.shutdown();
+        super.onDestroy();
+    }
+}

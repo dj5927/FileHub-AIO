@@ -455,3 +455,301 @@ final class RemoteProvider {
     }
     static void upload(Models.RemoteProfile p, String folder, String name,
                        InputStream input, long byteLength) throws Exception {
+        upload(p, folder, name, input, byteLength, false);
+    }
+    static void upload(Models.RemoteProfile p, String folder, String name,
+                       InputStream input, long byteLength, boolean overwrite) throws Exception {
+        if ("MYBOX".equals(p.protocol)) {
+            MyBoxWriteApi.LIVE.upload(p, folder, name, input, byteLength, overwrite);
+            return;
+        }
+        if ("TeraBox".equals(p.protocol)) {
+            TeraBoxWriteApi.LIVE.upload(p, folder, name, input, byteLength, overwrite);
+            return;
+        }
+        String finalPath = child(folder, name);
+        String tempPath = child(folder, ".nasmount-" +
+                UUID.randomUUID().toString().substring(0, 12) + ".upload");
+        switch (p.protocol) {
+            case "SMB":
+                try (SmbFile dest = new SmbFile(smbPath(p, finalPath, false),
+                        smbContext(p));
+                     SmbFile staging = new SmbFile(smbPath(p, tempPath, false),
+                             smbContext(p));
+                     SmbFile backup = new SmbFile(smbPath(p, child(folder,
+                             ".nasmount-" + UUID.randomUUID().toString().substring(0, 12) +
+                             ".backup"), false), smbContext(p))) {
+                    if (dest.exists() && !overwrite) throw new FileTransferEngine.NameConflict();
+                    try {
+                        try (OutputStream out = new SmbFileOutputStream(staging)) {
+                            copy(input, out);
+                        }
+                        boolean backedUp = false;
+                        if (overwrite && dest.exists()) {
+                            dest.renameTo(backup);
+                            backedUp = true;
+                        }
+                        try { staging.renameTo(dest); }
+                        catch (Exception failure) {
+                            if (backedUp)
+                                try { backup.renameTo(dest); } catch (Exception ignored) {}
+                            throw failure;
+                        }
+                        if (backedUp && backup.exists()) backup.delete();
+                    } catch (Exception error) {
+                        try { if (staging.exists()) staging.delete(); }
+                        catch (Exception ignored) {}
+                        throw error;
+                    }
+                }
+                return;
+            case "FTP":
+                FTPClient ftp = ftp(p);
+                try {
+                    String target = absolute(p, finalPath);
+                    String staged = absolute(p, tempPath);
+                    boolean targetExists = ftp.listFiles(target).length != 0;
+                    if (targetExists && !overwrite) throw new FileTransferEngine.NameConflict();
+                    String backup = absolute(p, child(folder,
+                            ".nasmount-" + UUID.randomUUID().toString().substring(0, 12) +
+                            ".backup"));
+                    try {
+                        if (!ftp.storeFile(staged, input))
+                            throw new IOException("FTP 임시파일 업로드 실패");
+                        boolean backedUp = false;
+                        if (targetExists) {
+                            if (!ftp.rename(target, backup))
+                                throw new IOException("FTP 이전 파일 백업 실패");
+                            backedUp = true;
+                        }
+                        if (!ftp.rename(staged, target)) {
+                            if (backedUp) ftp.rename(backup, target);
+                            throw new IOException("FTP 임시파일 반영 실패");
+                        }
+                        if (backedUp && !ftp.deleteFile(backup))
+                            throw new IOException("FTP 저장 성공, 이전 백업 파일 정리 실패");
+                    } catch (Exception error) {
+                        ftp.deleteFile(staged);
+                        throw error;
+                    }
+                } finally { closeFtp(ftp); }
+                return;
+            case "SFTP":
+                try (SSHClient ssh = ssh(p);
+                     SFTPClient sftp = ssh.newSFTPClient()) {
+                    String finalName = absolute(p, finalPath);
+                    String stagingName = absolute(p, tempPath);
+                    boolean targetExists = false;
+                    try { sftp.stat(finalName); targetExists = true; }
+                    catch (net.schmizz.sshj.sftp.SFTPException expectedMissing) {
+                        // SFTP status NO_SUCH_FILE is the only acceptable
+                        // reason to proceed. Other errors must stop upload.
+                        if (!expectedMissing.getStatusCode().name().equals("NO_SUCH_FILE"))
+                            throw expectedMissing;
+                    }
+                    if (targetExists && !overwrite) throw new FileTransferEngine.NameConflict();
+                    String backup = absolute(p, child(folder,
+                            ".nasmount-" + UUID.randomUUID().toString().substring(0, 12) +
+                            ".backup"));
+                    File temp = File.createTempFile("nasmount_sftp_", ".tmp");
+                    try {
+                        try (OutputStream out = new FileOutputStream(temp)) {
+                            copy(input, out);
+                        }
+                        try {
+                            sftp.put(temp.getAbsolutePath(), stagingName);
+                            boolean backedUp = false;
+                            if (targetExists) {
+                                sftp.rename(finalName, backup);
+                                backedUp = true;
+                            }
+                            try { sftp.rename(stagingName, finalName); }
+                            catch (Exception failure) {
+                                if (backedUp)
+                                    try { sftp.rename(backup, finalName); } catch (Exception ignored) {}
+                                throw failure;
+                            }
+                            if (backedUp) sftp.rm(backup);
+                        } catch (Exception error) {
+                            try { sftp.rm(stagingName); } catch (Exception ignored) {}
+                            throw error;
+                        }
+                    } finally { temp.delete(); }
+                }
+                return;
+            case "WebDAV":
+                // WebDAV MOVE gives a clean final name only once the full
+                // upload succeeded. Overwrite=F avoids deleting an existing
+                // destination without user consent.
+                RequestBody body = new RequestBody() {
+                    @Override public MediaType contentType() {
+                        return MediaType.parse("application/octet-stream");
+                    }
+                    @Override public void writeTo(BufferedSink sink) throws IOException {
+                        byte[] buf = new byte[32768];
+                        int read;
+                        while ((read = input.read(buf)) != -1) sink.write(buf, 0, read);
+                    }
+                };
+                Request upload = webRequest(p, tempPath, false).put(body).build();
+                try (Response resp = HTTP.newCall(upload).execute()) {
+                    if (!resp.isSuccessful()) throw new IOException("WebDAV PUT HTTP " +
+                            resp.code());
+                }
+                try {
+                    Request move = webRequest(p, tempPath, false)
+                            .header("Destination", webUrl(p, finalPath, false).toString())
+                            .header("Overwrite", overwrite ? "T" : "F")
+                            .method("MOVE", RequestBody.create(new byte[0], null))
+                            .build();
+                    try (Response resp = HTTP.newCall(move).execute()) {
+                        if (!resp.isSuccessful())
+                            throw new IOException("WebDAV MOVE HTTP " + resp.code());
+                    }
+                } catch (Exception error) {
+                    try (Response ignored = HTTP.newCall(webRequest(p, tempPath, false)
+                            .delete().build()).execute()) {}
+                    catch (Exception ignored) {}
+                    throw error;
+                }
+                return;
+            default: throw new IOException("지원하지 않는 저장소");
+        }
+    }
+
+    static void mkdir(Models.RemoteProfile p, String folder) throws Exception {
+        if ("MYBOX".equals(p.protocol)) {
+            MyBoxWriteApi.LIVE.mkdir(p, folder);
+            return;
+        }
+        if ("TeraBox".equals(p.protocol)) {
+            TeraBoxWriteApi.LIVE.mkdir(p, folder);
+            return;
+        }
+        switch (p.protocol) {
+            case "SMB":
+                try (SmbFile f = new SmbFile(smbPath(p, folder, true), smbContext(p))) {
+                    f.mkdir();
+                } return;
+            case "FTP":
+                FTPClient ftp = ftp(p);
+                try { if (!ftp.makeDirectory(absolute(p, folder)))
+                    throw new IOException("FTP 폴더를 생성할 수 없습니다."); }
+                finally { closeFtp(ftp); }
+                return;
+            case "SFTP":
+                try (SSHClient ssh = ssh(p); SFTPClient sftp = ssh.newSFTPClient()) {
+                    sftp.mkdir(absolute(p, folder));
+                } return;
+            case "WebDAV":
+                Request r = webRequest(p, folder, true).method("MKCOL",
+                        RequestBody.create(new byte[0], null)).build();
+                try (Response resp = HTTP.newCall(r).execute()) {
+                    if (!resp.isSuccessful()) throw new IOException("MKCOL HTTP " +
+                            resp.code());
+                } return;
+            default: throw new IOException("지원하지 않는 저장소");
+        }
+    }
+    static void rename(Models.RemoteProfile p, String source,
+                       String destination, boolean directory) throws Exception {
+        if ("MYBOX".equals(p.protocol)) {
+            MyBoxWriteApi.LIVE.rename(p, source, destination);
+            return;
+        }
+        if ("TeraBox".equals(p.protocol)) {
+            TeraBoxWriteApi.LIVE.rename(p, source, destination);
+            return;
+        }
+        if (source.equals("/") || destination.equals("/"))
+            throw new IllegalArgumentException("저장소 루트는 이름을 변경할 수 없습니다.");
+        if (relativePath(source).equals(relativePath(destination))) return;
+        switch (p.protocol) {
+            case "SMB":
+                try (SmbFile oldFile = new SmbFile(smbPath(p, source, directory),
+                        smbContext(p)); SmbFile newFile = new SmbFile(
+                        smbPath(p, destination, directory), smbContext(p))) {
+                    if (newFile.exists()) throw new IOException("같은 이름의 파일이 이미 있습니다.");
+                    oldFile.renameTo(newFile);
+                } return;
+            case "FTP":
+                FTPClient ftp = ftp(p);
+                try {
+                    if (ftp.listFiles(absolute(p, destination)).length > 0)
+                        throw new IOException("같은 이름의 파일이 이미 있습니다.");
+                    if (!ftp.rename(absolute(p, source), absolute(p, destination)))
+                        throw new IOException("FTP 이름 변경 실패");
+                } finally { closeFtp(ftp); }
+                return;
+            case "SFTP":
+                try (SSHClient ssh = ssh(p); SFTPClient sftp = ssh.newSFTPClient()) {
+                    if (sftp.statExistence(absolute(p, destination)) != null)
+                        throw new IOException("같은 이름의 파일이 이미 있습니다.");
+                    sftp.rename(absolute(p, source), absolute(p, destination));
+                } return;
+            case "WebDAV":
+                Request move = webRequest(p, source, directory)
+                        .header("Destination", webUrl(p, destination, directory).toString())
+                        .header("Overwrite", "F")
+                        .method("MOVE", RequestBody.create(new byte[0], null))
+                        .build();
+                try (Response response = HTTP.newCall(move).execute()) {
+                    if (!response.isSuccessful())
+                        throw new IOException("WebDAV 이름 변경 실패 (HTTP " +
+                                response.code() + ")");
+                } return;
+            default: throw new IOException("지원하지 않는 저장소");
+        }
+    }
+
+    static void delete(Models.RemoteProfile p, String path, boolean directory)
+            throws Exception {
+        if ("MYBOX".equals(p.protocol)) {
+            MyBoxWriteApi.LIVE.delete(p, path);
+            return;
+        }
+        if ("TeraBox".equals(p.protocol)) {
+            TeraBoxWriteApi.LIVE.delete(p, path);
+            return;
+        }
+        if (relativePath(path).equals("/"))
+            throw new IllegalArgumentException("저장소 루트는 삭제할 수 없습니다.");
+        switch (p.protocol) {
+            case "SMB":
+                try (SmbFile f = new SmbFile(smbPath(p, path, directory),
+                        smbContext(p))) { f.delete(); } return;
+            case "FTP":
+                FTPClient ftp = ftp(p);
+                try {
+                    boolean ok = directory ? ftp.removeDirectory(absolute(p, path)) :
+                            ftp.deleteFile(absolute(p, path));
+                    if (!ok) throw new IOException("FTP 삭제 실패 (폴더가 비어 있는지 확인)");
+                } finally { closeFtp(ftp); } return;
+            case "SFTP":
+                try (SSHClient ssh = ssh(p); SFTPClient sftp = ssh.newSFTPClient()) {
+                    if (directory) sftp.rmdir(absolute(p, path));
+                    else sftp.rm(absolute(p, path));
+                } return;
+            case "WebDAV":
+                try (Response resp = HTTP.newCall(
+                        webRequest(p, path, directory).delete().build()).execute()) {
+                    if (!resp.isSuccessful())
+                        throw new IOException("WebDAV DELETE HTTP " + resp.code());
+                } return;
+            default: throw new IOException("지원하지 않는 저장소");
+        }
+    }
+    private static List<Models.Entry> sort(List<Models.Entry> files) {
+        files.sort((a, b) -> {
+            if (a.directory != b.directory) return a.directory ? -1 : 1;
+            return a.name.compareToIgnoreCase(b.name);
+        });
+        return files;
+    }
+    private static void copy(InputStream in, OutputStream out) throws IOException {
+        byte[] buffer = new byte[32768];
+        int len;
+        while ((len = in.read(buffer)) != -1) out.write(buffer, 0, len);
+        out.flush();
+    }
+}

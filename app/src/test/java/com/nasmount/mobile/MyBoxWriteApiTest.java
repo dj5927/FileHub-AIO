@@ -283,4 +283,64 @@ public class MyBoxWriteApiTest {
                     new ByteArrayInputStream(payload), payload.length);
             RecordedRequest ticket = request(server);
             assertEquals("POST", ticket.getMethod());
-            assertEquals("/v1/drive/files",
+            assertEquals("/v1/drive/files", ticket.getPath());
+            assertPat(ticket);
+            JSONObject intent = new JSONObject(ticket.getBody().readUtf8());
+            assertEquals(payload.length, intent.getLong("fileSize"));
+            assertFalse(intent.getBoolean("isOverwrite"));
+            RecordedRequest transfer = request(server);
+            assertEquals("POST", transfer.getMethod());
+            assertTrue(transfer.getPath().startsWith("/v1/storage/upload"));
+            assertNull(transfer.getHeader("Authorization"));
+            assertEquals(2, server.getRequestCount());
+            assertTrue(transfer.getBodySize() > payload.length);
+            byte[] multipart = transfer.getBody().readByteArray();
+            assertTrue(indexOf(multipart, payload) >= 0);
+        }
+    }
+
+    @Test public void uploadRejectsUnexpectedOffsetBeforePostingFile() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setResponseCode(201)
+                    .setBody(new JSONObject()
+                            .put("offset", 3)
+                            .put("uploadUrl", server.url(
+                                    "/v1/storage/upload?stoken=test-ticket").toString())
+                            .toString()));
+            assertThrows(java.io.IOException.class, () ->
+                    api(server, new FakeLookup()).upload(profile(), "/", "file.txt",
+                            new ByteArrayInputStream(new byte[]{1,2,3}), 3));
+            assertEquals(1, server.getRequestCount());
+        }
+    }
+
+    @Test public void myboxAndTeraboxItemsWritable() {
+        Models.RemoteProfile mybox = profile();
+        Models.Entry file = entry("document.pdf", false);
+        file.size = 1234L;
+        FileTransferEngine.Item selected = FileTransferEngine.remote(mybox, file);
+        assertTrue(selected.writable());
+        assertEquals(1234L, selected.size);
+        Models.RemoteProfile terabox = new Models.RemoteProfile();
+        terabox.protocol = "TeraBox";
+        assertTrue(FileTransferEngine.remote(terabox, file).writable());
+        assertFalse(CloudProvider.isReadOnly(terabox));
+        assertFalse(CloudProvider.isReadOnly(mybox));
+    }
+
+    private static int indexOf(byte[] haystack, byte[] needle) {
+        outer: for (int i = 0; i <= haystack.length - needle.length; i++) {
+            for (int j = 0; j < needle.length; j++)
+                if (haystack[i+j] != needle[j]) continue outer;
+            return i;
+        }
+        return -1;
+    }
+
+    private static String okioToString(okhttp3.RequestBody body) throws Exception {
+        okio.Buffer buffer = new okio.Buffer();
+        body.writeTo(buffer);
+        return buffer.readUtf8();
+    }
+}

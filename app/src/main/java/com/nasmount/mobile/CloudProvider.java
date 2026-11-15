@@ -332,4 +332,168 @@ final class CloudProvider {
         String download;
         if ("MYBOX".equals(p.protocol)) {
             String endpoint = "v1/drive/files/" + encodedSegment(file.remoteId) +
-                    "/download
+                    "/download";
+            JSONObject result = getJson(
+                    requireEndpoint(MYBOX_ORIGIN, endpoint).toString(),
+                    p.password, null);
+            download = result.optString("downloadUrl");
+        } else if ("TeraBox".equals(p.protocol)) {
+            download = "";
+            if (!forceSigned) {
+                JSONArray paths = new JSONArray().put(joined(p, path));
+                HttpUrl url = requireEndpoint(TERA_ORIGIN, "api/filemetas").newBuilder()
+                        .addQueryParameter("target", paths.toString())
+                        .addQueryParameter("dlink", "1")
+                        .addQueryParameter("app_id", "250528")
+                        .addQueryParameter("channel", "dubox")
+                        .addQueryParameter("clienttype", "0").build();
+                JSONObject info = getJson(url.toString(), null, ndusCookie(p.password));
+                JSONArray rows = info.optJSONArray("info");
+                if (rows != null && rows.length() > 0) {
+                    JSONObject first = rows.optJSONObject(0);
+                    if (first != null && first.optInt("errno", 0) == 0)
+                        download = first.optString("dlink", "");
+                }
+            }
+            // Some files have no dlink in /api/filemetas; the desktop
+            // TeraBox backend also fetches a signed /api/download link.
+            if (download.isEmpty())
+                download = signedTeraboxDownload(p, file.remoteId);
+        } else throw new IOException("지원하지 않는 클라우드입니다.");
+        if (download.isEmpty())
+            throw new IOException(p.protocol + "에서 다운로드 주소를 받지 못했습니다.");
+        return download;
+    }
+
+    private static String signedTeraboxDownload(Models.RemoteProfile p, String id)
+            throws Exception {
+        if (id == null || !id.matches("[0-9]{1,20}"))
+            throw new IOException("TeraBox 다운로드 파일 ID가 없습니다.");
+        String session = ndusCookie(p.password);
+        HttpUrl home = requireEndpoint(TERA_ORIGIN, "api/home/info").newBuilder()
+                .addQueryParameter("app_id", "250528")
+                .addQueryParameter("channel", "dubox")
+                .addQueryParameter("clienttype", "0").build();
+        JSONObject metadata = getJson(home.toString(), null, session);
+        JSONObject data = metadata.optJSONObject("data");
+        if (metadata.optInt("errno", -1) != 0 || data == null)
+            throw new CloudApiFailure("TeraBox", "다운로드 서명",
+                    metadata.optInt("errno", -1),
+                    "ndus 로그인 세션을 갱신하거나 다운로드 권한을 확인하세요.");
+        String signature = TeraBoxDownloadSign.sign(
+                data.optString("sign3", ""), data.optString("sign1", ""));
+        HttpUrl url = requireEndpoint(TERA_ORIGIN, "api/download").newBuilder()
+                .addQueryParameter("type", "dlink")
+                .addQueryParameter("vip", "2")
+                .addQueryParameter("sign", signature)
+                .addQueryParameter("timestamp", String.valueOf(
+                        System.currentTimeMillis() / 1000))
+                .addQueryParameter("need_speed", "1")
+                .addQueryParameter("fidlist", "[" + id + "]")
+                .addQueryParameter("app_id", "250528")
+                .addQueryParameter("channel", "dubox")
+                .addQueryParameter("clienttype", "0").build();
+        JSONObject response = getJson(url.toString(), null, session);
+        if (response.optInt("errno", -1) != 0)
+            throw new CloudApiFailure("TeraBox", "파일 다운로드 링크 발급",
+                    response.optInt("errno", -1),
+                    "로그인 세션·다운로드 권한 또는 파일 상태를 확인하세요.");
+        JSONArray links = response.optJSONArray("dlink");
+        JSONObject first = links == null ? null : links.optJSONObject(0);
+        String download = first == null ? "" : first.optString("dlink", "");
+        if (download.isEmpty())
+            throw new IOException("TeraBox 서버가 다운로드 주소를 발급하지 않았습니다.");
+        return download;
+    }
+    /** Keep account tokens away from untrusted signed-download redirects. */
+    static boolean trustedTeraboxDownloadHost(String host) {
+        if (host == null) return false;
+        String value = host.toLowerCase(java.util.Locale.ROOT);
+        // The first dlink is normally https://d.terabox.com/file/...,
+        // NOT www.terabox.com. It needs the same ndus session to issue the
+        // actual CDN Location response. Never send ndus to arbitrary hosts.
+        return value.equals("terabox.com") ||
+                value.endsWith(".terabox.com") ||
+                value.equals("nephobox.com") ||
+                value.endsWith(".nephobox.com");
+    }
+
+    static Request.Builder cloudDownloadRequest(Models.RemoteProfile p, HttpUrl url,
+                                                long position) throws IOException {
+        if (!safeDownloadUrl(url))
+            throw new IOException("클라우드 다운로드 서버 주소가 안전하지 않습니다.");
+        Request.Builder request = new Request.Builder().url(url).get();
+        if (position > 0) request.header("Range", "bytes=" + position + "-");
+        if ("TeraBox".equals(p.protocol)) {
+            request.header("User-Agent", TERA_BROWSER_AGENT)
+                    .header("Referer", TERA_ORIGIN);
+            // Cookies must never be passed to arbitrary CDN hosts.
+            if (url.port() == 443 && trustedTeraboxDownloadHost(url.host()))
+                request.header("Cookie", ndusCookie(p.password));
+        }
+        return request;
+    }
+
+    static InputStream openStream(Models.RemoteProfile p, String path, long position)
+            throws Exception {
+        if (position < 0) throw new IOException("잘못된 파일 위치입니다.");
+        HttpUrl next = HttpUrl.parse(resolveDownload(p, path));
+        boolean signedRetry = false;
+        for (int redirect = 0; redirect < 8; redirect++) {
+            Request.Builder request = cloudDownloadRequest(p, next, position);
+            Response response = HTTP.newCall(request.build()).execute();
+            if (response.isRedirect()) {
+                String location = response.header("Location");
+                HttpUrl destination = location == null ? null : next.resolve(location);
+                response.close();
+                next = destination;
+                continue;
+            }
+            if ("TeraBox".equals(p.protocol) && !signedRetry &&
+                    (response.code() == 401 || response.code() == 403 ||
+                     response.code() == 404 || response.code() == 410)) {
+                response.close();
+                signedRetry = true;
+                next = HttpUrl.parse(resolveDownload(p, path, true));
+                continue;
+            }
+            if (!response.isSuccessful() || response.body() == null ||
+                    (position > 0 && response.code() != 206)) {
+                int status = response.code();
+                response.close();
+                throw new IOException(position > 0 && status == 200 ?
+                        "클라우드 서버가 영상 구간 이동(HTTP Range)을 지원하지 않습니다." :
+                        p.protocol + " 파일 읽기 실패 (HTTP " + status + "). " +
+                        "다운로드 주소 만료, 로그인 세션 및 다운로드 권한을 확인하세요.");
+            }
+            if (position > 0) {
+                String range = response.header("Content-Range", "");
+                if (!range.toLowerCase(java.util.Locale.ROOT)
+                        .startsWith("bytes " + position + "-")) {
+                    response.close();
+                    throw new IOException("클라우드 서버가 다른 영상 구간을 반환했습니다.");
+                }
+            }
+            return new FilterInputStream(response.body().byteStream()) {
+                private boolean closed;
+                @Override public void close() throws IOException {
+                    if (closed) return;
+                    closed = true;
+                    try { super.close(); } finally { response.close(); }
+                }
+            };
+        }
+        throw new IOException("클라우드 스트리밍 리디렉션이 너무 많습니다.");
+    }
+    static void download(Models.RemoteProfile p, String path, OutputStream out)
+            throws Exception {
+        try (InputStream in = openStream(p, path, 0)) {
+            byte[] buffer = new byte[65536];
+            int count;
+            while ((count = in.read(buffer)) != -1) {
+                if (count > 0) out.write(buffer, 0, count);
+            }
+            out.flush();
+        }
+    }
+}

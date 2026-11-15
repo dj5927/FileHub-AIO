@@ -444,4 +444,136 @@ final class NasShareApi {
                             link.optInt("error", -1) + ").");
                 return checkedLink(link.optString("id"), path, link.optString("url"), 0);
             }
-            URI publicHost = new URI(profil
+            URI publicHost = new URI(profile.nasPublicHost.isEmpty() ?
+                    profile.nasApiBase : profile.nasPublicHost);
+            String filename = path.substring(path.lastIndexOf('/') + 1);
+            String host = publicHost.getHost();
+            int port = publicHost.getPort() > 0 ? publicHost.getPort() : 443;
+            FormBody.Builder options = new FormBody.Builder()
+                    .add("file_total", "1")
+                    .add("file_name", path).add("link_name", filename)
+                    .add("hostname", host).add("port", String.valueOf(port))
+                    .add("ssl", "true").add("network_type", "internet")
+                    .add("download_type", "create_download_link")
+                    .add("new_share", "1").add("direct_create", "1")
+                    .add("x_option", "0").add("c", "1")
+                    .add("option", "1").add("access_enabled",
+                            password == null || password.isEmpty() ? "false" : "true")
+                    .add("access_code", password == null ? "" : password);
+            if (days == 0) options.add("valid_duration", "forever");
+            else if (days > 0) options.add("valid_duration", "period_of_time")
+                    .add("day", String.valueOf(days)).add("hour", "0");
+            else options.add("valid_duration", "specific_time")
+                    .add("datetime", date.replace('-', '/') + " 23:59");
+            JSONObject data = qnap("get_share_link", sid, options);
+            JSONArray links = data.optJSONArray("links");
+            String url = links != null && links.length() > 0 ?
+                    links.getJSONObject(0).optString("link_url") : data.optString("host", "");
+            String sidOfShare = data.optString("ssid", "");
+            if (sidOfShare.isEmpty() && links != null && links.length() > 0)
+                sidOfShare = links.getJSONObject(0).optString("ssid", "");
+            return checkedLink(sidOfShare, path, url,
+                    data.optLong("expire_time", 0));
+        });
+    }
+
+    List<Link> list() throws Exception {
+        return authenticated(sid -> {
+            List<Link> result = new ArrayList<>();
+            if (NasSharePolicy.SYNOLOGY.equals(profile.nasVendor)) {
+                JSONObject data = synology("SYNO.FileStation.Sharing", 3, "list", sid,
+                        new FormBody.Builder().add("offset", "0").add("limit", "500"));
+                JSONArray values = data.optJSONArray("links");
+                if (values != null) for (int i = 0; i < values.length(); i++) {
+                    JSONObject item = values.getJSONObject(i);
+                    String path = item.optString("path", "");
+                    if (!NasSharePolicy.inAllowedRoot(profile, path)) continue;
+                    String owner = item.optString("link_owner", "");
+                    if (!owner.isEmpty() && !owner.equals(profile.nasApiUser)) continue;
+                    result.add(checkedLink(item.optString("id", ""), path,
+                            item.optString("url", ""),
+                            synologyExpiry(item.optString("date_expired", "0"))));
+                }
+            } else {
+                JSONObject data = qnap("get_share_list", sid,
+                        new FormBody.Builder().add("start", "0")
+                                .add("limit", "500").add("sort", "start_time")
+                                .add("dir", "DESC"));
+                JSONArray values = data.optJSONArray("datas");
+                if (values != null) for (int i = 0; i < values.length(); i++) {
+                    JSONObject item = values.getJSONObject(i);
+                    String path = item.optString("link_name", "");
+                    if (path.isEmpty()) path = item.optString("filename", "");
+                    if (!NasSharePolicy.inAllowedRoot(profile, path)) continue;
+                    String owner = item.optString("creator", "");
+                    if (!owner.isEmpty() && !owner.equals(profile.nasApiUser)) continue;
+                    result.add(checkedLink(item.optString("ssid", ""), path,
+                            item.optString("download_link", ""),
+                            item.optLong("expire_time", 0)));
+                }
+            }
+            return result;
+        });
+    }
+
+    void revoke(Link link) throws Exception {
+        if (link == null || !NasSharePolicy.inAllowedRoot(profile, link.path))
+            throw new IOException("설정된 공유 폴더 밖의 링크는 해제할 수 없습니다.");
+        authenticated(sid -> {
+            if (NasSharePolicy.SYNOLOGY.equals(profile.nasVendor)) {
+                synology("SYNO.FileStation.Sharing", 3, "delete", sid,
+                        new FormBody.Builder().add("id", JSONObject.quote(link.id)));
+            } else {
+                qnap("delete_share", sid, new FormBody.Builder()
+                        .add("file_total", "1").add("download_link", link.url)
+                        .add("filename", link.path));
+            }
+            return null;
+        });
+    }
+
+    RevokeReport revokeMany(List<Link> selected) throws Exception {
+        if (selected == null || selected.isEmpty())
+            throw new IllegalArgumentException("해제할 공유 링크를 선택하세요.");
+        // Check every target before modifying anything on the remote NAS.
+        java.util.LinkedHashMap<String, Link> unique = new java.util.LinkedHashMap<>();
+        for (Link link : selected) {
+            if (link == null || link.id == null || link.id.isEmpty() ||
+                    !NasSharePolicy.inAllowedRoot(profile, link.path))
+                throw new IOException("허용하지 않은 공유 링크가 선택되었습니다.");
+            unique.put(link.id, link);
+        }
+        List<Link> targets = new ArrayList<>(unique.values());
+        // Authenticate once per batch. A 2FA challenge occurs before any
+        // changes, so an OTP retry does not repeat a partially completed batch.
+        return authenticated(sid -> revokeEach(targets, link -> {
+            if (NasSharePolicy.SYNOLOGY.equals(profile.nasVendor)) {
+                synology("SYNO.FileStation.Sharing", 3, "delete", sid,
+                        new FormBody.Builder().add("id", JSONObject.quote(link.id)));
+            } else {
+                qnap("delete_share", sid, new FormBody.Builder()
+                        .add("file_total", "1").add("download_link", link.url)
+                        .add("filename", link.path));
+            }
+        }));
+    }
+
+    private static long synologyExpiry(String raw) {
+        if (raw == null || raw.isEmpty() || "0".equals(raw)) return 0;
+        try {
+            return LocalDate.parse(raw).atStartOfDay(ZoneId.systemDefault())
+                    .toEpochSecond();
+        } catch (Exception ignored) { return 0; }
+    }
+
+    private static Link checkedLink(String id, String path, String url, long expires)
+            throws IOException {
+        if (id == null || id.isEmpty() || url == null || url.isEmpty())
+            throw new IOException("NAS가 올바른 공유 ID 또는 URL을 반환하지 않았습니다.");
+        HttpUrl parsed = HttpUrl.parse(url);
+        if (parsed == null || !(parsed.isHttps() || "http".equals(parsed.scheme())) ||
+                parsed.username().length() > 0 || parsed.password().length() > 0)
+            throw new IOException("NAS가 유효하지 않은 공유 주소를 반환했습니다.");
+        return new Link(id, path, url, expires);
+    }
+}

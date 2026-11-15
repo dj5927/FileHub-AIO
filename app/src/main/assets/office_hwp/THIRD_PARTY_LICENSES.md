@@ -326,4 +326,222 @@ USE THE FONT SOFTWARE OR FROM OTHER DEALINGS IN THE FONT SOFTWARE.
 | @noble/hashes | 2.4.0 | MIT | 렌더 리소스 키와 문서 digest |
 | @types/chrome | 0.2.5 | MIT | Chrome API 타입 |
 | pixelmatch | 7.2.0 | ISC | 시각 diff 픽셀 비교 |
-| pngjs | 7.0.0 | MIT | 시각 
+| pngjs | 7.0.0 | MIT | 시각 diff PNG 처리 |
+| puppeteer-core | 25.5.0 | Apache-2.0 | E2E 테스트 / CDP 연결 |
+| typescript | 7.0.2 | Apache-2.0 | TypeScript 컴파일 |
+| vite | 8.2.1 | MIT | 개발 서버 + 빌드 |
+| vite-plugin-pwa | 1.3.0 | MIT | PWA 빌드 보조 |
+| workbox-window | 7.4.1 | MIT | Service worker runtime 보조 |
+
+### rhwp-chrome / rhwp-firefox
+
+| 패키지 | Lock 버전 | 라이선스 | 용도 |
+|--------|-----------|---------|------|
+| typescript | 7.0.2 | Apache-2.0 | TypeScript 컴파일 |
+| vite | 8.2.1 | MIT | 확장 번들 빌드 |
+
+### rhwp-vscode
+
+| 패키지 | Lock 버전 | 라이선스 | 용도 |
+|--------|-----------|---------|------|
+| @types/node | 18.15.13 | MIT | Node.js 타입 |
+| @types/vscode | 1.82.0 | MIT | VS Code API 타입 |
+| @typescript/native | 7.0.2 | Apache-2.0 | TypeScript native preview 컴파일러 |
+| copy-webpack-plugin | 14.0.0 | MIT | Webpack 파일 복사 |
+| null-loader | 4.0.1 | MIT | Webpack 로더 |
+| ts-loader | 9.6.2 | MIT | Webpack TypeScript 로더 |
+| typescript | 6.0.2 | Apache-2.0 | TypeScript 컴파일 |
+| webpack | 5.109.2 | MIT | 번들러 |
+| webpack-cli | 7.2.2 | MIT | Webpack CLI |
+| @noble/hashes | 2.4.0 | MIT | 문서 digest |
+| canvaskit-wasm | 0.42.0 | BSD-3-Clause | 자동 선택 CanvasKit backend |
+
+### rhwp-shared
+
+`rhwp-shared`는 현재 별도 외부 npm 의존성이 없는 shared source package다.
+
+---
+
+## 웹 폰트 및 폰트 리소스
+
+`assets/fonts/`에 포함된 canonical 폰트 목록이다. 저작권 보호가 필요한 한컴/Microsoft 폰트는 Git에
+포함하지 않으며, 세부 파일 목록과 폴백 관계는 `assets/fonts/FONTS.md`를 참조한다.
+
+| 폰트/리소스 | 라이선스 | 출처 | 비고 |
+|-------------|---------|------|------|
+| Pretendard (9종) | SIL Open Font License 1.1 | github.com/orioncactus/pretendard | Sans-serif fallback |
+| Noto Serif KR (2종) | SIL Open Font License 1.1 | Google Fonts | Serif fallback |
+| Noto Sans KR (3종) | SIL Open Font License 1.1 | Google Fonts | Sans-serif fallback |
+| Noto Sans Math Regular 2.001 | SIL Open Font License 1.1 | Google LLC / Ubuntu `fonts-noto-core`; [공식 라이선스](https://github.com/google/fonts/blob/main/ofl/notosansmath/OFL.txt) | CanvasKit 수학 기호 fallback; [라이선스 전문](assets/fonts/NotoSansMath-OFL.txt) 동봉 |
+| Nanum Myeongjo (3종) | SIL Open Font License 1.1 | Google Fonts | Serif fallback |
+| Nanum Gothic (3종) | SIL Open Font License 1.1 | Google Fonts | Sans-serif fallback |
+| Nanum Gothic Coding (2종) | SIL Open Font License 1.1 | Google Fonts | Monospace fallback |
+| Gowun Batang (2종) | SIL Open Font License 1.1 | Google Fonts | Serif fallback |
+| Gowun Dodum | SIL Open Font License 1.1 | Google Fonts | Sans-serif fallback |
+| D2 Coding (2종) | SIL Open Font License 1.1 | NAVER | Monospace fallback |
+| Spoqa Han Sans | SIL Open Font License 1.1 | github.com/spoqa/spoqa-han-sans | Sans-serif fallback |
+| RHWP Old Hangul subset | SIL Open Font License 1.1 | Adobe / Google | 옛한글 PUA fallback, `SourceHanSerifK-OFL.txt` 동봉 |
+| Latin Modern Math 1.959 | GUST Font License | B. Jackowski, P. Strzelczyk, P. Pianowski / TeX 사용자 그룹 | 수식 fallback 및 적분·곱셈·근호·중괄호·연산자·대문자 윤곽; [라이선스 전문](assets/fonts/LatinModernMath-GUST-FONT-LICENSE.txt) 동봉 |
+| Cafe24 써라운드 | 카페24 무료 배포 | fonts.cafe24.com | 장식체 |
+| Cafe24 슈퍼매직 | 카페24 무료 배포 | fonts.cafe24.com | 장식체 |
+| 해피니스 산스 (Happiness Sans, 4종) | SIL Open Font License 1.1 | [현대백화점](https://thehyundaifont.com/) | 공식 배포 WOFF2 원본. [동봉 라이선스 PDF](ttfs/redistributable/happiness-sans/HapinessSans_License.pdf)에 저작권·Reserved Font Name·OFL 전문 수록 |
+
+테스트 폰트를 공개 GitHub 저장소에 포함하는 것도 재배포이므로, 제품 번들 여부와 관계없이
+원본의 저작권·라이선스·수정본 명명 조건이 적용된다. 저장소의 MIT 라이선스가 외부 폰트의
+재배포 권한을 대신하지 않는다.
+
+| 경로 | 출처·라이선스 | 비고 |
+| --- | --- | --- |
+| `tests/fixtures/fonts/RHWPEquation*.ttf` (3개) | Adobe Noto Sans KR 수정본, SIL OFL 1.1 | [출처·변형 설명](tests/fixtures/fonts/RHWPEquationFonts.LICENSE.md), [전문](tests/fixtures/fonts/RHWPEquationFonts.OFL.txt). 내부 family는 `RHWP Equation Contract`; 문서의 요청 이름은 렌더러의 명시적 대체 설정으로 연결 |
+| `tests/fixtures/native_font_family_names/family-contract.ttf` | Adobe Noto Sans KR 수정본, SIL OFL 1.1 | [출처](tests/fixtures/native_font_family_names/README.md), [전문](tests/fixtures/native_font_family_names/OFL.txt) |
+| `tests/fixtures/native_font_styles/*.ttf` (2개) | Adobe Noto Sans KR 수정본, SIL OFL 1.1 | [출처·재생성](tests/fixtures/native_font_styles/README.md), [전문](tests/fixtures/native_font_styles/OFL.txt) |
+| 나머지 `tests/fixtures/fonts/`의 TTF·TTC (7개) | 저장소 생성기의 직접 작성 윤곽선, MIT | 각 `*.LICENSE.md`에 생성기·용도 기록. 외부 폰트 수정본과 구별 |
+
+`assets/fonts/NotoSansMath-Regular.woff2`는 Ubuntu 설치본의 전체 TTF를 WOFF2로 변환한
+파일이다. 이 버전의 `Copyright 2018 Google LLC. All Rights Reserved.`와 SIL OFL 1.1
+정보를 폰트 내부 및 동봉 라이선스에 보존한다. 소프트웨어와 함께 재배포하며 폰트 자체는
+SIL OFL 1.1을 유지한다. 원본 경로·SHA-256·변환 방법은 [폰트 목록](assets/fonts/FONTS.md)에 기록한다.
+
+`src/renderer/equation/integral_outline.rs`,
+`src/renderer/equation/multiplication_outline.rs`,
+`src/renderer/equation/radical_outline.rs`,
+`src/renderer/equation/brace_outline.rs`,
+`src/renderer/equation/brace_stretch_data.rs`,
+`src/renderer/equation/round_stretch_data.rs`,
+`src/renderer/equation/relation_outline.rs`,
+`src/renderer/equation/operator_outline.rs`의 윤곽 상수는 동봉된 Latin Modern Math
+1.959의 `integral`·`multiply`·`radical`·`braceleft`·`plus`·`minus`·`equal` glyph에서
+추출한 공개 윤곽이다. `brace_stretch_data.rs`는 중괄호의 MATH 크기별 variant와
+`uni23A7`·`uni23A8`·`uni23A9`·`braceleft.ex` 조립 부품의 윤곽·연결 메트릭도 포함한다.
+`round_stretch_data.rs`는 공개 둥근 괄호의 `uni239B`·`uni239C`·`uni239D`
+MATH 조립 부품의 윤곽·연결 메트릭을 포함한다.
+원본 SHA-256과 추출 방법을 해당 파일에 기록한다. 원본 Copyright 2012--2014
+B. Jackowski, P. Strzelczyk, P. Pianowski를 보존하고, 해당 윤곽 데이터는
+GUST Font License를 유지한다. rhwp는 글꼴 파일을 개명·수정하는 대신 이 윤곽의
+좌표를 공통 수식 ink 영역으로 변환한다. 한컴 사설 글꼴의 윤곽은 포함하지 않는다.
+
+`relation_outline.rs`는 같은 공개 원본의 `less`·`greater`·`lessequal`·`greaterequal`·
+`parenleft`·`parenright` glyph를 추출한 관계 기호와 둥근 괄호 윤곽이다.
+저작권·GUST Font License를 그대로 유지한다. 사설 face에서 소비하는 bbox는
+메트릭이며 사설 윤곽 데이터가 아니다.
+
+`src/renderer/equation/accent_outline.rs`의 화살촉은 같은 공개 원본의 MATH 조립
+부품 `arrowright.rt`, `arrowboth.lft`, `arrowboth.rt`에서 파생했다. 원 저작권과
+GUST Font License를 유지하며 사설 글꼴의 윤곽·바이트는 포함하지 않는다.
+
+`assets/fonts/LatinModernMath-VariableOutline-subset.otf`는 같은 공개 원본의
+정체 A~Z/a~z와 이탤릭 a~z 윤곽을 포함한 13,488 byte 파생 OpenType CFF 글꼴이다. 원본 저작권·
+라이선스를 보존하고 family·full·PostScript 및 CFF 이름을 변경했다.
+[파생 manifest](assets/fonts/MANIFEST-RHWP-LMM-VariableOutline.txt)에 원본·
+파생 SHA와 변경 범위를 기록한다. `src/renderer/equation/variable_outline.rs`는
+이 공개 윤곽을 파싱하며, 사설 글꼴에서는 em 프레임의 메트릭만 소비한다.
+
+---
+
+## 도구
+
+| 도구 | 라이선스 | 용도 |
+|------|---------|------|
+| Docker | Apache-2.0 | WASM 빌드 환경 |
+| wasm-pack | MIT OR Apache-2.0 | WASM 패키징 |
+| Chrome DevTools Protocol | BSD-3-Clause | E2E 테스트 / 브라우저 자동화 |
+| GitHub Actions | GitHub Terms | CI/CD |
+| npm Trusted Publishing / OIDC | npm Terms | npm 배포 |
+
+---
+
+## 직접 포팅한 알고리즘
+
+공통 Print 장치 면적 표본(`src/renderer/print_image_sampling.rs`)은 공개 PDFium
+`chromium/7999`의 CStretchEngine 고정소수점 산술 계약을 적용한다. 원래 PDFium Authors와
+Foxit Software의 저작권 고지 및 BSD-3-Clause 조건은 `licenses/pdfium/LICENSE`에 보존한다.
+이 항목은 Cargo 크레이트 의존성이 아니다. 출처는 `licenses/pdfium/README.md`에 있다.
+
+### Volexity hwp-extract
+
+- 출처: [volexity/hwp-extract](https://github.com/volexity/hwp-extract), commit
+  `e5f8b5e1590dee973630666e687e919fa70da2e2`
+- 참조 파일: `src/hwp_extract/encrypt.py`
+- 적용 위치: `src/parser/crypto.rs`의 HWP5 EncryptVersion 4 키 파생 및 비트 단위
+  AES-CFB 복호화
+- 라이선스: BSD-3-Clause
+
+Modified BSD License
+
+_Copyright © `2024`, `Volexity, Inc`_
+
+_All rights reserved._
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. Neither the name of the `Volexity, Inc` nor the
+   names of its contributors may be used to endorse or promote products
+   derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL `Volexity, Inc` BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+---
+
+## 참조한 오픈소스 프로젝트 (스펙·설계 참조)
+
+rhwp는 아래 프로젝트들의 **코드를 직접 복사하지 않으며**, 공개된 스펙 정보(enum 값·속성 기본값·태그 이름·검증 규칙 등)만 참조한다.
+Apache-2.0 라이선스 고지 의무는 본 문서, 관련 기술 문서, 그리고 각 참조 파일의 헤더 주석으로 충족한다.
+
+| 프로젝트 | 라이선스 | 참조 범위 | rhwp 위치 |
+|---------|---------|----------|-----------|
+| [hancom-io/hwpx-owpml-model](https://github.com/hancom-io/hwpx-owpml-model) | Apache-2.0 © 2022 Hancom Inc. | HWPX enum 정의, 속성 기본값, 태그 전체 집합, canonical 속성·자식 순서 | `src/serializer/hwpx/canonical_defaults.rs`, `src/serializer/hwpx/{header,table,shape,picture}.rs`, `mydocs/tech/hwpx_hancom_reference.md` |
+| [hancom-io/dvc](https://github.com/hancom-io/dvc) | Apache-2.0 © 2022 Hancom Inc. | HWPX 검증 규칙 JSON 스키마, errorCode 체계 | `mydocs/tech/hwpx_dvc_reference.md` |
+
+---
+
+## 라이선스 호환성
+
+rhwp는 **MIT 라이선스**로 배포된다.
+
+- MIT, Apache-2.0, BSD, Zlib, Unlicense, 0BSD, ISC, CC0 — MIT와 호환되는 permissive license 계열
+- `encoding_rs`의 BSD-3-Clause 조항은 고지 의무를 요구하며, 이 문서로 충족
+- `pcx`는 WTFPL 대체 선택지를 포함하지만 MIT/Apache-2.0 선택지가 있어 rhwp MIT 배포와 호환
+- 오픈 폰트는 SIL OFL 1.1 또는 GUST Font License 등 재배포 가능한 라이선스만 Git에 포함
+- 저작권 보호 대상 폰트(한컴, Microsoft 등)는 Git에 포함하지 않으며 `ttfs/FONTS.md`, `assets/fonts/FONTS.md`에서 목록과 폴백만 관리
+
+---
+
+*이 문서는 `Cargo.toml`, `Cargo.lock`, 각 `package.json`/`package-lock.json`, `assets/fonts/FONTS.md` 기준으로 현행화되었으며, 의존성 업데이트 시 함께 갱신해야 한다.*
+
+배포 폰트의 파일별 SHA·원본 저작권·라이선스 전문은
+[fonts/licenses](assets/fonts/licenses/README.md)에 함께 보존한다. 제품 폰트 37개와
+공개 테스트·Native 원본 18개를 [목록](assets/fonts/licenses/font-notices.json)에 등록하며,
+등록되지 않은 공개 폰트 또는 배포 고지 누락은 `scripts/frontend-font-assets.test.mjs`가 검출한다.
+상용 글꼴의 문서 요청 이름은 대체 설정에서 처리하고, 파생 폰트의 내부 이름으로 사용하지 않는다.
+
+### 기본 ICC CMM
+
+`pdf-icc`는 기본 feature이며 Native/WASM에서 같은 순수 Rust CMM인 `rhwp-qcms`를
+사용한다. qcms 0.3.0의 내부 보정판이며 Mozilla Foundation·Marti Maria 등의 원 저작권과
+MIT 전문은 [COPYING](vendor/rhwp-qcms/COPYING)에 보존한다. 원본 archive·VCS commit과
+요청별 CLUT 예약·작업량 변경은 [패치 기록](vendor/rhwp-qcms/RHWP_PATCHES.md)에 있다.
+공식 qcms 릴리스나 이미 게시된 crate로 표시하지 않는다. 실제 포장·독립 소비는 #8174 S05에서
+최종 dependency graph로 재검증한다.
+
+## Nimbus Roman 계량 자료
+
+`src/renderer/font_metric_nimbus_roman.rs`와 `data/font-metrics/nimbus-roman/`은
+URW Base35의 글꼴 프로그램에서 추출한 이름·Unicode 대응·전진폭 계량 자료다.
+원본 프로그램 SHA-256과 생성 방법은 해당 디렉터리의 `source.json`·`README.md`에 있다.
+글꼴 프로그램 바이트와 윤곽선은 이 자료에 포함하지 않는다. 원본의 고지는 패키지에 동봉한
+`data/font-metrics/nimbus-roman/URW-FONT-NOTICE.txt`에 보존한다.

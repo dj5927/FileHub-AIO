@@ -328,4 +328,351 @@ public final class TeraBoxWriteApiTest {
             assertEquals("/api/precreate", precreate.getRequestUrl().encodedPath());
             assertAuthorized(precreate);
             RecordedRequest chunk = request(server);
-            assert
+            assertEquals("upload", chunk.getRequestUrl().queryParameter("method"));
+            assertEquals("0", chunk.getRequestUrl().queryParameter("partseq"));
+            assertEquals("upload-id-1", chunk.getRequestUrl().queryParameter("uploadid"));
+            assertAuthorized(chunk);
+            assertTrue(chunk.getHeader("Content-Type").startsWith("multipart/form-data;"));
+            assertTrue(find(chunk.getBody().readByteArray(), data) >= 0);
+            RecordedRequest created = request(server);
+            assertEquals("/api/create", created.getRequestUrl().encodedPath());
+            assertEquals("0", created.getRequestUrl().queryParameter("rtype"));
+            assertEquals(5, server.getRequestCount());
+        }
+    }
+
+    @Test public void multipartUploadStreamsTwoChunksWithoutMutatingInput()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            byte[] data = new byte[TeraBoxWriteApi.CHUNK_BYTES + 731];
+            new java.util.Random(23).nextBytes(data);
+            server.enqueue(new MockResponse().setBody("{\"errno\":0,\"host\":\"c-jp.terabox.com\"}"));
+            expectSessionPage(server);
+            server.enqueue(new MockResponse().setBody(
+                    "{\"errno\":0,\"return_type\":1,\"uploadid\":\"u-2\"}"));
+            server.enqueue(new MockResponse().setBody(
+                    new JSONObject().put("md5", md5(data, 0, TeraBoxWriteApi.CHUNK_BYTES)).toString()));
+            server.enqueue(new MockResponse().setBody(
+                    new JSONObject().put("md5", md5(data, TeraBoxWriteApi.CHUNK_BYTES, 731)).toString()));
+            server.enqueue(new MockResponse().setBody(
+                    new JSONObject().put("errno", 0).put("size", data.length).toString()));
+            api(server, Collections.emptyList()).upload(profile(), "/",
+                    "large-file.dat", new ByteArrayInputStream(data), data.length);
+            request(server); request(server); request(server);
+            assertEquals("0", request(server).getRequestUrl().queryParameter("partseq"));
+            assertEquals("1", request(server).getRequestUrl().queryParameter("partseq"));
+            RecordedRequest created = request(server);
+            JSONObject params = form(created);
+            assertTrue(created.getPath().contains("rtype=0"));
+            assertEquals(6, server.getRequestCount());
+        }
+    }
+
+    @Test public void approvedCopyUsesExplicitServerOverwriteNotSilentDefault()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            Models.Entry existing = file("movie.mkv", "/");
+            List<Models.Entry> targetList = Collections.singletonList(existing);
+            TeraBoxWriteApi api = api(server, targetList);
+            assertThrows(FileTransferEngine.NameConflict.class,
+                    () -> api.copyOrMove(profile(), "/source/movie.mkv", "/", false));
+            assertEquals(0, server.getRequestCount());
+            expectSessionPage(server);
+            expectOk(server);
+            api.copyOrMove(profile(), "/source/movie.mkv", "/", false, true);
+            request(server);
+            RecordedRequest copy = request(server);
+            assertEquals("copy", copy.getRequestUrl().queryParameter("opera"));
+            JSONObject operation = new JSONArray(form(copy).getString("filelist"))
+                    .getJSONObject(0);
+            assertEquals("overwrite", operation.getString("ondup"));
+            assertEquals("/source/movie.mkv", operation.getString("path"));
+            assertEquals("/", operation.getString("dest"));
+        }
+    }
+
+    @Test public void approvedUploadStagesBeforeReplacingExistingTarget()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            byte[] content = new byte[127_007];
+            new java.util.Random(91).nextBytes(content);
+            String checksum = md5(content, 0, content.length);
+            List<Models.Entry> targetList =
+                    Collections.singletonList(file("movie.mkv", "/"));
+            server.enqueue(new MockResponse().setBody(
+                    "{\"errno\":0,\"host\":\"c-jp.terabox.com\"}"));
+            expectSessionPage(server);
+            server.enqueue(new MockResponse().setBody(
+                    "{\"errno\":0,\"return_type\":1,\"uploadid\":\"staged-upload\"}"));
+            server.enqueue(new MockResponse().setBody(new JSONObject()
+                    .put("md5", checksum).toString()));
+            server.enqueue(new MockResponse().setBody(new JSONObject()
+                    .put("errno", 0).put("size", content.length).toString()));
+            expectOk(server); // server-side COPY replaces only after upload success
+            expectOk(server); // removes staging to TeraBox trash
+            api(server, targetList).upload(profile(), "/", "movie.mkv",
+                    new ByteArrayInputStream(content), content.length, true);
+            request(server); request(server); request(server);
+            request(server); // chunk
+            RecordedRequest finalized = request(server);
+            assertEquals("0", finalized.getRequestUrl().queryParameter("rtype"));
+            assertTrue(form(finalized).getString("path").startsWith(
+                    "/.nasmount-"));
+            RecordedRequest copy = request(server);
+            JSONObject op = new JSONArray(form(copy).getString("filelist"))
+                    .getJSONObject(0);
+            assertEquals("copy", copy.getRequestUrl().queryParameter("opera"));
+            assertEquals("overwrite", op.getString("ondup"));
+            assertEquals("movie.mkv", op.getString("newname"));
+            assertTrue(op.getString("path").startsWith("/.nasmount-"));
+            RecordedRequest deleted = request(server);
+            assertEquals("delete", deleted.getRequestUrl().queryParameter("opera"));
+            assertEquals(7, server.getRequestCount());
+        }
+    }
+
+    @Test public void brokenStagingUploadNeverSendsOverwriteCopy() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            byte[] content = new byte[]{1,2,3,4,5};
+            server.enqueue(new MockResponse().setBody(
+                    "{\"errno\":0,\"host\":\"c-jp.terabox.com\"}"));
+            expectSessionPage(server);
+            server.enqueue(new MockResponse().setBody(
+                    "{\"errno\":0,\"return_type\":1,\"uploadid\":\"u-fail\"}"));
+            server.enqueue(new MockResponse().setBody("{\"md5\":\"BAD-CHECKSUM\"}"));
+            assertThrows(IOException.class, () ->
+                    api(server, Collections.singletonList(file("movie.mkv", "/")))
+                            .upload(profile(), "/", "movie.mkv",
+                                    new ByteArrayInputStream(content), content.length, true));
+            assertEquals(4, server.getRequestCount());
+        }
+    }
+
+    @Test public void freeAccountLargeUploadChecksEntitlementBeforeAnyFileWrite()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setBody(
+                    "{\"errno\":0,\"data\":{\"member_info\":{\"is_vip\":0}}}"));
+            assertThrows(IOException.class, () ->
+                    api(server, Collections.emptyList()).upload(profile(), "/",
+                            "huge.bin", new ByteArrayInputStream(new byte[]{1}),
+                            TeraBoxWriteApi.FREE_FILE_LIMIT + 1));
+            RecordedRequest membership = request(server);
+            assertTrue(membership.getRequestUrl().encodedPath().contains("membership"));
+            assertEquals("query", membership.getRequestUrl().queryParameter("method"));
+            assertEquals(1, server.getRequestCount());
+        }
+    }
+
+    @Test public void locationMayOmitErrnoWhenServerHostIsPresent()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            byte[] data = new byte[]{10, 20, 30};
+            server.enqueue(new MockResponse().setBody("{\"host\":\"c-jp.terabox.com\"}"));
+            expectSessionPage(server);
+            server.enqueue(new MockResponse().setBody(
+                    "{\"errno\":0,\"return_type\":1,\"uploadid\":\"locate-ok\"}"));
+            server.enqueue(new MockResponse().setBody(new JSONObject()
+                    .put("md5", md5(data, 0, data.length)).toString()));
+            server.enqueue(new MockResponse().setBody(
+                    new JSONObject().put("errno", 0).put("size", data.length).toString()));
+            api(server, Collections.emptyList()).upload(profile(), "/", "tiny.txt",
+                    new ByteArrayInputStream(data), data.length);
+            assertEquals("locateupload", request(server).getRequestUrl()
+                    .queryParameter("method"));
+            assertEquals(5, server.getRequestCount());
+        }
+    }
+
+    @Test public void precreateAndFinishMayOmitErrnoWithStrongSuccessProof()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            byte[] data = new byte[]{1, 2, 3, 4};
+            server.enqueue(new MockResponse().setBody(
+                    "{\"errno\":0,\"host\":\"c-jp.terabox.com\"}"));
+            expectSessionPage(server);
+            server.enqueue(new MockResponse().setBody(
+                    "{\"return_type\":1,\"uploadid\":\"ticket-without-errno\"}"));
+            server.enqueue(new MockResponse().setBody(new JSONObject()
+                    .put("md5", md5(data, 0, data.length)).toString()));
+            server.enqueue(new MockResponse().setBody(
+                    new JSONObject().put("fs_id", 123L).put("size", data.length).toString()));
+            api(server, Collections.emptyList()).upload(profile(), "/", "short.txt",
+                    new ByteArrayInputStream(data), data.length);
+            assertEquals(5, server.getRequestCount());
+        }
+    }
+
+    @Test public void missingCodeAndHostFailsBeforeUploadWithoutFakeMinus999()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setBody("{\"message\":\"unexpected\"}"));
+            IOException error = assertThrows(IOException.class, () ->
+                    api(server, Collections.emptyList()).upload(profile(), "/",
+                            "tiny.txt", new ByteArrayInputStream(new byte[]{42}), 1));
+            assertTrue(error.getMessage().contains("locateupload"));
+            assertFalse(error.getMessage().contains("-999"));
+            assertEquals(1, server.getRequestCount());
+        }
+    }
+
+    @Test public void serverExplicitMinus999IsNeverIgnored()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setBody(
+                    "{\"errno\":-999,\"host\":\"c-jp.terabox.com\"}"));
+            IOException error = assertThrows(IOException.class, () ->
+                    api(server, Collections.emptyList()).upload(profile(), "/",
+                            "tiny.txt", new ByteArrayInputStream(new byte[]{42}), 1));
+            assertTrue(error.getMessage().contains("-999"));
+            assertEquals(1, server.getRequestCount());
+        }
+    }
+
+    @Test public void regularMutatingWriteStillRequiresErrno()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            expectSessionPage(server);
+            server.enqueue(new MockResponse().setBody("{\"host\":\"c-jp.terabox.com\"}"));
+            IOException error = assertThrows(IOException.class, () ->
+                    api(server, Collections.emptyList()).mkdir(profile(), "/safe"));
+            assertTrue(error.getMessage().contains("폴더 생성"));
+            assertEquals(2, server.getRequestCount());
+        }
+    }
+
+    @Test public void copyResponseInfoWithoutIndividualErrnoMustNotFail() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            expectSessionPage(server);
+            server.enqueue(new MockResponse().setBody(new JSONObject()
+                    .put("errno", 0)
+                    .put("info", new JSONArray().put(new JSONObject()
+                            .put("path", "/target/movie.txt")
+                            .put("fs_id", 913L))).toString()));
+            api(server, Collections.emptyList()).copyOrMove(profile(),
+                    "/source/movie.txt", "/target", false);
+            assertEquals(2, server.getRequestCount());
+        }
+    }
+
+    @Test public void asyncTaskSuccessListWithMetadataWithoutErrnoMustNotFail()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            expectSessionPage(server);
+            server.enqueue(new MockResponse().setBody(
+                    "{\"errno\":0,\"taskid\":1893,\"info\":[]}"));
+            server.enqueue(new MockResponse().setBody(new JSONObject()
+                    .put("errno", 0).put("status", "success")
+                    .put("list", new JSONArray().put(new JSONObject()
+                            .put("path", "/target/movie.txt")
+                            .put("fs_id", 951L))).toString()));
+            api(server, Collections.emptyList()).copyOrMove(profile(),
+                    "/source/movie.txt", "/target", false);
+            assertEquals(3, server.getRequestCount());
+        }
+    }
+
+    @Test public void explicitNestedInfoErrorStillStopsOverwrite() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            expectSessionPage(server);
+            server.enqueue(new MockResponse().setBody(
+                    "{\"errno\":0,\"info\":[{\"errno\":-8,\"path\":\"/target/existing.txt\"}]}"));
+            CloudProvider.CloudApiFailure fail = assertThrows(
+                    CloudProvider.CloudApiFailure.class, () ->
+                    api(server, Collections.emptyList()).copyOrMove(profile(),
+                            "/source/existing.txt", "/target", false, true));
+            assertTrue(fail.getMessage().contains("-8"));
+            assertEquals(2, server.getRequestCount());
+        }
+    }
+
+    @Test public void asyncTaskNestedExplicitErrorMustFail() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            expectSessionPage(server);
+            server.enqueue(new MockResponse().setBody("{\"errno\":0,\"taskid\":4001}"));
+            server.enqueue(new MockResponse().setBody(
+                    "{\"errno\":0,\"status\":\"success\",\"list\":[{\"errno\":-9}]}"));
+            assertThrows(CloudProvider.CloudApiFailure.class, () ->
+                    api(server, Collections.emptyList()).copyOrMove(profile(),
+                            "/source/absent.txt", "/target", false));
+            assertEquals(3, server.getRequestCount());
+        }
+    }
+
+    @Test public void documentOverwriteHandlesMetadataInCopyAndCleanupReplies()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            byte[] content = "document change".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            server.enqueue(new MockResponse().setBody(
+                    "{\"errno\":0,\"host\":\"c-jp.terabox.com\"}"));
+            expectSessionPage(server);
+            server.enqueue(new MockResponse().setBody(
+                    "{\"errno\":0,\"return_type\":1,\"uploadid\":\"save-edit\"}"));
+            server.enqueue(new MockResponse().setBody(new JSONObject()
+                    .put("md5", md5(content, 0, content.length)).toString()));
+            server.enqueue(new MockResponse().setBody(new JSONObject()
+                    .put("errno", 0).put("size", content.length).toString()));
+            server.enqueue(new MockResponse().setBody(
+                    "{\"errno\":0,\"info\":[{\"path\":\"/OFFICE.md\",\"fs_id\":28}]}"));
+            server.enqueue(new MockResponse().setBody(
+                    "{\"errno\":0,\"info\":[{\"path\":\"/.nasmount-temp.upload\"}]}"));
+            api(server, Collections.singletonList(file("OFFICE.md", "/")))
+                    .upload(profile(), "/", "OFFICE.md",
+                            new ByteArrayInputStream(content), content.length, true);
+            request(server); request(server); request(server);
+            request(server); request(server);
+            RecordedRequest replaced = request(server);
+            assertEquals("copy", replaced.getRequestUrl().queryParameter("opera"));
+            RecordedRequest cleaned = request(server);
+            assertEquals("delete", cleaned.getRequestUrl().queryParameter("opera"));
+            assertEquals(7, server.getRequestCount());
+        }
+    }
+
+    @Test public void nestedExplicitFailureFlagMustNotBeIgnoredWhenErrnoZero()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            expectSessionPage(server);
+            server.enqueue(new MockResponse().setBody(
+                    "{\"errno\":0,\"info\":[{\"errno\":0,\"status\":\"failed\"}]}"));
+            IOException error = assertThrows(IOException.class, () ->
+                    api(server, Collections.emptyList()).copyOrMove(
+                            profile(), "/source/file.txt", "/", false));
+            assertTrue(error.getMessage().contains("개별 파일 오류"));
+            assertEquals(2, server.getRequestCount());
+        }
+    }
+
+    private static String md5(byte[] bytes, int off, int length) throws Exception {
+        MessageDigest md = MessageDigest.getInstance("MD5");
+        md.update(bytes, off, length);
+        StringBuilder out = new StringBuilder();
+        for (byte value : md.digest())
+            out.append(String.format(Locale.ROOT, "%02x", value & 255));
+        return out.toString();
+    }
+    private static int find(byte[] all, byte[] part) {
+        outer: for (int i = 0; i <= all.length - part.length; i++) {
+            for (int j = 0; j < part.length; j++)
+                if (all[i + j] != part[j]) continue outer;
+            return i;
+        }
+        return -1;
+    }
+}

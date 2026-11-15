@@ -177,4 +177,31 @@ final class VideoThumbnailLoader {
                 throw new IOException("Remote video preview budget exhausted");
             fetchedBlocks++;
             long position = blockNumber * VideoThumbnailPolicy.BLOCK_BYTES;
-            i
+            int expected = (int) Math.min(VideoThumbnailPolicy.BLOCK_BYTES,
+                    length - position);
+            byte[] bytes = new byte[expected];
+            int copied = 0;
+            try (InputStream input = RemoteProvider.openStream(profile, path, position)) {
+                while (copied < expected) {
+                    int n = input.read(bytes, copied, expected - copied);
+                    if (n < 0) break;
+                    if (n == 0) continue;
+                    copied += n;
+                }
+            } catch (Exception error) {
+                throw new IOException("Remote thumbnail read failed", error);
+            }
+            if (copied <= 0) throw new IOException("Empty thumbnail range");
+            if (copied != expected) bytes = java.util.Arrays.copyOf(bytes, copied);
+            blocks.put(blockNumber, bytes);
+            return bytes;
+        }
+
+        @Override public long getSize() { return length; }
+
+        @Override public synchronized void close() throws IOException {
+            closed = true;
+            blocks.clear();
+        }
+    }
+}

@@ -478,4 +478,60 @@ export class RhwpEditor {
       undo: () => this._request('plugin.invoke', { id: 'hwpctrl', method: 'undo', args: [] }),
       redo: () => this._request('plugin.invoke', { id: 'hwpctrl', method: 'redo', args: [] }),
       /**
-       * HwpCt
+       * HwpCtrl 커서를 사용자 캐럿 자리로 옮깁니다. HwpCtrl 은 자체 커서를 가지므로, 사용자가
+       * 화면에서 고른 자리에 `CreateField` 등을 쓰려면 먼저 부릅니다. 옮길 수 없으면 `null`.
+       */
+      syncCursorFromCaret: () =>
+        this._request('plugin.invoke', { id: 'hwpctrl', method: 'syncCursorFromCaret', args: [] }),
+    };
+  }
+
+  /** 메뉴·툴바·상태표시줄 표시. 숨겨도 커맨드는 그대로 실행됩니다. */
+  get chrome() {
+    return {
+      get: () => this._request('chrome.get'),
+      set: (visibility) => this._request('chrome.set', { visibility }),
+    };
+  }
+
+  /**
+   * 에디터를 제거합니다.
+   *
+   * iframe 과 채널을 회수합니다. **다른 컨테이너로 옮기려면 destroy 후 다시 만들어야 합니다** —
+   * iframe 을 DOM 이동시키면 브라우저가 문서를 재로드해 편집 상태가 사라집니다.
+   */
+  destroy() {
+    this._offDocumentChanged?.();
+    this._offDocumentChanged = null;
+    this._documentChangedListeners.clear();
+    this._offFieldChanged?.();
+    this._offFieldChanged = null;
+    this._fieldChangedListeners.clear();
+    this._transport.destroy();
+    this._iframe.remove();
+  }
+}
+
+/**
+ * studio 인스턴스를 만들어 컨테이너에 심습니다.
+ *
+ * `createEditor` 의 상위 집합입니다 — 같은 것을 만들고, 플러그인 로드와 창 제어 초기값을
+ * 함께 처리합니다.
+ *
+ * @example
+ * ```javascript
+ * const studio = await createStudio('#app', { plugins: ['hwpctrl'], chrome: { menu: false } });
+ * await studio.hwpctrl.batch(h => { h.SetTextFile('안녕', 'TEXT', ''); });
+ * ```
+ */
+export async function createStudio(container, options = {}) {
+  const studio = await createEditor(container, options);
+  try {
+    if (options.chrome) await studio.chrome.set(options.chrome);
+    for (const id of options.plugins ?? []) await studio.plugins.load(id);
+  } catch (error) {
+    studio.destroy();
+    throw error;
+  }
+  return studio;
+}

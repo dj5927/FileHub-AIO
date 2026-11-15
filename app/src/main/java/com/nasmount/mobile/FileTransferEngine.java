@@ -330,4 +330,391 @@ final class FileTransferEngine {
                         new File(destination.local, item.name) : null;
                 DocumentFile existingSaf = destination.kind.equals("saf") ?
                         destination.saf.findFile(item.name) : null;
-                boolean exists = e
+                boolean exists = existingLocal != null ?
+                        existingLocal.exists() : existingSaf != null;
+                if (exists && !overwrite) throw new NameConflict();
+                if (exists && overwrite) {
+                    boolean isFolder = existingLocal != null ?
+                            existingLocal.isDirectory() : existingSaf.isDirectory();
+                    if (isFolder != item.directory)
+                        throw new IOException("파일과 폴더 종류가 달라 덮어쓸 수 없습니다: " +
+                                item.name);
+                }
+            }
+        }
+    }
+
+    static int transfer(Context context, List<Item> sources, Destination destination,
+                        boolean move) throws Exception {
+        return transfer(context, sources, destination, move, false);
+    }
+
+    static List<String> conflictingNames(List<Item> sources, Destination destination,
+                                         boolean move) throws Exception {
+        preflight(sources, destination, move, true);
+        Set<String> names = new HashSet<>();
+        if ("local".equals(destination.kind)) {
+            File[] files = destination.local.listFiles();
+            if (files == null) throw new IOException("대상 폴더 목록 조회 실패");
+            for (File f : files) names.add(f.getName().toLowerCase(Locale.ROOT));
+        } else if ("saf".equals(destination.kind)) {
+            for (DocumentFile f : destination.saf.listFiles())
+                names.add(f.getName().toLowerCase(Locale.ROOT));
+        } else if ("remote".equals(destination.kind)) {
+            for (Models.Entry f : RemoteProvider.list(destination.remote, destination.path))
+                names.add(f.name.toLowerCase(Locale.ROOT));
+        }
+        List<String> conflicts = new ArrayList<>();
+        for (Item item : sources)
+            if (names.contains(item.name.toLowerCase(Locale.ROOT)))
+                conflicts.add(item.name);
+        return conflicts;
+    }
+
+    static int transfer(Context context, List<Item> sources, Destination destination,
+                        boolean move, boolean overwrite) throws Exception {
+        return transfer(context, sources, destination, move, overwrite, null);
+    }
+
+    static int transfer(Context context, List<Item> sources, Destination destination,
+                        boolean move, boolean overwrite,
+                        ProgressListener listener) throws Exception {
+        return transfer(context, sources, destination, move, overwrite, listener, null);
+    }
+
+    static int transfer(Context context, List<Item> sources, Destination destination,
+                        boolean move, boolean overwrite,
+                        ProgressListener listener, TransferControl control) throws Exception {
+        if (control != null) { control.bindCurrentThread(); control.check(); }
+        preflight(sources, destination, move, overwrite);
+        if (control != null) control.check();
+        TransferMeter meter = listener == null ? null :
+                new TransferMeter(listener, totalSourceBytes(sources), sources.size());
+        int[] budget = {0};
+        int success = 0;
+        for (Item item : sources) {
+            try {
+                // Cloud backends support server-side copy AND move, including folders.
+                if (control != null) control.check();
+                if (meter != null) meter.begin(item.name);
+                if ("remote".equals(item.kind) &&
+                        "remote".equals(destination.kind) &&
+                        item.remote.id.equals(destination.remote.id) &&
+                        ("MYBOX".equals(destination.remote.protocol) ||
+                         "TeraBox".equals(destination.remote.protocol))) {
+                    if ("TeraBox".equals(destination.remote.protocol))
+                        TeraBoxWriteApi.LIVE.copyOrMove(item.remote, item.path,
+                                destination.path, move, overwrite);
+                    else
+                        MyBoxWriteApi.LIVE.copyOrMove(item.remote, item.path,
+                                destination.path, move, overwrite);
+                    if (meter != null && !item.directory) meter.directComplete(item.size);
+                } else if (move && !overwrite && "remote".equals(item.kind) &&
+                        "remote".equals(destination.kind) &&
+                        item.remote.id.equals(destination.remote.id)) {
+                    String to = RemoteProvider.child(destination.path, item.name);
+                    RemoteProvider.rename(item.remote, item.path, to, item.directory);
+                    if (meter != null && !item.directory) meter.directComplete(item.size);
+                } else if (move && "local".equals(item.kind) &&
+                        "local".equals(destination.kind) &&
+                        tryLocalMove(item.local, new File(destination.local, item.name),
+                                overwrite)) {
+                    // A rename bypasses copyOne; announce its completed media
+                    // destination to Android's shared Gallery/Video index too.
+                    MediaIndexing.scanLocal(context, new File(destination.local, item.name));
+                    if (meter != null && !item.directory) meter.directComplete(item.size);
+                } else {
+                    copyOne(context, item, destination, budget, 0, overwrite, meter, control);
+                    if (control != null) control.check();
+                    if (move) deleteOne(item, budget, 0);
+                }
+                success++;
+                if (meter != null) meter.completedItem();
+            } catch (Exception failure) {
+                throw new BatchFailure(success, sources.size(), false, failure);
+            }
+        }
+        if (meter != null) meter.finished();
+        return success;
+    }
+
+    private static boolean tryLocalMove(File source, File target, boolean overwrite)
+            throws IOException {
+        if (target.exists() && !overwrite)
+            throw new NameConflict();
+        if (source.isDirectory() && target.exists()) return false;
+        try {
+            // Unlike File.renameTo, NIO move without REPLACE_EXISTING will
+            // never overwrite a file created after the initial preflight.
+            if (overwrite)
+                Files.move(source.toPath(), target.toPath(),
+                        StandardCopyOption.REPLACE_EXISTING);
+            else
+                Files.move(source.toPath(), target.toPath());
+            return true;
+        } catch (IOException e) {
+            if (target.exists() && !overwrite)
+                throw new NameConflict();
+            // Cross-device moves fall back to copy+verified close+delete.
+            return false;
+        }
+    }
+
+    static int delete(Context context, List<Item> sources) throws Exception {
+        int[] budget = {0};
+        int success = 0;
+        for (Item item : sources) {
+            try {
+                if (!item.writable())
+                    throw new IOException("읽기 전용 파일은 삭제할 수 없습니다: " + item.name);
+                deleteOne(item, budget, 0);
+                success++;
+            } catch (Exception failure) {
+                throw new BatchFailure(success, sources.size(), true, failure);
+            }
+        }
+        return success;
+    }
+
+    private static void visit(int[] budget, int depth) throws IOException {
+        if (depth > MAX_DEPTH || ++budget[0] > MAX_ENTRIES)
+            throw new IOException("폴더가 너무 깊거나 항목이 많아 작업을 중단했습니다.");
+    }
+
+    static List<Item> children(Item parent) throws Exception {
+        List<Item> out = new ArrayList<>();
+        switch (parent.kind) {
+            case "local":
+                File[] listing = parent.local.listFiles();
+                if (listing == null) throw new IOException("하위 파일 목록을 읽지 못했습니다.");
+                for (File child : listing) {
+                    if (java.nio.file.Files.isSymbolicLink(child.toPath()))
+                        throw new IOException("심볼릭 링크 폴더는 안전을 위해 제외합니다.");
+                    out.add(local(child));
+                }
+                return out;
+            case "saf":
+                for (DocumentFile child : parent.saf.listFiles())
+                    out.add(saf(child, RemoteProvider.child(parent.path,
+                            child.getName()), parent.tree));
+                return out;
+            case "remote":
+                for (Models.Entry child : RemoteProvider.list(parent.remote, parent.path))
+                    out.add(remote(parent.remote, child));
+                return out;
+            default: throw new IOException("이 화면의 폴더는 지원하지 않습니다.");
+        }
+    }
+
+    private static Destination createFolder(Destination target, String name,
+                                            boolean overwrite)
+            throws Exception {
+        switch (target.kind) {
+            case "local":
+                File local = new File(target.local, name);
+                if (local.exists()) {
+                    if (!overwrite || !local.isDirectory()) throw new NameConflict();
+                } else if (!local.mkdir())
+                    throw new IOException("폴더를 생성하지 못했습니다: " + name);
+                return localFolder(local);
+            case "saf":
+                DocumentFile doc = target.saf.findFile(name);
+                if (doc != null && (!overwrite || !doc.isDirectory()))
+                    throw new NameConflict();
+                if (doc == null) doc = target.saf.createDirectory(name);
+                if (doc == null) throw new IOException("SD 폴더 생성 실패: " + name);
+                return safFolder(doc, RemoteProvider.child(target.path, name),
+                        target.tree);
+            case "remote":
+                String remoteChild = RemoteProvider.child(target.path, name);
+                boolean foundFolder = false;
+                if (overwrite)
+                    for (Models.Entry entry : RemoteProvider.list(target.remote, target.path))
+                        if (entry.name.equalsIgnoreCase(name)) {
+                            if (!entry.directory) throw new NameConflict();
+                            foundFolder = true;
+                            break;
+                        }
+                if (!foundFolder) RemoteProvider.mkdir(target.remote, remoteChild);
+                return remoteFolder(target.remote, remoteChild);
+            default: throw new IOException("폴더를 만들 수 없는 대상입니다.");
+        }
+    }
+
+    private static void copyOne(Context ctx, Item item, Destination destination,
+                                int[] budget, int depth, boolean overwrite,
+                                TransferMeter meter, TransferControl control) throws Exception {
+        if (control != null) control.check();
+        visit(budget, depth);
+        if (item.directory) {
+            Destination childDestination = createFolder(destination, item.name, overwrite);
+            for (Item child : children(item))
+                copyOne(ctx, child, childDestination, budget, depth + 1, overwrite, meter, control);
+            return;
+        }
+        if (meter != null) meter.begin(item.name);
+        try (InputStream in = openInput(ctx, item)) {
+            if (control != null) control.track(in);
+            if (destination.kind.equals("remote")) {
+                InputStream measured = meter == null && control == null ? in : new FilterInputStream(in) {
+                    @Override public int read() throws IOException {
+                        if (control != null) control.check();
+                        int value = super.read();
+                        if (value >= 0 && meter != null) meter.bytes(1);
+                        return value;
+                    }
+                    @Override public int read(byte[] b, int offset, int length) throws IOException {
+                        if (control != null) control.check();
+                        int n = in.read(b, offset, length);
+                        if (n > 0 && meter != null) meter.bytes(n);
+                        return n;
+                    }
+                };
+                RemoteProvider.upload(destination.remote, destination.path,
+                        item.name, measured, item.size, overwrite);
+            } else if (destination.kind.equals("local")) {
+                File created = new File(destination.local, item.name);
+                if (created.exists() && !overwrite) throw new NameConflict();
+                File staged = overwrite ? new File(destination.local,
+                        ".nasmount-" + UUID.randomUUID().toString() + ".staging") : created;
+                boolean createdHere = false;
+                try {
+                    try (OutputStream out = Files.newOutputStream(staged.toPath(),
+                            StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                        createdHere = true;
+                        copyBytes(in, out, meter, control);
+                    }
+                    if (overwrite) {
+                        try {
+                            Files.move(staged.toPath(), created.toPath(),
+                                    StandardCopyOption.ATOMIC_MOVE,
+                                    StandardCopyOption.REPLACE_EXISTING);
+                        } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                            Files.move(staged.toPath(), created.toPath(),
+                                    StandardCopyOption.REPLACE_EXISTING);
+                        }
+                    }
+                } catch (Exception failure) {
+                    if (createdHere && staged.exists() && !staged.delete())
+                        throw new IOException("복사 실패 후 임시 파일을 정리하지 못했습니다: " +
+                                created.getName(), failure);
+                    throw failure;
+                }
+                // The final file is now fully closed and visible. Without
+                // MediaScanner registration a NAS -> phone paste is visible
+                // in file managers but not in Gallery or video pickers.
+                MediaIndexing.scanLocal(ctx, created);
+            } else if (destination.kind.equals("saf")) {
+                DocumentFile previous = destination.saf.findFile(item.name);
+                if (previous != null && !overwrite) throw new NameConflict();
+                String stagedName = previous == null ? item.name :
+                        ".nasmount-" + UUID.randomUUID().toString() + ".staging";
+                DocumentFile created = destination.saf.createFile(
+                        previous == null ? mime(item.name) :
+                                "application/octet-stream", stagedName);
+                if (created == null) throw new IOException("SD 파일 생성 실패: " + item.name);
+                try {
+                    if (!stagedName.equals(created.getName()))
+                        throw new IOException("SD 공급자가 파일명을 변경하여 저장을 중단했습니다.");
+                    try (OutputStream out = ctx.getContentResolver().openOutputStream(
+                            created.getUri(), "w")) {
+                        if (out == null) throw new IOException("SD 파일 쓰기 실패");
+                        copyBytes(in, out, meter, control);
+                    }
+                    if (previous != null) {
+                        if (!previous.delete())
+                            throw new IOException("SD 기존 파일 교체를 허용하지 않았습니다.");
+                        if (!created.renameTo(item.name))
+                            throw new IOException("SD 파일은 새 임시 이름으로 저장됐으나 " +
+                                    "원래 이름 복원에 실패했습니다: " + stagedName);
+                    }
+                } catch (Exception failure) {
+                    if (previous == null || previous.exists()) {
+                        if (!created.delete())
+                            throw new IOException("SD 전송 실패 및 불완전 파일 정리 실패: " +
+                                    item.name, failure);
+                    }
+                    throw failure;
+                }
+            } else throw new IOException("붙여넣을 수 없는 폴더입니다.");
+        }
+        if (meter != null) meter.update(true);
+    }
+
+    static InputStream openInput(Context ctx, Item item) throws Exception {
+        switch (item.kind) {
+            case "local": return new FileInputStream(item.local);
+            case "saf": {
+                InputStream in = ctx.getContentResolver().openInputStream(item.saf.getUri());
+                if (in == null) throw new IOException("SD 파일을 열 수 없습니다.");
+                return in;
+            }
+            case "media": {
+                InputStream in = ctx.getContentResolver().openInputStream(item.media);
+                if (in == null) throw new IOException("미디어 파일을 열 수 없습니다.");
+                return in;
+            }
+            case "remote": return RemoteProvider.openStream(item.remote, item.path, 0);
+            default: throw new IOException("지원하지 않는 소스입니다.");
+        }
+    }
+
+    private static String mime(String name) {
+        int dot = name.lastIndexOf('.');
+        if (dot < 0) return "application/octet-stream";
+        String known = MimeTypeMap.getSingleton().getMimeTypeFromExtension(
+                name.substring(dot + 1).toLowerCase(Locale.ROOT));
+        return known == null ? "application/octet-stream" : known;
+    }
+
+    private static void copyBytes(InputStream from, OutputStream to) throws IOException {
+        copyBytes(from, to, null);
+    }
+
+    private static void copyBytes(InputStream from, OutputStream to,
+                                  TransferMeter meter) throws IOException {
+        copyBytes(from, to, meter, null);
+    }
+
+    private static void copyBytes(InputStream from, OutputStream to,
+                                  TransferMeter meter, TransferControl control) throws IOException {
+        byte[] buffer = new byte[65536];
+        int read;
+        while (true) {
+            if (control != null) control.check();
+            read = from.read(buffer);
+            if (read == -1) break;
+            to.write(buffer, 0, read);
+            if (meter != null) meter.bytes(read);
+        }
+        to.flush();
+    }
+
+    private static void deleteOne(Item item, int[] budget, int depth)
+            throws Exception {
+        visit(budget, depth);
+        if (!item.writable()) throw new IOException("읽기 전용 파일은 삭제할 수 없습니다.");
+        if (item.directory && item.remote != null &&
+                !"MYBOX".equals(item.remote.protocol) &&
+                !"TeraBox".equals(item.remote.protocol))
+            for (Item child : children(item))
+                deleteOne(child, budget, depth + 1);
+        switch (item.kind) {
+            case "local":
+                if (item.directory)
+                    for (Item child : children(item))
+                        deleteOne(child, budget, depth + 1);
+                if (!item.local.delete())
+                    throw new IOException("삭제에 실패했습니다: " + item.name);
+                return;
+            case "saf":
+                if (!item.saf.delete())
+                    throw new IOException("SD 삭제에 실패했습니다: " + item.name);
+                return;
+            case "remote":
+                RemoteProvider.delete(item.remote, item.path, item.directory);
+                return;
+            default: throw new IOException("삭제할 수 없는 파일입니다.");
+        }
+    }
+}

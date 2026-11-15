@@ -637,4 +637,35 @@ public final class SettingsActivity extends Activity {
             }
         } else if (code == PICK_CODECS || code == PICK_HIDE_FOLDER) {
             try {
-                if ((data.getFlags() & Intent.FLAG_GRANT_WRITE_URI
+                if ((data.getFlags() & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0) {
+                    getContentResolver().takePersistableUriPermission(uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION |
+                                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                } else {
+                    getContentResolver().takePersistableUriPermission(uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                }
+                if (code == PICK_CODECS) {
+                    String folder = fileName(uri);
+                    if (folder == null) folder = uri.toString();
+                    PlayerSettings.prefs(this).edit()
+                            .putString(PlayerSettings.CODEC_TREE, uri.toString())
+                            .putString(PlayerSettings.CODEC_TREE_LABEL, folder).apply();
+                    importCodecFolder(uri);
+                } else {
+                    String documentId = DocumentsContract.getTreeDocumentId(uri);
+                    PlayerSettings.addHiddenFolder(this, "storage:" + documentId);
+                    if (documentId.startsWith("primary:")) {
+                        PlayerSettings.addHiddenFolder(this,
+                                "local:/storage/emulated/0/" + documentId.substring(8));
+                    }
+                    render();
+                }
+            } catch (Exception error) { toast("선택한 폴더를 저장할 수 없습니다."); }
+        }
+    }
+    private void toast(String message) {
+        android.widget.Toast.makeText(this, message,
+                android.widget.Toast.LENGTH_LONG).show();
+    }
+}

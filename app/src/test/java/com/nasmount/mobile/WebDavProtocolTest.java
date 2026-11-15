@@ -218,4 +218,96 @@ public final class WebDavProtocolTest {
         }
     }
 
-    
+    @Test public void streamingSeekRejectsServerIgnoringRange() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setResponseCode(200)
+                    .setBody("entire video unexpectedly returned"));
+            try {
+                RemoteProvider.openStream(local(server.getPort()), "/movie.mkv", 1024);
+                fail("Seeking must fail if the server ignores Range.");
+            } catch (java.io.IOException expected) {
+                assertTrue(expected.getMessage().contains("Range"));
+            }
+        }
+    }
+
+    @Test public void streamingSeekRejectsIncorrectContentRange() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setResponseCode(206)
+                    .setHeader("Content-Range", "bytes 0-3/4096")
+                    .setBody("BAD!"));
+            try {
+                RemoteProvider.openStream(local(server.getPort()), "/movie.mkv", 1024);
+                fail("Must not decode data from an incorrect range.");
+            } catch (java.io.IOException expected) {
+                assertTrue(expected.getMessage().contains("구간"));
+            }
+        }
+    }
+
+    @Test public void nestedKoreanFolderUsesDecodedSegments() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setResponseCode(207)
+                    .setBody("<?xml version='1.0'?>" +
+                    "<d:multistatus xmlns:d='DAV:'>" +
+                    "<d:response><d:href>/dav/개인자료/</d:href><d:propstat>" +
+                    "<d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>" +
+                    "<d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>" +
+                    "<d:response><d:href>/dav/개인자료/완료/</d:href><d:propstat>" +
+                    "<d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>" +
+                    "<d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>" +
+                    "<d:response><d:href>/dav/%EA%B0%9C%EC%9D%B8%EC%9E%90%EB%A3%8C/report.xlsx</d:href>" +
+                    "<d:propstat><d:prop><d:getcontentlength>77</d:getcontentlength></d:prop>" +
+                    "<d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>" +
+                    "</d:multistatus>"));
+            List<Models.Entry> actual = RemoteProvider.list(
+                    local(server.getPort()), "/개인자료");
+            assertEquals(2, actual.size());
+            assertEquals("완료", actual.get(0).name);
+            assertTrue(actual.get(0).directory);
+            assertEquals("/개인자료/완료", actual.get(0).path);
+            assertEquals("report.xlsx", actual.get(1).name);
+            assertEquals(77L, actual.get(1).size);
+        }
+    }
+
+    @Test public void nestedEncodedFolderAndRelativeHref() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setResponseCode(207)
+                    .setBody("<?xml version='1.0'?>" +
+                    "<d:multistatus xmlns:d='DAV:'>" +
+                    "<d:response><d:href>/dav/%ED%95%9C%EA%B8%80/</d:href></d:response>" +
+                    "<d:response><d:href>more%20files/</d:href><d:propstat>" +
+                    "<d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>" +
+                    "</d:propstat></d:response>" +
+                    "<d:response><d:href>/dav/한글/file%2bname.txt</d:href>" +
+                    "<d:propstat><d:prop><d:getcontentlength>3</d:getcontentlength></d:prop>" +
+                    "</d:propstat></d:response></d:multistatus>"));
+            List<Models.Entry> actual = RemoteProvider.list(
+                    local(server.getPort()), "/한글");
+            assertEquals(2, actual.size());
+            assertEquals("more files", actual.get(0).name);
+            assertEquals("file+name.txt", actual.get(1).name);
+        }
+    }
+
+    @Test public void nestedFolderNeverIncludesSiblings() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setResponseCode(207)
+                    .setBody("<d:multistatus xmlns:d='DAV:'>" +
+                    "<d:response><d:href>/dav/abc/</d:href></d:response>" +
+                    "<d:response><d:href>/dav/abc2/private.txt</d:href></d:response>" +
+                    "<d:response><d:href>/dav/abc/child.txt</d:href></d:response>" +
+                    "</d:multistatus>"));
+            List<Models.Entry> actual = RemoteProvider.list(
+                    local(server.getPort()), "/abc");
+            assertEquals(1, actual.size());
+            assertEquals("child.txt", actual.get(0).name);
+        }
+    }
+}

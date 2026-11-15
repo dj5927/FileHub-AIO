@@ -21,6 +21,11 @@ The release notes must contain a line `versionCode: 86` (or the next Android ver
 
 Requirements: JDK 17, Android SDK (compileSdk 36), and network access for Gradle dependency resolution.
 
+The checked-in `app/office-assets/*.gz.partXX` files are lossless, split copies
+of the bundled HWP viewer's WebAssembly runtime. Gradle reconstructs the original
+WASM assets and verifies their SHA-256 digests before packaging. There is no
+need to download binary assets from an untrusted site.
+
 ```sh
 ./gradlew :app:testDebugUnitTest :app:assembleDebug
 ```
