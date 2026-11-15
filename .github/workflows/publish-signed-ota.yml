@@ -1,0 +1,59 @@
+name: Publish signed FileHub AIO OTA release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out staged, already-signed APK
+        uses: actions/checkout@v4
+        with:
+          ref: release-staging/${{ github.ref_name }}
+          path: staging
+          persist-credentials: false
+
+      - name: Verify staged APK integrity and release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          file="staging/release-assets/FileHub-AIO-${tag}.apk"
+          test -f "${file}"
+          test -f staging/release-assets/SHA256SUMS
+          test -f staging/release-assets/versionCode.txt
+          (cd staging/release-assets && sha256sum --check SHA256SUMS)
+          version_code="$(cat staging/release-assets/versionCode.txt)"
+          [[ "${version_code}" =~ ^[0-9]+$ ]]
+          test "$(stat -c '%s' "${file}")" -gt 1000000
+          {
+            printf 'versionCode: %s\n\n' "${version_code}"
+            printf 'FileHub AIO %s (Android / Android TV)\n\n' "${tag}"
+            printf '%s\n' '- Signed, in-place updatable APK (same signing certificate as previous FileHub builds).'
+            printf '%s\n' '- In-app GitHub Releases OTA update check, SHA-256 and signing identity verification.'
+            printf '%s\n' '- Source code, bundled office asset chunks, and build instructions are available at this tag.'
+            printf '\nSHA-256: %s\n' "$(cut -d ' ' -f 1 staging/release-assets/SHA256SUMS)"
+          } > release-notes.txt
+
+      - name: Create or refresh public GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          apk="staging/release-assets/FileHub-AIO-${tag}.apk"
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release upload "${tag}" "${apk}" --clobber
+            gh release edit "${tag}" --notes-file release-notes.txt --latest
+          else
+            gh release create "${tag}" "${apk}" --verify-tag --latest \
+              --title "FileHub AIO ${tag}" --notes-file release-notes.txt
+          fi
+          gh release view "${tag}" --json url,assets,tagName
