@@ -814,18 +814,15 @@ public final class EpubReaderActivity extends Activity {
                 ReaderTurnPreferences.SPEEDS));
         turnSpeed.setSelection(slowPageTurn?1:0);
         settings.addView(turnSpeed,Ui.lp(this,-1,45));
-        settings.addView(Ui.text(this,"글자 크기",14,Ui.TEXT,true));
-        SeekBar size=new SeekBar(this);
-        size.setMax(24);size.setProgress(fontSize-12);
-        settings.addView(size);
-        settings.addView(Ui.text(this,"줄 간격",14,Ui.TEXT,true));
-        SeekBar spacing=new SeekBar(this);
-        spacing.setMax(120);spacing.setProgress(lineSpacing-110);
-        settings.addView(spacing);
-        settings.addView(Ui.text(this,"좌우 여백",14,Ui.TEXT,true));
-        SeekBar margin=new SeekBar(this);
-        margin.setMax(42);margin.setProgress(sideMargin-8);
-        settings.addView(margin);
+        SeekBar size=ReaderNumericSlider.add(this,settings,
+                "글자 크기 · 12~36pt",12,36,fontSize,
+                ReaderNumericSlider::points);
+        SeekBar spacing=ReaderNumericSlider.add(this,settings,
+                "줄 간격 · 1.10~2.30배",110,230,lineSpacing,
+                ReaderNumericSlider::spacing);
+        SeekBar margin=ReaderNumericSlider.add(this,settings,
+                "좌우 여백 · 8~50dp",8,50,sideMargin,
+                ReaderNumericSlider::dp);
         settings.addView(Ui.text(this,"독서 배경",14,Ui.TEXT,true));
         Spinner themeSpinner=new Spinner(this);
         themeSpinner.setAdapter(new ArrayAdapter<>(this,

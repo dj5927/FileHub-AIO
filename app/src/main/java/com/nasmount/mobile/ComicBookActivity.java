@@ -514,14 +514,12 @@ public final class ComicBookActivity extends Activity {
         read.addView(korean);read.addView(japanese);
         read.check(rtl?japanese.getId():korean.getId());
         form.addView(read);
-        form.addView(Ui.text(this,"명암 대비 · 50~200%",14,Ui.TEXT,true));
-        SeekBar contrastBar=new SeekBar(this);
-        contrastBar.setMax(150);contrastBar.setProgress(contrast-50);
-        form.addView(contrastBar);
-        form.addView(Ui.text(this,"밝기 · -100~+100",14,Ui.TEXT,true));
-        SeekBar brightBar=new SeekBar(this);
-        brightBar.setMax(200);brightBar.setProgress(brightness+100);
-        form.addView(brightBar);
+        SeekBar contrastBar=ReaderNumericSlider.add(this,form,
+                "명암 대비 · 50~200%",50,200,contrast,
+                ReaderNumericSlider::percent);
+        SeekBar brightBar=ReaderNumericSlider.add(this,form,
+                "밝기 · -100~+100",-100,100,brightness,
+                ReaderNumericSlider::brightness);
         CheckBox grayscale=new CheckBox(this);
         grayscale.setText("흑백 모드");grayscale.setChecked(gray);
         form.addView(grayscale);

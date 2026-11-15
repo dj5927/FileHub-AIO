@@ -889,18 +889,13 @@ public final class BookTextActivity extends Activity {
                 new String[]{"명조 · 책 본문","고딕 · 선명한 글씨","고정폭"}));
         fontSelect.setSelection(fontIndex);
         form.addView(fontSelect,Ui.lp(this,-1,46));
-        form.addView(Ui.text(this,"글씨 크기 · 12~38pt",14,Ui.TEXT,true));
-        SeekBar size=new SeekBar(this);
-        size.setMax(26);size.setProgress(fontSize-12);
-        form.addView(size);
-        form.addView(Ui.text(this,"줄간격 · 1.0~2.4배",14,Ui.TEXT,true));
-        SeekBar spacing=new SeekBar(this);
-        spacing.setMax(140);spacing.setProgress(spacingPercent-100);
-        form.addView(spacing);
-        form.addView(Ui.text(this,"좌우 여백 · 9~44dp",14,Ui.TEXT,true));
-        SeekBar margins=new SeekBar(this);
-        margins.setMax(35);margins.setProgress(margin-9);
-        form.addView(margins);
+        SeekBar size=ReaderNumericSlider.add(this,form,
+                "글씨 크기 · 12~38pt",12,38,fontSize,ReaderNumericSlider::points);
+        SeekBar spacing=ReaderNumericSlider.add(this,form,
+                "줄간격 · 1.0~2.4배",100,240,spacingPercent,
+                ReaderNumericSlider::spacing);
+        SeekBar margins=ReaderNumericSlider.add(this,form,
+                "좌우 여백 · 9~44dp",9,44,margin,ReaderNumericSlider::dp);
         form.addView(Ui.text(this,"책 배경",14,Ui.TEXT,true));
         Spinner background=new Spinner(this);
         background.setAdapter(new ArrayAdapter<>(this,
