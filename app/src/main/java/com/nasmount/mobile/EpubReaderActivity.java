@@ -54,6 +54,7 @@ public final class EpubReaderActivity extends Activity {
     private PdfEpubPageSource pdfSource;
     private volatile byte[] pdfPageImage;
     private int pdfPageIndex,pdfPageCount,pdfZoomPercent=100;
+    private TextView pdfZoomPrevZone,pdfZoomNextZone;
     private SharedPreferences pdfPrefs;
     private File stagedFile;
     private boolean removeStaged;
@@ -68,6 +69,7 @@ public final class EpubReaderActivity extends Activity {
             fingerGeneration,fingerOldChapter,fingerOldFraction;
     private boolean loadingChapter,visibleBars=true,readerErrorVisible;
     private int chapterLayoutGeneration;
+    private int barReflowGeneration;
     private long lastProgressWrite;
     private String historyId;
     private final int[] paper={0xFFF8F1E4,Color.WHITE,0xFFDFD2B2,0xFF161A1C};
@@ -238,6 +240,7 @@ public final class EpubReaderActivity extends Activity {
         stage.addView(web,new FrameLayout.LayoutParams(-1,-1));
         pageTurnOverlay=new EpubPageTurnOverlay(this);
         stage.addView(pageTurnOverlay,new FrameLayout.LayoutParams(-1,-1));
+        setupPdfZoomEdgeNavigation(stage);
         status=Ui.text(this,"",14,ink[theme],false);
         status.setGravity(Gravity.CENTER);
         applyReaderStatus();
@@ -552,6 +555,7 @@ public final class EpubReaderActivity extends Activity {
                     pdfPrefs.edit().putInt("turn_effect",pageEffect)
                             .putBoolean("slow_turn",slowPageTurn)
                             .putInt("zoom",pdfZoomPercent).apply();
+                    updatePdfZoomEdgeNavigation();
                     if(zoomChanged)jumpToPdf(pdfPageIndex);
                 }).show();
     }
@@ -584,6 +588,35 @@ public final class EpubReaderActivity extends Activity {
         view.setGravity(Gravity.CENTER);
         return view;
     }
+    /** PDF page-turn strips are pinned to the viewport, never zoom with HTML. */
+    private void setupPdfZoomEdgeNavigation(FrameLayout stage){
+        if(!pdfMode)return;
+        pdfZoomPrevZone=pdfZoomEdgeButton("〈","이전 PDF 페이지");
+        pdfZoomNextZone=pdfZoomEdgeButton("〉","다음 PDF 페이지");
+        int width=Ui.dp(this,PdfZoomTouchPolicy.EDGE_WIDTH_DP);
+        stage.addView(pdfZoomPrevZone,new FrameLayout.LayoutParams(
+                width,-1,Gravity.START));
+        stage.addView(pdfZoomNextZone,new FrameLayout.LayoutParams(
+                width,-1,Gravity.END));
+        pdfZoomPrevZone.setOnClickListener(v->turnPdf(-1));
+        pdfZoomNextZone.setOnClickListener(v->turnPdf(1));
+        updatePdfZoomEdgeNavigation();
+    }
+    private TextView pdfZoomEdgeButton(String arrow,String description){
+        TextView zone=Ui.text(this,arrow,22,0xFFB9CAD2,true);
+        zone.setGravity(Gravity.CENTER);
+        zone.setAlpha(.82f);
+        zone.setContentDescription(description);
+        zone.setClickable(true);
+        return zone;
+    }
+    private void updatePdfZoomEdgeNavigation(){
+        if(!pdfMode||pdfZoomPrevZone==null||pdfZoomNextZone==null)return;
+        int visibility=PdfZoomTouchPolicy.showFixedEdges(
+                pdfMode,pdfZoomPercent)?View.VISIBLE:View.GONE;
+        pdfZoomPrevZone.setVisibility(visibility);
+        pdfZoomNextZone.setVisibility(visibility);
+    }
     private void toggleReaderBars(){
         if(pdfMode){
             visibleBars=!visibleBars;
@@ -591,24 +624,41 @@ public final class EpubReaderActivity extends Activity {
             bottom.setVisibility(visibleBars?View.VISIBLE:View.GONE);
             return;
         }
-        // Removing the bars changes the available WebView height on the
-        // unfolded Galaxy Fold. Restore the same relative reading location
-        // after its new layout is measured, without reloading the chapter.
+        // Removing chrome changes the available WebView height. The XHTML
+        // multi-columns repaginate; never scroll to an arbitrary fraction
+        // in the middle of a column, or adjacent pages appear together.
         final int chapter=chapterIndex;
         final int fraction=currentPosition()%10000;
+        final int generation=++barReflowGeneration;
         visibleBars=!visibleBars;
         toolbar.setVisibility(visibleBars?View.VISIBLE:View.GONE);
         bottom.setVisibility(visibleBars?View.VISIBLE:View.GONE);
         if(archive!=null&&!loadingChapter){
             web.postDelayed(()->{
                 if(isFinishing()||isDestroyed()||archive==null||
-                        chapterIndex!=chapter||loadingChapter)return;
-                if(mode==0)web.scrollTo(
-                        Math.round(web.maximumX()*fraction/9999f),0);
-                else web.scrollTo(0,
-                        Math.round(web.maximumY()*fraction/9999f));
-                recordProgress();
-            },64);
+                        chapterIndex!=chapter||loadingChapter||
+                        generation!=barReflowGeneration)return;
+                web.postVisualStateCallback(generation,
+                        new WebView.VisualStateCallback(){
+                            @Override public void onComplete(long requestId){
+                                web.postDelayed(()->{
+                                    if(isFinishing()||isDestroyed()||
+                                            archive==null||
+                                            chapterIndex!=chapter||
+                                            loadingChapter||
+                                            generation!=barReflowGeneration)return;
+                                    if(mode==0)
+                                        web.scrollTo(EpubChromeReflow.horizontalSnap(
+                                                fraction,web.maximumX(),
+                                                web.getWidth()),0);
+                                    else web.scrollTo(0,
+                                            EpubChromeReflow.verticalRestore(
+                                                    fraction,web.maximumY()));
+                                    recordProgress();
+                                },55);
+                            }
+                        });
+            },75);
         }
     }
     private boolean wide(){

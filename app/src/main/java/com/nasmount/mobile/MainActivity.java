@@ -2532,6 +2532,16 @@ public class MainActivity extends Activity {
         }
         return null;
     }
+    /** Include SAF provider and tree so identically named SD locations differ. */
+    private String folderSortScope(){
+        if("saf".equals(currentScreen)&&safFolder!=null)
+            return "sort-saf:"+activeTreeUri+":"+safFolder.getUri();
+        return folderScope();
+    }
+    /** Exact folder override, otherwise the global file manager sort. */
+    private int currentFolderSortMode(){
+        return FolderSortPreferences.get(this,folderSortScope(),sortMode);
+    }
     private void openSettings() {
         Intent intent = new Intent(this, SettingsActivity.class);
         String scope = folderScope();
@@ -3207,6 +3217,10 @@ public class MainActivity extends Activity {
     }
 
     private void showViewSettings() {
+        final String thisFolder=folderSortScope();
+        final boolean hasFolder=thisFolder!=null&&!thisFolder.isEmpty();
+        final boolean overridden=hasFolder&&FolderSortPreferences.has(
+                this,thisFolder);
         LinearLayout form = Ui.vertical(this);
         form.setPadding(dp(20), dp(12), dp(20), dp(8));
         form.addView(Ui.text(this, "보기 방식", 15, Ui.TEAL, true));
@@ -3242,8 +3256,20 @@ public class MainActivity extends Activity {
             option.setTextSize(14);
             sorting.addView(option, Ui.lp(this, -1, 43));
         }
-        sorting.check(sortIds[Math.max(0, Math.min(5, sortMode))]);
+        sorting.check(sortIds[Math.max(0,Math.min(5,
+                hasFolder?currentFolderSortMode():sortMode))]);
         form.addView(sorting);
+        CheckBox onlyHere=new CheckBox(this);
+        onlyHere.setText("이 폴더에만 적용 (하위 폴더 제외)");
+        onlyHere.setChecked(overridden);
+        onlyHere.setEnabled(hasFolder);
+        form.addView(onlyHere,Ui.lp(this,-1,49));
+        TextView sortHint=Ui.text(this,hasFolder?
+                "체크하면 이 폴더에서만 선택한 정렬을 사용하며, 하위 폴더와 다른 저장소에는 영향이 없습니다. "+
+                "기존 체크를 해제하면 이 폴더는 전체 기본 정렬로 돌아갑니다.":
+                "폴더 안에서 열면 '이 폴더에만 적용'을 사용할 수 있습니다.",
+                12,Ui.MUTED,false);
+        form.addView(sortHint,Ui.lp(this,-1,-2));
         Ui.gap(form, this, 8);
         form.addView(Ui.text(this, "기타", 15, Ui.TEAL, true));
         CheckBox hidden = new CheckBox(this);
@@ -3273,9 +3299,16 @@ public class MainActivity extends Activity {
                     for (int i=0; i<layoutIds.length; i++)
                         if (layouts.getCheckedRadioButtonId() == layoutIds[i])
                             layoutMode = i;
+                    int selectedSort=sortMode;
                     for (int i=0; i<sortIds.length; i++)
                         if (sorting.getCheckedRadioButtonId() == sortIds[i])
-                            sortMode = i;
+                            selectedSort = i;
+                    if(hasFolder && onlyHere.isChecked())
+                        FolderSortPreferences.set(this,thisFolder,selectedSort);
+                    else{
+                        if(hasFolder)FolderSortPreferences.clear(this,thisFolder);
+                        if(!overridden)sortMode=selectedSort;
+                    }
                     showHidden = hidden.isChecked();
                     showThumbnails = thumbs.isChecked();
                     showVideoThumbnails = videoThumbs.isChecked();
@@ -3671,7 +3704,7 @@ public class MainActivity extends Activity {
                         directory.getName(), ""));
         showLocalBreadcrumb(directory);
         final int screen=renderGeneration;
-        final int requestedSort=sortMode;
+        final int requestedSort=currentFolderSortMode();
         TextView loading=muted("파일 목록을 읽는 중...");
         worker.execute(()->{
             File[] raw=directory.listFiles();
@@ -3866,7 +3899,7 @@ public class MainActivity extends Activity {
         showSafBreadcrumb();
         final int screen=renderGeneration;
         final String requestedRelative=safRelative;
-        final int requestedSort=sortMode;
+        final int requestedSort=currentFolderSortMode();
         TextView loading=muted("SD 폴더를 읽는 중...");
         worker.execute(()->{
             List<Models.Entry> entries=new ArrayList<>();
@@ -5480,7 +5513,7 @@ public class MainActivity extends Activity {
     private void showRemoteContents(Models.RemoteProfile p, String folder,
                                     List<Models.Entry> files) {
         final int screen=renderGeneration;
-        final int requestedSort=sortMode;
+        final int requestedSort=currentFolderSortMode();
         TextView loading=muted("파일 목록을 정리하는 중...");
         worker.execute(()->{
             List<String> siblings=new ArrayList<>(files.size());
