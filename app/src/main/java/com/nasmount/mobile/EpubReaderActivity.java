@@ -49,6 +49,12 @@ public final class EpubReaderActivity extends Activity {
     private TextView label,status;
     private EpubArchive archive;
     private EpubProgressMap progressMap;
+    /** PDF uses its own renderer, but the same EPUB reading screen. */
+    private boolean pdfMode;
+    private PdfEpubPageSource pdfSource;
+    private volatile byte[] pdfPageImage;
+    private int pdfPageIndex,pdfPageCount,pdfZoomPercent=100;
+    private SharedPreferences pdfPrefs;
     private File stagedFile;
     private boolean removeStaged;
     private int chapterIndex,restoreFraction,mode,fontSize,theme,lineSpacing,sideMargin;
@@ -73,13 +79,16 @@ public final class EpubReaderActivity extends Activity {
         super.onCreate(bundle);
         WindowCompat.setDecorFitsSystemWindows(getWindow(),false);
         String name=getIntent().getStringExtra(ReaderSource.NAME);
-        if(name==null||!name.toLowerCase(Locale.ROOT).endsWith(".epub")){
+        pdfMode=PdfBookTypes.supports(name);
+        if(name==null||(!pdfMode&&
+                !name.toLowerCase(Locale.ROOT).endsWith(".epub"))){
             finish();return;
         }
         historyId=ReaderHistory.id(getIntent());
         prefs=getSharedPreferences("epub_book_settings",MODE_PRIVATE);
+        pdfPrefs=getSharedPreferences("pdf_book_reader_preferences",MODE_PRIVATE);
         folderSettingsScope=FolderMediaSettings.reader(getIntent());
-        mode=epubInt("mode",0);
+        mode=pdfMode?0:epubInt("mode",0);
         fontSize=Math.max(12,Math.min(36,epubInt("font_size",19)));
         theme=Math.max(0,Math.min(3,epubInt("theme",0)));
         lineSpacing=Math.max(110,Math.min(230,epubInt("line_spacing",155)));
@@ -88,9 +97,18 @@ public final class EpubReaderActivity extends Activity {
                 ReaderDefaultSettings.turn(this,FolderMediaSettings.EPUB));
         slowPageTurn=epubBool("slow_page_turn",
                 ReaderDefaultSettings.slow(this,FolderMediaSettings.EPUB));
+        if(pdfMode){
+            pageEffect=pdfPrefs.getInt("turn_effect",pageEffect);
+            slowPageTurn=pdfPrefs.getBoolean("slow_turn",slowPageTurn);
+            pdfZoomPercent=Math.max(75,Math.min(250,
+                    pdfPrefs.getInt("zoom",100)));
+        }
         int remembered=ReaderHistory.position(this,historyId,0);
-        chapterIndex=Math.max(0,remembered/10000);
-        restoreFraction=Math.max(0,remembered%10000);
+        if(pdfMode)pdfPageIndex=Math.max(0,remembered);
+        else{
+            chapterIndex=Math.max(0,remembered/10000);
+            restoreFraction=Math.max(0,remembered%10000);
+        }
         column=Ui.vertical(this);
         column.setBackgroundColor(paper[theme]);
         ViewCompat.setOnApplyWindowInsetsListener(column,(view,insets)->{
@@ -115,6 +133,11 @@ public final class EpubReaderActivity extends Activity {
         TextView star=button("☆",23);
         toolbar.addView(star,Ui.lp(this,46,-1));
         star.setOnClickListener(v->{
+            if(pdfMode){
+                if(pdfPageCount>0)ReaderBookmarkDialog.show(this,historyId,
+                        pdfPageIndex,true,pdfPageCount,this::jumpToPdf);
+                return;
+            }
             if(archive!=null)ReaderBookmarkDialog.show(this,historyId,
                     currentPosition(),false,archive.chapters.size()*10000,
                     this::jumpTo,point->progressMap==null?
@@ -130,6 +153,7 @@ public final class EpubReaderActivity extends Activity {
         web=new BookWebView();
         WebSettings webSettings=web.getSettings();
         webSettings.setJavaScriptEnabled(false);
+        if(pdfMode)webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         webSettings.setAllowContentAccess(false);
         webSettings.setAllowFileAccess(false);
         webSettings.setDomStorageEnabled(false);
@@ -145,6 +169,14 @@ public final class EpubReaderActivity extends Activity {
             @Override public WebResourceResponse shouldInterceptRequest(
                     WebView view,WebResourceRequest request){
                 Uri uri=request.getUrl();
+                if(pdfMode){
+                    if("https".equals(uri.getScheme())&&HOST.equals(uri.getHost())&&
+                            "/pdf-current-page.png".equals(uri.getPath())&&
+                            pdfPageImage!=null)
+                        return new WebResourceResponse("image/png",null,
+                                new ByteArrayInputStream(pdfPageImage));
+                    return blocked();
+                }
                 if(!"https".equals(uri.getScheme()) ||
                         !HOST.equals(uri.getHost()) || archive==null)
                     return blocked();
@@ -160,6 +192,7 @@ public final class EpubReaderActivity extends Activity {
             }
             @Override public boolean shouldOverrideUrlLoading(
                     WebView view,WebResourceRequest request){
+                if(pdfMode)return true;
                 Uri uri=request.getUrl();
                 if("https".equals(uri.getScheme()) &&
                         HOST.equals(uri.getHost()) && archive!=null){
@@ -180,6 +213,16 @@ public final class EpubReaderActivity extends Activity {
             @Override public void onPageFinished(WebView view,String url){
                 if(isFinishing()||isDestroyed())return;
                 final int generation=chapterLayoutGeneration;
+                if(pdfMode){
+                    web.postVisualStateCallback(generation,
+                            new WebView.VisualStateCallback(){
+                                @Override public void onComplete(long id){
+                                    web.postDelayed(()->finishPdfLayout(
+                                            url,generation),45);
+                                }
+                            });
+                    return;
+                }
                 // onPageFinished is earlier than the first committed visual
                 // multicolumn layout. A zero scroll range at this moment
                 // previously made long chapters look like a single page.
@@ -214,12 +257,16 @@ public final class EpubReaderActivity extends Activity {
         bottom.addView(next,Ui.lp(this,64,-1));
         next.setOnClickListener(v->turn(1));
         bottom.setTag(pageInfo);
-        web.setContentDescription("EPUB 본문: 왼쪽 터치 이전 페이지, 오른쪽 터치 다음 페이지, 가운데 터치 메뉴 숨김 또는 표시");
+        web.setContentDescription((pdfMode?"PDF":"EPUB")+
+                " 본문: 왼쪽 터치 이전 페이지, 오른쪽 터치 다음 페이지, 가운데 터치 메뉴 표시·숨김");
         web.setOnTouchListener(new View.OnTouchListener(){
             float startX,startY;
             long downTime;
             boolean multiTouch;
             @Override public boolean onTouch(View v,MotionEvent event){
+                // At enlarged PDF zoom, allow normal WebView panning.
+                // Page-turn buttons and the seek dialog remain available.
+                if(pdfMode&&pdfZoomPercent>100)return false;
                 switch(event.getActionMasked()){
                     case MotionEvent.ACTION_DOWN:
                         startX=event.getX();
@@ -242,7 +289,7 @@ public final class EpubReaderActivity extends Activity {
                             updateEpubFinger(event.getX(),event.getY());
                             return true;
                         }
-                        if(mode==0&&pageEffect==EpubTurnGeometry.CURL&&
+                        if(!pdfMode&&mode==0&&pageEffect==EpubTurnGeometry.CURL&&
                                 !multiTouch&&ReaderDragPhysics.shouldStart(
                                     event.getX()-startX,event.getY()-startY,
                                     Ui.dp(EpubReaderActivity.this,13))){
@@ -297,6 +344,10 @@ public final class EpubReaderActivity extends Activity {
                 }
             }
         });
+        if(pdfMode){
+            openPdfDocument();
+            return;
+        }
         worker.execute(()->{
             try{
                 String kind=getIntent().getStringExtra(ReaderSource.KIND);
@@ -327,6 +378,184 @@ public final class EpubReaderActivity extends Activity {
             }
         });
     }
+    /** PDF uses PdfRenderer as the source but all EPUB reader chrome/controls. */
+    private void openPdfDocument(){
+        loadingChapter=true;
+        status.setText("PDF 책을 여는 중...");
+        applyReaderStatus();
+        worker.execute(()->{
+            try{
+                PdfEpubPageSource opened=PdfEpubPageSource.open(this,getIntent());
+                if(isFinishing()||isDestroyed()){
+                    opened.close();
+                    return;
+                }
+                pdfSource=opened;
+                int total=opened.pageCount();
+                runOnUiThread(()->{
+                    if(isFinishing()||isDestroyed())return;
+                    pdfPageCount=total;
+                    pdfPageIndex=PdfPageSizing.page(pdfPageIndex,total);
+                    loadPdfPage(pdfPageIndex);
+                });
+            }catch(Exception error){
+                runOnUiThread(()->showReaderError(
+                        "PDF 책을 열지 못했습니다: "+error.getMessage()));
+            }
+        });
+    }
+
+    private void loadPdfPage(int destination){
+        if(pdfPageCount<1||pdfSource==null)return;
+        final int selected=PdfPageSizing.page(destination,pdfPageCount);
+        final int layout=++chapterLayoutGeneration;
+        final int zoom=pdfZoomPercent;
+        final int viewport=Math.max(280,
+                getResources().getDisplayMetrics().widthPixels);
+        pdfPageIndex=selected;
+        loadingChapter=true;
+        readerErrorVisible=false;
+        status.setText("");
+        applyReaderStatus();
+        worker.execute(()->{
+            try {
+                byte[] data=pdfSource.renderPng(selected,viewport,zoom);
+                runOnUiThread(()->{
+                    if(isFinishing()||isDestroyed()||
+                            layout!=chapterLayoutGeneration)return;
+                    pdfPageImage=data;
+                    String url="https://"+HOST+"/pdf/page/"+layout+".html";
+                    String html=PdfEpubPageSource.pageHtml(zoom)
+                            .replace("pdf-current-page.png",
+                                    "pdf-current-page.png?rev="+layout);
+                    web.setBackgroundColor(0xFF171B20);
+                    web.loadDataWithBaseURL(url,html,"text/html","UTF-8",url);
+                });
+            }catch(Exception error){
+                runOnUiThread(()->{
+                    if(layout!=chapterLayoutGeneration||isFinishing()||
+                            isDestroyed())return;
+                    loadingChapter=false;
+                    showReaderError("PDF 페이지를 표시하지 못했습니다: "+
+                            error.getMessage());
+                });
+            }
+        });
+    }
+
+    private void finishPdfLayout(String url,int generation){
+        if(!pdfMode||isFinishing()||isDestroyed()||
+                generation!=chapterLayoutGeneration||pdfPageCount<1)return;
+        if(url==null||!url.equals("https://"+HOST+
+                "/pdf/page/"+generation+".html"))return;
+        loadingChapter=false;
+        status.setText("");
+        applyReaderStatus();
+        recordProgress();
+        if(pendingChapterTurn){
+            pendingChapterTurn=false;
+            web.postDelayed(this::completeTurn,50);
+        }
+    }
+
+    private void jumpToPdf(int selected){
+        if(!pdfMode||pdfPageCount<1)return;
+        cancelPageTurn();
+        loadPdfPage(selected);
+    }
+
+    private void turnPdf(int direction){
+        if(pdfPageCount<1||pdfSource==null||loadingChapter||turnBusy)return;
+        int target=pdfPageIndex+direction;
+        if(target<0)return;
+        if(target>=pdfPageCount){
+            new AlertDialog.Builder(this)
+                    .setTitle("책을 모두 읽었습니다.")
+                    .setPositiveButton("확인",null).show();
+            return;
+        }
+        animatePageTurn(direction,()->loadPdfPage(target),true);
+    }
+
+    private void showPdfQuickSeek(){
+        if(pdfPageCount<1)return;
+        if(loadingChapter||turnBusy){
+            android.widget.Toast.makeText(this,
+                    "페이지를 불러온 뒤 이동해 주세요.",
+                    android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        LinearLayout sheet=Ui.vertical(this);
+        sheet.setPadding(Ui.dp(this,20),Ui.dp(this,12),
+                Ui.dp(this,20),Ui.dp(this,8));
+        TextView preview=Ui.text(this,"",17,Ui.TEXT,true);
+        preview.setGravity(Gravity.CENTER);
+        sheet.addView(preview,Ui.lp(this,-1,48));
+        SeekBar seek=new SeekBar(this);
+        seek.setMax(Math.max(0,pdfPageCount-1));
+        seek.setProgress(pdfPageIndex);
+        sheet.addView(seek,Ui.lp(this,-1,60));
+        final java.util.function.IntConsumer update=value->preview.setText(
+                (value+1)+" / "+pdfPageCount+"쪽 · "+
+                        Math.round(100f*(value+1)/pdfPageCount)+"%");
+        update.accept(pdfPageIndex);
+        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(SeekBar s,int value,
+                                                     boolean fromUser){
+                update.accept(value);
+            }
+            @Override public void onStartTrackingTouch(SeekBar s){}
+            @Override public void onStopTrackingTouch(SeekBar s){}
+        });
+        new AlertDialog.Builder(this).setTitle("PDF 책 전체 이동")
+                .setView(sheet)
+                .setNegativeButton("취소",null)
+                .setPositiveButton("이동",(dialog,which)->
+                        jumpToPdf(seek.getProgress())).show();
+    }
+
+    private void pdfSettingsDialog(){
+        LinearLayout controls=Ui.vertical(this);
+        controls.setPadding(Ui.dp(this,18),Ui.dp(this,8),
+                Ui.dp(this,18),0);
+        controls.addView(Ui.text(this,
+                "PDF는 원본 페이지를 유지하며 EPUB과 같은 독서 화면으로 표시합니다.",
+                13,Ui.MUTED,false));
+        controls.addView(Ui.text(this,"책 넘김 효과",14,Ui.TEXT,true));
+        Spinner effect=new Spinner(this);
+        effect.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item,
+                ReaderTurnPreferences.STYLES));
+        effect.setSelection(ReaderTurnPreferences.toIndex(pageEffect));
+        controls.addView(effect,Ui.lp(this,-1,48));
+        controls.addView(Ui.text(this,"페이지 넘김 속도",14,Ui.TEXT,true));
+        Spinner speed=new Spinner(this);
+        speed.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item,
+                ReaderTurnPreferences.SPEEDS));
+        speed.setSelection(slowPageTurn?1:0);
+        controls.addView(speed,Ui.lp(this,-1,48));
+        SeekBar zoom=ReaderNumericSlider.add(this,controls,
+                "페이지 확대 · 75~250%",75,250,pdfZoomPercent,
+                ReaderNumericSlider::percent);
+        ScrollView scroll=new ScrollView(this);
+        scroll.addView(controls);
+        new AlertDialog.Builder(this).setTitle("PDF 독서 설정")
+                .setView(scroll).setNegativeButton("취소",null)
+                .setPositiveButton("적용",(dialog,which)->{
+                    pageEffect=ReaderTurnPreferences.fromIndex(
+                            effect.getSelectedItemPosition());
+                    slowPageTurn=speed.getSelectedItemPosition()==1;
+                    int nextZoom=75+zoom.getProgress();
+                    boolean zoomChanged=pdfZoomPercent!=nextZoom;
+                    pdfZoomPercent=nextZoom;
+                    pdfPrefs.edit().putInt("turn_effect",pageEffect)
+                            .putBoolean("slow_turn",slowPageTurn)
+                            .putInt("zoom",pdfZoomPercent).apply();
+                    if(zoomChanged)jumpToPdf(pdfPageIndex);
+                }).show();
+    }
+
     private void showReaderError(String message){
         if(isFinishing()||isDestroyed())return;
         readerErrorVisible=true;
@@ -335,6 +564,11 @@ public final class EpubReaderActivity extends Activity {
         applyReaderStatus();
     }
     private void applyReaderStatus(){
+        if(pdfMode){
+            status.setVisibility(pdfPageCount==0||loadingChapter||readerErrorVisible?
+                    View.VISIBLE:View.GONE);
+            return;
+        }
         // The decision is independent of page/chapter loading. This explicit
         // policy has regression tests so the old loading flash cannot return.
         status.setVisibility(EpubReaderStatus.showCenterMessage(
@@ -351,6 +585,12 @@ public final class EpubReaderActivity extends Activity {
         return view;
     }
     private void toggleReaderBars(){
+        if(pdfMode){
+            visibleBars=!visibleBars;
+            toolbar.setVisibility(visibleBars?View.VISIBLE:View.GONE);
+            bottom.setVisibility(visibleBars?View.VISIBLE:View.GONE);
+            return;
+        }
         // Removing the bars changes the available WebView height on the
         // unfolded Galaxy Fold. Restore the same relative reading location
         // after its new layout is measured, without reloading the chapter.
@@ -478,6 +718,14 @@ public final class EpubReaderActivity extends Activity {
         return chapterIndex*10000+fraction;
     }
     private void recordProgress(){
+        if(pdfMode){
+            if(pdfPageCount>0&&!loadingChapter){
+                ReaderHistory.save(this,historyId,pdfPageIndex,
+                        pdfPageIndex+1,pdfPageCount);
+                updateLabel();
+            }
+            return;
+        }
         if(archive==null||loadingChapter)return;
         int location=currentPosition();
         int estimatedPermille=progressMap==null?
@@ -489,6 +737,14 @@ public final class EpubReaderActivity extends Activity {
         updateLabel();
     }
     private void updateLabel(){
+        if(pdfMode){
+            if(pdfPageCount==0)return;
+            TextView info=(TextView)bottom.getTag();
+            int percent=Math.round(100f*(pdfPageIndex+1)/pdfPageCount);
+            info.setText((pdfPageIndex+1)+" / "+pdfPageCount+
+                    "쪽 · "+percent+"%");
+            return;
+        }
         if(archive==null)return;
         TextView info=(TextView)bottom.getTag();
         int location=currentPosition();
@@ -508,6 +764,10 @@ public final class EpubReaderActivity extends Activity {
                 "장"+chapterPage+" · 약 "+percent+"%");
     }
     private void showQuickSeek(){
+        if(pdfMode){
+            showPdfQuickSeek();
+            return;
+        }
         if(archive==null||progressMap==null)return;
         if(loadingChapter||turnBusy){
             android.widget.Toast.makeText(this,"현재 페이지를 불러온 뒤 이동할 수 있습니다.",
@@ -678,7 +938,8 @@ public final class EpubReaderActivity extends Activity {
                 advance.run();
                 return;
             }
-            pageTurnOverlay.hold(screenshot,direction,pageEffect,paper[theme]);
+            pageTurnOverlay.hold(screenshot,direction,pageEffect,
+                    pdfMode?Color.WHITE:paper[theme]);
             pageTurnOverlay.setGrabHeight(.5f);
             pendingTurnDirection=direction;
             pendingChapterTurn=loadsNewChapter;
@@ -734,6 +995,10 @@ public final class EpubReaderActivity extends Activity {
         if(pageTurnOverlay!=null)pageTurnOverlay.clear();
     }
     private void turn(int direction){
+        if(pdfMode){
+            turnPdf(direction);
+            return;
+        }
         if(archive==null||loadingChapter||turnBusy)return;
         if(mode==0){
             int max=web.maximumX();
@@ -791,6 +1056,10 @@ public final class EpubReaderActivity extends Activity {
                 folderSettingsScope,key,value);
     }
     private void settingsDialog(){
+        if(pdfMode){
+            pdfSettingsDialog();
+            return;
+        }
         LinearLayout settings=Ui.vertical(this);
         settings.setPadding(Ui.dp(this,18),Ui.dp(this,8),Ui.dp(this,18),0);
         settings.addView(Ui.text(this,"읽기 방식",14,Ui.TEXT,true));
@@ -870,6 +1139,13 @@ public final class EpubReaderActivity extends Activity {
     }
     @Override protected void onResume(){
         super.onResume();
+        if(pdfMode){
+            pageEffect=pdfPrefs.getInt("turn_effect",
+                    ReaderDefaultSettings.turn(this,FolderMediaSettings.EPUB));
+            slowPageTurn=pdfPrefs.getBoolean("slow_turn",
+                    ReaderDefaultSettings.slow(this,FolderMediaSettings.EPUB));
+            return;
+        }
         pageEffect=epubInt("page_turn_effect",
                 ReaderDefaultSettings.turn(this,FolderMediaSettings.EPUB));
         slowPageTurn=epubBool("slow_page_turn",
@@ -881,7 +1157,17 @@ public final class EpubReaderActivity extends Activity {
         super.onPause();
     }
     @Override protected void onDestroy(){
-        worker.shutdownNow();
+        if(pdfMode){
+            // Close after queued page renders on the same worker thread.
+            worker.execute(()->{
+                if(pdfSource!=null){
+                    try{pdfSource.close();}catch(Exception ignored){}
+                    pdfSource=null;
+                }
+                pdfPageImage=null;
+            });
+            worker.shutdown();
+        }else worker.shutdownNow();
         cancelPageTurn();
         web.stopLoading();
         web.destroy();

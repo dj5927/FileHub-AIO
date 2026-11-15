@@ -44,8 +44,6 @@
             android:screenOrientation="unspecified"/>
         <activity android:name=".EpubReaderActivity" android:exported="false"
             android:screenOrientation="unspecified"/>
-        <activity android:name=".PdfBookActivity" android:exported="false"
-            android:screenOrientation="unspecified"/>
         <activity
             android:name=".BuiltInOfficeActivity"
             android:exported="false"

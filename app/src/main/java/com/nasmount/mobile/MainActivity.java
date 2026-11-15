@@ -4182,7 +4182,7 @@ public class MainActivity extends Activity {
             return;
         }
         if(PdfBookTypes.supports(f.getName())){
-            openBookReader(PdfBookActivity.class,"local",f.getName(),
+            openBookReader(EpubReaderActivity.class,"local",f.getName(),
                     f.getAbsolutePath(),null,null);
             return;
         }
@@ -4221,7 +4221,7 @@ public class MainActivity extends Activity {
                         activeTreeUri,safRelative)) {
             openBookReader(EpubReaderActivity.class,"saf",name,null,uri,null);
         } else if(PdfBookTypes.supports(name)){
-            openBookReader(PdfBookActivity.class,"saf",name,null,uri,null);
+            openBookReader(EpubReaderActivity.class,"saf",name,null,uri,null);
         } else if(MediaFileTypes.isAudio(name)){
             playMusic(uri,name);
         } else if(MediaFileTypes.isImage(name)){
@@ -5593,7 +5593,7 @@ public class MainActivity extends Activity {
             return;
         }
         if(PdfBookTypes.supports(entry.name)){
-            openBookReader(PdfBookActivity.class,"remote",entry.name,
+            openBookReader(EpubReaderActivity.class,"remote",entry.name,
                     entry.path,null,p);
             return;
         }
