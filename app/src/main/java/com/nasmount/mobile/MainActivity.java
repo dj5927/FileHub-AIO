@@ -77,6 +77,7 @@ public class MainActivity extends Activity {
     private static final int REQ_OFFICE_EDITOR = 508;
     private static final int REQ_MUSIC_NOTIFICATIONS = 509;
     private static final int REQ_TRANSFER_NOTIFICATIONS = 510;
+    static final int REQ_LAN_QR_SCAN = 511;
     private static final int ICON_BLUE = 0xFF4989CF;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final ExecutorService previewWorker = Executors.newFixedThreadPool(2);
@@ -120,10 +121,14 @@ public class MainActivity extends Activity {
     private View drawerPanel;
     private ScrollView currentScroll;
     private int renderGeneration;
+    private static final int LARGE_DIRECTORY_PAGE_SIZE=
+            LargeFolderPagePolicy.ROWS_PER_PAGE;
+    private TextView nextDirectoryPage;
     private int gridCellIndex;
     private LinearLayout activeGridRow;
     private final List<LazyUiJob> lazyJobs = new ArrayList<>();
     private final List<SearchResult> currentSearch = new ArrayList<>();
+    private boolean completeFolderSearchIndexed;
     private VideoEpisodeQueue visibleEpisodeQueue;
     private Map<String, VideoEpisodeQueue> mediaFolderEpisodeQueues =
             Collections.emptyMap();
@@ -278,7 +283,7 @@ public class MainActivity extends Activity {
         String value = intent.getData().toString();
         intent.setData(null);
         if("relay".equalsIgnoreCase(host))
-            settingsBackupUi().showInternetQrSend(value);
+            toast("인터넷 QR은 더 이상 지원하지 않습니다. LAN QR을 이용해 주세요.");
         else if("pair".equalsIgnoreCase(host))
             showSendToTv(value);
     }
@@ -561,8 +566,10 @@ public class MainActivity extends Activity {
         operationBottomBar = null;
         toolbarFavorite = null;
         renderGeneration++;
+        nextDirectoryPage=null;
         lazyJobs.clear();
         currentSearch.clear();
+        completeFolderSearchIndexed=false;
         siblingSubtitleIndex = Collections.emptyMap();
         visibleEpisodeQueue = null;
         mediaFolderEpisodeQueues = Collections.emptyMap();
@@ -674,7 +681,16 @@ public class MainActivity extends Activity {
         currentScroll = scroll;
         scroll.setFillViewport(true);
         scroll.setVerticalScrollBarEnabled(false);
-        scroll.setOnScrollChangeListener((v, x, y, ox, oy) -> requestVisibleJobs());
+        scroll.setOnScrollChangeListener((v, x, y, ox, oy) -> {
+            requestVisibleJobs();
+            if(nextDirectoryPage!=null && nextDirectoryPage.getParent()==page &&
+                    page.getHeight()>0 &&
+                    y+scroll.getHeight()>=page.getHeight()-dp(180)){
+                TextView more=nextDirectoryPage;
+                nextDirectoryPage=null;
+                scroll.post(more::performClick);
+            }
+        });
         screenRoot.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         page = Ui.vertical(this);
         page.setPadding(dp(16), dp(18), dp(16), dp(36));
@@ -691,6 +707,43 @@ public class MainActivity extends Activity {
         }
         createMiniPlayerBar();
         updateFileOperationChrome();
+    }
+
+    /** Renders only a small number of file/folder rows per UI frame.
+     * The next batch is shown on scroll or by clicking its button. */
+    private void appendDirectoryPage(List<Models.Entry> entries,int offset,
+                                     int generation,
+                                     java.util.function.Consumer<Models.Entry> showRow) {
+        if(generation!=renderGeneration || isFinishing()||isDestroyed())return;
+        int end=LargeFolderPagePolicy.end(entries.size(),offset);
+        for(int i=offset;i<end;i++)showRow.accept(entries.get(i));
+        if(end<entries.size()){
+            TextView more=Ui.action(this,"더 보기  ("+end+" / "+entries.size()+")");
+            LinearLayout.LayoutParams lp=Ui.lp(this,-1,49);
+            lp.topMargin=dp(9);
+            page.addView(more,lp);
+            nextDirectoryPage=more;
+            more.setOnClickListener(v->{
+                if(generation!=renderGeneration||more.getParent()!=page)return;
+                if(nextDirectoryPage==more)nextDirectoryPage=null;
+                page.removeView(more);
+                appendDirectoryPage(entries,end,generation,showRow);
+            });
+        }
+    }
+
+    /** Search all files even if only 60 rows are currently inflated. */
+    private void indexFullFolderSearch(List<Models.Entry> entries,
+            java.util.function.Function<Models.Entry,Runnable> opener) {
+        currentSearch.clear();
+        for(Models.Entry entry:entries){
+            // Use cached names only: File.isHidden() and preference lookups
+            // for thousands of rows on the UI thread can trigger ANRs.
+            if(!FileViewOptions.visible(entry.name,
+                    entry.name.startsWith("."),showHidden))continue;
+            currentSearch.add(new SearchResult(entry.name,opener.apply(entry)));
+        }
+        completeFolderSearchIndexed=true;
     }
 
     private void musicAction(String action){
@@ -1582,26 +1635,47 @@ public class MainActivity extends Activity {
                         return;
                     }
                     muted("폴더 "+visible.size()+"개 · 길게 누르면 해당 폴더의 용도 지정 해제");
-                    for(AssignedFolderCatalog.Folder folder:visible){
-                        String origin="메인·로컬 저장소";
-                        if("remote".equals(folder.kind)){
-                            origin="네트워크 폴더";
-                            for(Models.RemoteProfile account:accounts)
-                                if(account.id.equals(folder.owner)){
-                                    origin=account.label();break;
-                                }
-                        }else if("saf".equals(folder.kind)||"storage".equals(folder.kind))
-                            origin="SD·USB 저장소";
-                        row(page,folder.name(),origin+" · "+folder.path,
-                                "folder",0xFFE5AD5B,
-                                ()->openAssignedFolder(folder,
-                                        AssignedFolderCatalog.configuredRoot(roots,folder)),
-                                ()->confirmRemoveAssignedRole(mode,folder));
-                    }
+                    appendAssignedFolderPage(visible,accounts,roots,mode,0,screen);
                 });
             });
         }catch(Exception error){
             showError("지정 폴더를 표시하지 못했습니다: "+error.getMessage());
+        }
+    }
+
+    private void appendAssignedFolderPage(
+            List<AssignedFolderCatalog.Folder> folders,
+            List<Models.RemoteProfile> accounts,
+            List<AssignedFolderCatalog.Folder> roots,String mode,int offset,int screen) {
+        if(screen!=renderGeneration || !"assigned".equals(currentScreen))return;
+        int end=LargeFolderPagePolicy.end(folders.size(),offset);
+        for(int i=offset;i<end;i++){
+            AssignedFolderCatalog.Folder folder=folders.get(i);
+            String origin="메인·로컬 저장소";
+            if("remote".equals(folder.kind)){
+                origin="네트워크 폴더";
+                for(Models.RemoteProfile account:accounts)
+                    if(account.id.equals(folder.owner)){
+                        origin=account.label();break;
+                    }
+            }else if("saf".equals(folder.kind)||"storage".equals(folder.kind))
+                origin="SD·USB 저장소";
+            row(page,folder.name(),origin+" · "+folder.path,
+                    "folder",0xFFE5AD5B,
+                    ()->openAssignedFolder(folder,
+                            AssignedFolderCatalog.configuredRoot(roots,folder)),
+                    ()->confirmRemoveAssignedRole(mode,folder));
+        }
+        if(end<folders.size()){
+            TextView more=Ui.action(this,"폴더 더 보기  ("+end+" / "+folders.size()+")");
+            page.addView(more,Ui.lp(this,-1,50));
+            nextDirectoryPage=more;
+            more.setOnClickListener(v->{
+                if(screen!=renderGeneration||more.getParent()!=page)return;
+                if(nextDirectoryPage==more)nextDirectoryPage=null;
+                page.removeView(more);
+                appendAssignedFolderPage(folders,accounts,roots,mode,end,screen);
+            });
         }
     }
     private String assignedVideoScope(AssignedFolderCatalog.Folder folder){
@@ -1876,6 +1950,7 @@ public class MainActivity extends Activity {
                 String error=null;
                 try{
                     found=assignedChildFolders(folder,store.activeRemotes());
+                    found.sort((a,b)->a.name().compareToIgnoreCase(b.name()));
                 }catch(Exception failure){error=safeError(failure);}
                 final List<AssignedFolderCatalog.Folder> children=found;
                 final String issue=error;
@@ -1893,12 +1968,28 @@ public class MainActivity extends Activity {
                                 "하위 폴더가 없습니다. 이 폴더를 지정할 수 있습니다.",
                                 12,Ui.MUTED,false));
                     }
-                    children.sort((a,b)->a.name().compareToIgnoreCase(b.name()));
-                    for(AssignedFolderCatalog.Folder child:children){
-                        rowItem(child.name(),child.path,()->open(child,false));
-                    }
+                    appendPickerFolderPage(children,0,token);
                 });
             });
+        }
+        void appendPickerFolderPage(List<AssignedFolderCatalog.Folder> children,
+                                    int offset,int token){
+            if(token!=generation||dialog==null||!dialog.isShowing())return;
+            int end=LargeFolderPagePolicy.end(children.size(),offset);
+            for(int i=offset;i<end;i++){
+                AssignedFolderCatalog.Folder child=children.get(i);
+                rowItem(child.name(),child.path,()->open(child,false));
+            }
+            if(end<children.size()){
+                TextView next=Ui.action(MainActivity.this,
+                        "하위 폴더 더 보기  ("+end+" / "+children.size()+")");
+                entries.addView(next,Ui.lp(MainActivity.this,-1,49));
+                next.setOnClickListener(v->{
+                    if(token!=generation||next.getParent()!=entries)return;
+                    entries.removeView(next);
+                    appendPickerFolderPage(children,end,token);
+                });
+            }
         }
         void save(){
             if(current==null)return;
@@ -2968,7 +3059,8 @@ public class MainActivity extends Activity {
                 visibleComicVolumes.add(new BookSeriesQueue.Volume(
                         entry.name,entry.path,null));
         }
-        currentSearch.add(new SearchResult(entry.name, open));
+        if(!completeFolderSearchIndexed)
+            currentSearch.add(new SearchResult(entry.name, open));
         String sub = fileSecondary(entry);
         int readingPercent=readingProgressFor(entry);
         int purposeFlags = folderPurposeFlags(entry);
@@ -3577,42 +3669,72 @@ public class MainActivity extends Activity {
                 () -> favoriteHere("local", directory.getAbsolutePath(),
                         directory.getName(), ""));
         showLocalBreadcrumb(directory);
-        File[] files = directory.listFiles();
-        if (files == null) { muted("폴더 읽기 권한이 없습니다."); return; }
-        List<String> siblingNames = new ArrayList<>(files.length);
-        for (File f : files) siblingNames.add(f.getName());
-        siblingSubtitleIndex = SubtitleInventory.fromSiblings(siblingNames);
-        Arrays.sort(files, (a,b) -> FileViewOptions.compare(
-                a.isDirectory(), a.getName(), a.length(), a.lastModified(),
-                b.isDirectory(), b.getName(), b.length(), b.lastModified(), sortMode));
-        List<VideoEpisodeQueue.Episode> localEpisodes = new ArrayList<>();
-        for (File file : files)
-            if (file.isFile() && VideoEpisodeQueue.isVideo(file.getName()))
-                localEpisodes.add(new VideoEpisodeQueue.Episode(
-                        Uri.fromFile(file).toString(), file.getName(), file.length()));
-        visibleEpisodeQueue = VideoEpisodeQueue.from(localEpisodes);
-        if (files.length == 0) muted("이 폴더는 비어 있습니다.");
-        for (File file : files) {
-            Models.Entry item = new Models.Entry(file.getName(),
-                    file.getAbsolutePath(), file.isDirectory());
-            item.file = file;
-            item.size = file.isDirectory() ? -1 : file.length();
-            item.modified = file.lastModified();
-            fileRow(item,
-                () -> { if (file.isDirectory()) browseLocal(file);
-                    else if (isVideo(file.getName()))
-                        openVideo(Uri.fromFile(file), file.getName());
-                    else openFile(file); },
-                file.isDirectory() ? () -> {
-                    File[] children = file.listFiles();
-                    if (children == null) return -1;
-                    int total = 0;
-                    for (File child : children)
-                        if (FileViewOptions.visible(child.getName(),
-                                child.isHidden(), showHidden)) total++;
-                    return total;
-                } : null);
-        }
+        final int screen=renderGeneration;
+        final int requestedSort=sortMode;
+        TextView loading=muted("파일 목록을 읽는 중...");
+        worker.execute(()->{
+            File[] raw=directory.listFiles();
+            if(raw==null){
+                runOnUiThread(()->{
+                    if(screen==renderGeneration){
+                        page.removeView(loading);
+                        muted("폴더 읽기 권한이 없습니다.");
+                    }
+                });
+                return;
+            }
+            List<Models.Entry> items=new ArrayList<>(raw.length);
+            List<String> siblings=new ArrayList<>(raw.length);
+            List<VideoEpisodeQueue.Episode> episodes=new ArrayList<>();
+            for(File file:raw){
+                String name=file.getName();
+                boolean folder=file.isDirectory();
+                Models.Entry entry=new Models.Entry(name,file.getAbsolutePath(),folder);
+                entry.file=file;
+                entry.size=folder?-1:file.length();
+                entry.modified=file.lastModified();
+                items.add(entry);
+                siblings.add(name);
+                if(!folder&&VideoEpisodeQueue.isVideo(name))
+                    episodes.add(new VideoEpisodeQueue.Episode(
+                            Uri.fromFile(file).toString(),name,entry.size));
+            }
+            items.sort((a,b)->FileViewOptions.compare(
+                    a.directory,a.name,a.size,a.modified,
+                    b.directory,b.name,b.size,b.modified,requestedSort));
+            VideoEpisodeQueue queue=VideoEpisodeQueue.from(episodes);
+            runOnUiThread(()->{
+                if(screen!=renderGeneration || !"local".equals(currentScreen) ||
+                        !directory.equals(localFolder)||isFinishing())return;
+                page.removeView(loading);
+                siblingSubtitleIndex=SubtitleInventory.fromSiblings(siblings);
+                visibleEpisodeQueue=queue;
+                if(items.isEmpty())muted("이 폴더는 비어 있습니다.");
+                indexFullFolderSearch(items,item->()->{
+                    File file=item.file;
+                    if(item.directory)browseLocal(file);
+                    else if(isVideo(item.name))openVideo(Uri.fromFile(file),item.name);
+                    else openFile(file);
+                });
+                appendDirectoryPage(items,0,screen,item->{
+                    File file=item.file;
+                    fileRow(item,()->{
+                        if(item.directory)browseLocal(file);
+                        else if(isVideo(item.name))
+                            openVideo(Uri.fromFile(file),item.name);
+                        else openFile(file);
+                    },item.directory?()->{
+                        File[] children=file.listFiles();
+                        if(children==null)return -1;
+                        int total=0;
+                        for(File child:children)
+                            if(FileViewOptions.visible(child.getName(),
+                                    child.isHidden(),showHidden))total++;
+                        return total;
+                    }:null);
+                });
+            });
+        });
     }
     private void showSdAccessOptions() {
         StorageVolume volume = sdVolume();
@@ -3741,43 +3863,73 @@ public class MainActivity extends Activity {
         render(name, true, "☆", () -> favoriteHere(
                 "saf", safRelative, name, activeTreeUri));
         showSafBreadcrumb();
-        DocumentFile[] files = folder.listFiles();
-        List<String> siblingNames = new ArrayList<>(files.length);
-        for (DocumentFile f : files) siblingNames.add(f.getName());
-        siblingSubtitleIndex = SubtitleInventory.fromSiblings(siblingNames);
-        Arrays.sort(files, (a,b) -> FileViewOptions.compare(
-                a.isDirectory(), a.getName(), a.length(), a.lastModified(),
-                b.isDirectory(), b.getName(), b.length(), b.lastModified(), sortMode));
-        List<VideoEpisodeQueue.Episode> safEpisodes = new ArrayList<>();
-        for (DocumentFile file : files)
-            if (!file.isDirectory() && VideoEpisodeQueue.isVideo(file.getName()))
-                safEpisodes.add(new VideoEpisodeQueue.Episode(
-                        file.getUri().toString(), file.getName(), file.length()));
-        visibleEpisodeQueue = VideoEpisodeQueue.from(safEpisodes);
-        if (files.length == 0) muted("이 폴더는 비어 있습니다.");
-        for (DocumentFile file : files) {
-            String childName = file.getName() == null ? "이름 없음" : file.getName();
-            Models.Entry item = new Models.Entry(childName, file.getUri().toString(),
-                    file.isDirectory());
-            item.document = file;
-            item.size = file.isDirectory() ? -1 : file.length();
-            item.modified = file.lastModified();
-            fileRow(item,
-                    () -> {
-                        if (file.isDirectory()) browseSaf(file,
-                                RemoteProvider.child(safRelative, childName));
-                        else if (isVideo(childName))
-                            openVideo(file.getUri(), childName);
-                        else openNamedUri(file.getUri(), childName);
-                    },
-                    file.isDirectory() ? () -> {
-                        int count = 0;
-                        for (DocumentFile child : file.listFiles())
-                            if (FileViewOptions.visible(child.getName(), false, showHidden))
-                                count++;
+        final int screen=renderGeneration;
+        final String requestedRelative=safRelative;
+        final int requestedSort=sortMode;
+        TextView loading=muted("SD 폴더를 읽는 중...");
+        worker.execute(()->{
+            List<Models.Entry> entries=new ArrayList<>();
+            List<String> siblings=new ArrayList<>();
+            List<VideoEpisodeQueue.Episode> episodes=new ArrayList<>();
+            Exception issue=null;
+            try {
+                // DocumentFile providers may block for seconds per metadata
+                // call; never enumerate or sort them on the main thread.
+                for(DocumentFile file:folder.listFiles()){
+                    String childName=file.getName();
+                    if(childName==null)childName="이름 없음";
+                    boolean isFolder=file.isDirectory();
+                    Models.Entry item=new Models.Entry(
+                            childName,file.getUri().toString(),isFolder);
+                    item.document=file;
+                    item.size=isFolder?-1:file.length();
+                    item.modified=file.lastModified();
+                    entries.add(item);
+                    siblings.add(childName);
+                    if(!isFolder&&VideoEpisodeQueue.isVideo(childName))
+                        episodes.add(new VideoEpisodeQueue.Episode(
+                                file.getUri().toString(),childName,item.size));
+                }
+                entries.sort((a,b)->FileViewOptions.compare(
+                        a.directory,a.name,a.size,a.modified,
+                        b.directory,b.name,b.size,b.modified,requestedSort));
+            }catch(Exception error){issue=error;}
+            final Exception failure=issue;
+            VideoEpisodeQueue queue=VideoEpisodeQueue.from(episodes);
+            runOnUiThread(()->{
+                if(screen!=renderGeneration || !"saf".equals(currentScreen) ||
+                        safFolder!=folder || !requestedRelative.equals(safRelative) ||
+                        isFinishing())return;
+                page.removeView(loading);
+                if(failure!=null){muted("SD 폴더를 읽지 못했습니다.");return;}
+                siblingSubtitleIndex=SubtitleInventory.fromSiblings(siblings);
+                visibleEpisodeQueue=queue;
+                if(entries.isEmpty())muted("이 폴더는 비어 있습니다.");
+                indexFullFolderSearch(entries,item->()->{
+                    DocumentFile file=item.document;
+                    if(item.directory)browseSaf(file,
+                            RemoteProvider.child(requestedRelative,item.name));
+                    else if(isVideo(item.name))openVideo(file.getUri(),item.name);
+                    else openNamedUri(file.getUri(),item.name);
+                });
+                appendDirectoryPage(entries,0,screen,item->{
+                    DocumentFile file=item.document;
+                    fileRow(item,()->{
+                        if(item.directory)browseSaf(file,
+                                RemoteProvider.child(requestedRelative,item.name));
+                        else if(isVideo(item.name))
+                            openVideo(file.getUri(),item.name);
+                        else openNamedUri(file.getUri(),item.name);
+                    },item.directory?()->{
+                        int count=0;
+                        for(DocumentFile child:file.listFiles())
+                            if(FileViewOptions.visible(
+                                    child.getName(),false,showHidden))count++;
                         return count;
-                    } : null);
-        }
+                    }:null);
+                });
+            });
+        });
     }
     private void openMedia(String type) {
         mediaKind = type;
@@ -5319,34 +5471,49 @@ public class MainActivity extends Activity {
 
     private void showRemoteContents(Models.RemoteProfile p, String folder,
                                     List<Models.Entry> files) {
-        List<String> siblingNames = new ArrayList<>(files.size());
-        for (Models.Entry entry : files) siblingNames.add(entry.name);
-        siblingSubtitleIndex = SubtitleInventory.fromSiblings(siblingNames);
-        if (files.isEmpty()) muted("이 폴더는 비어 있습니다.");
-        List<Models.Entry> sorted = new ArrayList<>(files);
-        Collections.sort(sorted, (left,right) -> FileViewOptions.compare(
-                left.directory, left.name, left.size, left.modified,
-                right.directory, right.name, right.size, right.modified, sortMode));
-        List<VideoEpisodeQueue.Episode> remoteEpisodes = new ArrayList<>();
-        for (Models.Entry entry : sorted)
-            if (!entry.directory && VideoEpisodeQueue.isVideo(entry.name))
-                remoteEpisodes.add(new VideoEpisodeQueue.Episode(entry.path,
-                        entry.name, entry.size));
-        visibleEpisodeQueue = VideoEpisodeQueue.from(remoteEpisodes);
-        for (Models.Entry file : sorted) {
-            fileRow(file,
-                    () -> { if (file.directory) openRemote(p, file.path);
-                            else if (isVideo(file.name)) openRemoteVideo(p, file);
-                            else openRemoteFile(p, file); },
-                    file.directory ? () -> {
-                        List<Models.Entry> children = cachedRemoteFiles(p, file.path);
-                        int count = 0;
-                        for (Models.Entry child : children)
-                            if (FileViewOptions.visible(child.name, false, showHidden))
-                                count++;
-                        return count;
-                    } : null);
-        }
+        final int screen=renderGeneration;
+        final int requestedSort=sortMode;
+        TextView loading=muted("파일 목록을 정리하는 중...");
+        worker.execute(()->{
+            List<String> siblings=new ArrayList<>(files.size());
+            List<Models.Entry> sorted=new ArrayList<>(files);
+            for(Models.Entry entry:files)siblings.add(entry.name);
+            sorted.sort((a,b)->FileViewOptions.compare(
+                    a.directory,a.name,a.size,a.modified,
+                    b.directory,b.name,b.size,b.modified,requestedSort));
+            List<VideoEpisodeQueue.Episode> episodes=new ArrayList<>();
+            for(Models.Entry entry:sorted)
+                if(!entry.directory&&VideoEpisodeQueue.isVideo(entry.name))
+                    episodes.add(new VideoEpisodeQueue.Episode(
+                            entry.path,entry.name,entry.size));
+            VideoEpisodeQueue queue=VideoEpisodeQueue.from(episodes);
+            runOnUiThread(()->{
+                if(screen!=renderGeneration || !"remote".equals(currentScreen) ||
+                        remote!=p || !remoteFolder.equals(folder) || isFinishing())return;
+                page.removeView(loading);
+                siblingSubtitleIndex=SubtitleInventory.fromSiblings(siblings);
+                visibleEpisodeQueue=queue;
+                if(sorted.isEmpty())muted("이 폴더는 비어 있습니다.");
+                indexFullFolderSearch(sorted,file->()->{
+                    if(file.directory)openRemote(p,file.path);
+                    else if(isVideo(file.name))openRemoteVideo(p,file);
+                    else openRemoteFile(p,file);
+                });
+                appendDirectoryPage(sorted,0,screen,file->
+                        fileRow(file,()->{
+                            if(file.directory)openRemote(p,file.path);
+                            else if(isVideo(file.name))openRemoteVideo(p,file);
+                            else openRemoteFile(p,file);
+                        },file.directory?()->{
+                            List<Models.Entry> children=cachedRemoteFiles(p,file.path);
+                            int count=0;
+                            for(Models.Entry child:children)
+                                if(FileViewOptions.visible(child.name,false,showHidden))
+                                    count++;
+                            return count;
+                        }:null));
+            });
+        });
     }
     private void remoteFolderActions() {
         if (remote == null) return;
@@ -5622,6 +5789,13 @@ public class MainActivity extends Activity {
     @android.annotation.SuppressLint("WrongConstant")
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if(requestCode==REQ_LAN_QR_SCAN) {
+            if(resultCode==RESULT_OK && data!=null){
+                String scanned=data.getStringExtra(QrScanActivity.EXTRA_QR);
+                if(scanned!=null)settingsBackupUi().handleLanQrScanned(scanned);
+            }
+            return;
+        }
         if(requestCode==SettingsBackupUi.EXPORT_REQUEST ||
                 requestCode==SettingsBackupUi.IMPORT_REQUEST) {
             settingsBackupUi().handleResult(requestCode,resultCode,data);

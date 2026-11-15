@@ -105,8 +105,7 @@ final class OtaUpdater {
 
     private void showRelease(OtaReleasePolicy.Release release) {
         if(closed || activity.isFinishing())return;
-        String notes=release.notes.replaceAll("(?m)^versionCode:.*$","").trim();
-        if(notes.length()>1100)notes=notes.substring(0,1100)+"…";
+        String notes=OtaNoteSummary.format(release.notes);
         new AlertDialog.Builder(activity)
                 .setTitle("FileHub v"+release.version+" 업데이트")
                 .setMessage((notes.isEmpty()?"새 버전을 사용할 수 있습니다.":notes)+

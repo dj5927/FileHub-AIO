@@ -34,15 +34,11 @@ jobs:
           test "$(stat -c '%s' "${file}")" -gt 1000000
           {
             printf 'versionCode: %s\n\n' "${version_code}"
-            printf 'FileHub AIO %s (Android / Android TV)\n\n' "${tag}"
-            printf '%s\n' '- Signed, in-place updatable APK (same signing certificate as previous FileHub builds).'
-            printf '%s\n' '- In-app GitHub Releases OTA update check, SHA-256 and signing identity verification.'
-            printf '%s\n' '- Source code, bundled office asset chunks, and build instructions are available at this tag.'
             if test -f staging/release-assets/RELEASE_NOTES.md; then
-              printf '\n'
               cat staging/release-assets/RELEASE_NOTES.md
+            else
+              printf '## 수정 사항\n- 일반 안정성 개선\n'
             fi
-            printf '\nSHA-256: %s\n' "$(cut -d ' ' -f 1 staging/release-assets/SHA256SUMS)"
           } > release-notes.txt
 
       - name: Create or refresh public GitHub Release
