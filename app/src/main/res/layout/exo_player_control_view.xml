@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  NAS Mount Media3 1.11.1 controller resource override.
+  All functional playback/time-bar controls keep the exact Media3 IDs so
+  seeking, time updates, disabled state, animation and accessibility continue
+  to be owned by PlayerControlView, not a parallel timer implementation.
+-->
+<merge xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <View
+        android:id="@id/exo_controls_background"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="@android:color/transparent" />
+
+    <FrameLayout
+        android:id="@id/exo_bottom_bar"
+        android:layout_width="match_parent"
+        android:layout_height="100dp"
+        android:layout_gravity="bottom"
+        android:layoutDirection="ltr"
+        android:background="#B30B0F16">
+
+        <LinearLayout
+            android:id="@id/exo_time"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:layout_gravity="top|start"
+            android:layout_marginStart="17dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layoutDirection="ltr">
+
+            <TextView
+                android:id="@id/exo_position"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="00:00"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_marginEnd="6dp"
+                android:text="·"
+                android:textColor="#94A3B8"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@id/exo_duration"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="00:00"
+                android:textColor="#CCD3DD"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@id/exo_center_controls"
+            android:layout_width="wrap_content"
+            android:layout_height="57dp"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="5dp"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layoutDirection="ltr">
+
+            <ImageButton
+                android:id="@id/exo_prev"
+                android:layout_width="43dp"
+                android:layout_height="53dp"
+                android:padding="9dp"
+                android:scaleType="fitCenter"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="#FFFFFF"
+                android:contentDescription="이전 영상" />
+
+            <ImageButton
+                android:id="@id/exo_rew"
+                android:layout_width="43dp"
+                android:layout_height="53dp"
+                android:padding="9dp"
+                android:scaleType="fitCenter"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="#FFFFFF"
+                android:contentDescription="뒤로 건너뛰기" />
+
+            <ImageButton
+                android:id="@id/exo_play_pause"
+                android:layout_width="52dp"
+                android:layout_height="56dp"
+                android:padding="7dp"
+                android:scaleType="fitCenter"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="#FFFFFF"
+                android:contentDescription="재생 / 일시정지" />
+
+            <ImageButton
+                android:id="@id/exo_ffwd"
+                android:layout_width="43dp"
+                android:layout_height="53dp"
+                android:padding="9dp"
+                android:scaleType="fitCenter"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="#FFFFFF"
+                android:contentDescription="앞으로 건너뛰기" />
+
+            <ImageButton
+                android:id="@id/exo_next"
+                android:layout_width="43dp"
+                android:layout_height="53dp"
+                android:padding="9dp"
+                android:scaleType="fitCenter"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="#FFFFFF"
+                android:contentDescription="다음 영상" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@id/exo_basic_controls"
+            android:layout_width="wrap_content"
+            android:layout_height="57dp"
+            android:layout_gravity="bottom|end"
+            android:layout_marginEnd="12dp"
+            android:layout_marginBottom="5dp"
+            android:gravity="center">
+            <ImageButton
+                android:id="@id/exo_fullscreen"
+                android:layout_width="43dp"
+                android:layout_height="52dp"
+                android:padding="10dp"
+                android:scaleType="fitCenter"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:tint="#FFFFFF"
+                android:contentDescription="전체 화면 방향" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <View
+        android:id="@id/exo_progress_placeholder"
+        android:layout_width="match_parent"
+        android:layout_height="28dp"
+        android:layout_gravity="bottom"
+        android:layout_marginBottom="94dp" />
+
+    <LinearLayout
+        android:id="@id/exo_minimal_controls"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:orientation="horizontal"
+        android:visibility="gone" />
+
+</merge>

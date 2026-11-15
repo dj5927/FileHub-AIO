@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2, viewport-fit=cover">
+  <title>NAS Mount 내장 오피스</title>
+  <link rel="stylesheet" href="/office-host.css">
+</head>
+<body>
+  <div id="status">문서 편집 엔진을 준비 중입니다...</div>
+  <section id="hwp-shell" hidden><div id="hwp-container"></div></section>
+  <section id="spreadsheet-shell" hidden>
+    <div id="sheet-toolbar">
+      <select id="sheet-select" aria-label="시트 선택"></select>
+      <label for="cell-position">셀 위치</label>
+      <input id="cell-position" value="A1" aria-label="편집할 셀 주소">
+      <button id="cell-jump">이동</button>
+      <button id="cell-save">셀 적용</button>
+    </div>
+    <div id="formula-line">
+      <label for="formula-input">셀 내용 / 수식</label>
+      <input id="formula-input" autocomplete="off" spellcheck="false">
+    </div>
+    <div id="grid-scroll"><table id="cells"></table></div>
+    <div id="pagination">
+      <button id="row-prev">↑ 이전 행</button><span id="window-info">A1</span>
+      <button id="row-next">다음 행 ↓</button>
+      <button id="col-prev">← 이전 열</button><button id="col-next">다음 열 →</button>
+    </div>
+    <p id="sheet-note">시트·셀 값 편집을 지원합니다. 수식은 다시 계산하지 않으며 복잡한 서식, 매크로, 차트는 원본과 달라질 수 있으므로 중요한 문서는 백업하세요.</p>
+  </section>
+  <section id="word-shell" hidden>
+    <div class="office-compact-nav">
+      <span>Word 문서</span><button id="word-fit-toggle">100%</button>
+      <button id="word-edit-toggle">문단 편집</button>
+    </div>
+    <div id="word-scroll"><div id="word-preview"></div></div>
+    <div id="word-editor" class="office-editor-panel" hidden>
+      <label for="word-paragraph">문단 선택</label>
+      <select id="word-paragraph"></select>
+      <textarea id="word-text" rows="3" placeholder="선택한 문단의 텍스트 수정"></textarea>
+      <div class="office-action-row">
+        <button id="word-apply">문단 적용</button>
+        <button id="word-close">닫기</button>
+      </div>
+      <small>수정 문단의 일부 글자별 서식은 통일될 수 있습니다. 원본은 백업하세요.</small>
+    </div>
+  </section>
+  <section id="slides-shell" hidden>
+    <div class="office-compact-nav">
+      <button id="slide-prev" aria-label="이전 슬라이드">‹</button>
+      <span id="slide-page">1 / 1</span>
+      <button id="slide-next" aria-label="다음 슬라이드">›</button>
+      <button id="slide-view-toggle">보기 전환</button>
+      <button id="slide-edit-toggle">텍스트 편집</button>
+    </div>
+    <div id="slide-stage">
+      <div id="slide-zoom-content">
+        <img id="slide-modern" alt="PowerPoint 슬라이드" hidden/>
+        <canvas id="slide-canvas" aria-label="파워포인트 슬라이드"></canvas>
+      </div>
+    </div>
+    <div id="slide-editor" class="office-editor-panel" hidden>
+      <label for="slide-shape">텍스트 상자 선택</label>
+      <select id="slide-shape"></select>
+      <textarea id="slide-text" rows="3" placeholder="슬라이드 텍스트 수정"></textarea>
+      <div class="office-action-row">
+        <button id="slide-apply">텍스트 적용</button>
+        <button id="slide-close">닫기</button>
+      </div>
+      <small>텍스트 상자 내 글자별 서식은 변경될 수 있습니다.</small>
+    </div>
+  </section>
+  <button id="hwp-tool-toggle" aria-label="한글 편집 도구 펼치기" hidden>도구</button>
+  <button id="sheet-tool-toggle" aria-label="엑셀 세부 도구 펼치기" hidden>⋯</button>
+  <div id="bottom-actions">
+    <button id="save-original">원본 파일에 저장</button>
+  </div>
+  <script src="/pptx-modern.bundle.js"></script>
+  <script src="/jszip.min.js"></script>
+  <script src="/docx-preview.min.js"></script>
+  <script src="/xlsx.full.min.js"></script>
+  <script type="module" src="/office-host.js"></script>
+</body>
+</html>

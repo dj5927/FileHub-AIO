@@ -1,0 +1,34 @@
+# Local Android SDK paths and developer environments
+local.properties
+.gradle/
+.idea/
+.vscode/
+**/build/
+**/.cxx/
+**/.externalNativeBuild/
+
+# Never publish private credentials or signing materials
+signing/
+**/signing.properties
+**/*.keystore
+**/*.jks
+**/*.p12
+**/*.pfx
+**/*.pem
+**/google-services.json
+**/*secret*.properties
+**/credentials.json
+**/.env
+**/.env.*
+
+# Generated installation packages and archives
+*.apk
+*.aab
+*.apks
+*.zip
+*.7z
+*.log
+hs_err_pid*
+NUL
+_trash/
+작업일지.md

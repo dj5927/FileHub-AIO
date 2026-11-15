@@ -1,0 +1,103 @@
+:root { color-scheme: dark; --bg:#0b1015; --fg:#e7f0ef; --soft:#9baeb7; --accent:#18aa9d; }
+* { box-sizing: border-box; }
+html, body { margin:0; height:100%; background:var(--bg); color:var(--fg);
+  font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif; }
+body { display:flex; flex-direction:column; overflow:hidden; }
+#status { min-height:36px; padding:8px 11px; font-size:12px; color:var(--soft);
+  white-space:normal; background:#131d27; }
+#status.error { color:#ff9a86; }
+#hwp-shell,#spreadsheet-shell { flex:1; min-height:0; }
+#hwp-container { height:100%; width:100%; overflow:hidden; }
+button,select,input { font:inherit; }
+button { padding:9px; border:1px solid #53646c; border-radius:6px; background:#192f37;
+  color:var(--fg); white-space:nowrap; }
+button:disabled { opacity:0.4; }
+#bottom-actions { display:flex; padding:8px 10px; border-top:1px solid #25323c; }
+#save-original { flex:1; padding:12px; color:white; font-weight:700; background:#087a72; }
+#spreadsheet-shell { display:flex; flex-direction:column; overflow:hidden; }
+#spreadsheet-shell[hidden],#hwp-shell[hidden] { display:none; }
+#sheet-toolbar,#formula-line,#pagination { display:flex; gap:6px; padding:8px;
+  align-items:center; overflow-x:auto; flex-shrink:0; font-size:12px; }
+#sheet-toolbar { border-bottom:1px solid #26313b; }
+#sheet-toolbar select { max-width:34vw; }
+#sheet-select,#cell-position,#formula-input { background:#19232b; border:1px solid #526675;
+  border-radius:5px; color:white; padding:8px; }
+#cell-position { width:70px; }
+#formula-input { flex:1; min-width:50px; }
+#grid-scroll { flex:1; min-height:0; width:100%; overflow:auto; }
+table { border-collapse:separate; border-spacing:0; table-layout:fixed; min-width:max-content;
+  font-size:13px; background:#10161c; }
+td,th { border-right:1px solid #394b51; border-bottom:1px solid #394b51; min-width:105px;
+  max-width:190px; height:33px; padding:4px 7px; overflow:hidden; white-space:nowrap;
+  text-overflow:ellipsis; }
+th { min-width:45px; background:#1a2b35; color:#a4bcca; font-weight:600;
+  position:sticky; top:0; z-index:1; }
+th.row-header { min-width:46px; left:0; z-index:2; }
+td.cell.selected { outline:2px solid #21bba4; outline-offset:-2px; background:#1f413d; }
+td.cell.formula { color:#b1d5f4; }
+#window-info { font-size:11px; color:var(--soft); white-space:nowrap; }
+#sheet-note { margin:0; color:#b7aa80; font-size:11px; padding:6px 9px; }
+
+/* Compact mobile-first layout: toolbars do not consume the document area. */
+body { position:relative; }
+#status { position:absolute; z-index:30; inset:0 0 auto 0; min-height:0;
+  max-height:88px; overflow:auto; opacity:0; pointer-events:none;
+  transition:opacity .12s; font-size:12px; padding:6px 12px;
+  border-bottom:1px solid #273540; box-shadow:0 2px 12px #0004; }
+#status.show,#status.error { opacity:1; }
+#bottom-actions { flex-shrink:0; padding:4px 8px 5px; }
+#save-original { padding:9px; min-height:39px; font-size:14px; border:0; }
+#sheet-toolbar { height:37px; min-height:37px; gap:6px; padding:2px 5px; }
+#sheet-toolbar label,#cell-jump,#cell-save { display:none; }
+#sheet-toolbar select { width:112px; max-width:34vw; height:31px; padding:3px; }
+#cell-position { height:31px; padding:3px 5px; width:66px; }
+#formula-line { height:38px; min-height:38px; padding:2px 5px; gap:5px; }
+#formula-line label { font-size:11px; max-width:58px; line-height:1.1; }
+#formula-input { height:32px; padding:3px 6px; }
+#pagination,#sheet-note { display:none; }
+#spreadsheet-shell.expanded #pagination { display:flex; }
+#spreadsheet-shell.expanded #sheet-note { display:block; }
+#spreadsheet-shell.expanded #sheet-toolbar { height:auto; }
+#spreadsheet-shell.expanded #sheet-toolbar label,
+#spreadsheet-shell.expanded #cell-jump,
+#spreadsheet-shell.expanded #cell-save { display:inline-flex; }
+#sheet-tool-toggle,#hwp-tool-toggle { position:absolute; z-index:12; right:9px;
+  bottom:59px; border:1px solid #3a7773; background:#0b7770ee;
+  color:#fff; min-height:34px; padding:5px 11px; border-radius:18px;
+  font-size:13px; box-shadow:0 2px 10px #0007; }
+#sheet-tool-toggle[hidden],#hwp-tool-toggle[hidden] { display:none; }
+#hwp-shell { position:relative; }
+#hwp-container > iframe { display:block; }
+#word-shell,#slides-shell { flex:1; min-height:0; display:flex; flex-direction:column; }
+#word-shell[hidden],#slides-shell[hidden] { display:none; }
+.office-compact-nav { height:36px; flex:0 0 36px; display:flex; align-items:center;
+  gap:8px; justify-content:space-between; padding:3px 8px; background:#12212a;
+  color:#cee2e7; font-size:13px; }
+.office-compact-nav button { padding:4px 11px; min-height:29px; }
+#word-scroll { flex:1; min-height:0; overflow:auto; background:#252d33; }
+#word-preview .docx-wrapper { background:#252d33; padding:8px !important; }
+#word-preview section.docx { margin:0 auto 10px; box-shadow:0 2px 8px #0005; }
+#slide-stage { flex:1; min-height:0; overflow:auto; display:flex;
+  align-items:center; justify-content:center; background:#141b20; padding:5px; }
+#slide-canvas { width:100%; height:auto; max-height:100%; object-fit:contain;
+  box-shadow:0 2px 10px #0009; }
+#slide-zoom-content { width:100%; flex:none; position:relative;
+  margin:auto; transform-origin:top left; }
+#slide-modern { width:100%; height:auto; display:block; background:#fff;
+  object-fit:contain; box-shadow:0 2px 10px #0009; }
+#slide-modern[hidden],#slide-canvas[hidden] { display:none; }
+#slide-stage { overflow:auto; touch-action:pan-x pan-y; justify-content:flex-start; }
+#slide-view-toggle { font-size:11px; padding:4px 8px; }
+#slide-page { flex:1; text-align:center; }
+#slide-prev,#slide-next { min-width:43px; }
+.office-editor-panel { flex:0 0 auto; background:#17252b; padding:8px;
+  border-top:1px solid #3a525a; max-height:50%; overflow:auto; }
+.office-editor-panel[hidden] { display:none; }
+.office-editor-panel label { font-size:11px; color:#bbcdd3; }
+.office-editor-panel select,.office-editor-panel textarea { display:block; width:100%;
+  background:#22313b; color:white; border:1px solid #4c6871;
+  border-radius:6px; padding:6px; margin:4px 0; font-size:14px; }
+.office-editor-panel textarea { resize:vertical; min-height:64px; }
+.office-editor-panel small { display:block; font-size:10px; color:#d0b987; }
+.office-action-row { display:flex; justify-content:flex-end; gap:7px; }
+.office-action-row button { min-height:32px; padding:5px 12px; }
