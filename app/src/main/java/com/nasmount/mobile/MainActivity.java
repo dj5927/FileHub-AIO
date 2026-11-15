@@ -274,9 +274,13 @@ public class MainActivity extends Activity {
     private void handleTvPairIntent(Intent intent) {
         if (intent == null || intent.getData() == null ||
                 !"filehubaio".equalsIgnoreCase(intent.getData().getScheme())) return;
+        String host=intent.getData().getHost();
         String value = intent.getData().toString();
         intent.setData(null);
-        showSendToTv(value);
+        if("relay".equalsIgnoreCase(host))
+            settingsBackupUi().showInternetQrSend(value);
+        else if("pair".equalsIgnoreCase(host))
+            showSendToTv(value);
     }
 
     @Override protected void onSaveInstanceState(Bundle outState) {

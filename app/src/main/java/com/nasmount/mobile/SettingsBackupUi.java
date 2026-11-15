@@ -2,11 +2,14 @@ package com.nasmount.mobile;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.graphics.Bitmap;
+import android.graphics.Color;
 import android.content.Intent;
 import android.net.Uri;
 import android.text.InputType;
 import android.view.View;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -28,20 +31,26 @@ final class SettingsBackupUi {
     private final SecureStore store;
     private final Runnable onRestored;
     private final ExecutorService executor=Executors.newSingleThreadExecutor();
+    private final ExecutorService qrExecutor=Executors.newCachedThreadPool();
     private char[] pendingPassword;
     private boolean busy;
     private LanSettingsTransfer.Receiver lanReceiver;
     private LanSettingsTransfer.Discovery lanDiscovery;
     private AlertDialog lanDialog;
     private int lanSession;
+    private AlertDialog qrDialog;
+    private volatile InternetQrTransfer.Session receivingQr;
+    private volatile int qrGeneration;
+    private static final String QR_PREFS="filehub_internet_qr";
+    private static final String RELAY_URL="relay_https_url";
 
     SettingsBackupUi(Activity activity,SecureStore store,Runnable onRestored) {
         this.activity=activity;this.store=store;this.onRestored=onRestored;
     }
 
     void show() {
-        // Keep the first screen to only two categories; existing transport and
-        // encrypted-backup implementations are called unchanged by the buttons.
+        // Same-LAN automatic discovery, cross-network encrypted QR, and offline
+        // file backups are distinct operations with separate entry points.
         ScrollView scroll=new ScrollView(activity);
         scroll.setFillViewport(false);
         LinearLayout content=Ui.vertical(activity);
@@ -49,8 +58,7 @@ final class SettingsBackupUi {
                 Ui.dp(activity,16),Ui.dp(activity,10));
         scroll.addView(content);
         TextView help=Ui.text(activity,
-                "TV에서 '가져오기'를 먼저 누르고, 휴대폰에서 '내보내기'를 누르면 " +
-                "같은 네트워크의 TV를 자동으로 찾습니다.",
+                "같은 네트워크라면 LAN 자동 전송, 다른 네트워크라면 인터넷 QR 전송을 이용하세요.",
                 13,Ui.MUTED,false);
         content.addView(help,Ui.lp(activity,-1,-2));
         Ui.gap(content,activity,15);
@@ -60,8 +68,11 @@ final class SettingsBackupUi {
                 .setView(scroll)
                 .setNegativeButton("닫기",null).create();
 
-        TransferSection device=addTransferSection(content,"remote", "기기 간 설정 이동",
-                "같은 Wi-Fi에서 자동으로 연결",false);
+        TransferSection device=addTransferSection(content,"remote", "LAN 자동 전송",
+                "같은 Wi-Fi · 기기 자동 검색",false);
+        Ui.gap(content,activity,11);
+        TransferSection internet=addTransferSection(content,"remote","인터넷 QR 전송",
+                "다른 네트워크 · 공개 HTTPS 중계 서버 필요",false);
         Ui.gap(content,activity,11);
         TransferSection file=addTransferSection(content,"drive","파일 백업 · 복원",
                 "암호화 파일로 저장하고 가져오기",false);
@@ -69,22 +80,286 @@ final class SettingsBackupUi {
         device.header.setOnClickListener(v->{
             boolean opening=!device.isOpen();
             device.setOpen(opening);
-            if(opening)file.setOpen(false);
+            if(opening){internet.setOpen(false);file.setOpen(false);}
+        });
+        internet.header.setOnClickListener(v->{
+            boolean opening=!internet.isOpen();
+            internet.setOpen(opening);
+            if(opening){device.setOpen(false);file.setOpen(false);}
         });
         file.header.setOnClickListener(v->{
             boolean opening=!file.isOpen();
             file.setOpen(opening);
-            if(opening)device.setOpen(false);
+            if(opening){device.setOpen(false);internet.setOpen(false);}
         });
 
         addTwoActions(device.details,
                 "내보내기",()->{dialog.dismiss();startLanExport();},
                 "가져오기",()->{dialog.dismiss();startLanImport();});
+        addTwoActions(internet.details,
+                "QR 표시 · 받기",()->{dialog.dismiss();startInternetQrReceive();},
+                "QR 스캔 · 보내기",()->{dialog.dismiss();showInternetQrSend("");});
+        TextView relay=Ui.text(activity,"중계 서버 HTTPS 주소 설정 (받는 기기)  ›",
+                13,Ui.TEAL,false);
+        relay.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);
+        relay.setPadding(Ui.dp(activity,7),Ui.dp(activity,7),Ui.dp(activity,7),
+                Ui.dp(activity,7));
+        relay.setFocusable(true);
+        relay.setOnClickListener(v->{dialog.dismiss();editRelayUrl(null);});
+        internet.details.addView(relay,Ui.lp(activity,-1,43));
         addTwoActions(file.details,
                 "파일로 저장",()->{dialog.dismiss();askExportPassword();},
                 "파일 불러오기",()->{dialog.dismiss();pickImportFile();});
         Ui.gap(file.details,activity,8);
         dialog.show();
+    }
+
+    private String savedRelayUrl() {
+        return activity.getSharedPreferences(QR_PREFS,Activity.MODE_PRIVATE)
+                .getString(RELAY_URL,"");
+    }
+
+    private void editRelayUrl(Runnable afterSave) {
+        EditText input=new EditText(activity);
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT|
+                InputType.TYPE_TEXT_VARIATION_URI);
+        input.setText(savedRelayUrl());
+        input.setHint("https://relay.example.com");
+        LinearLayout box=Ui.vertical(activity);
+        box.setPadding(Ui.dp(activity,18),Ui.dp(activity,8),
+                Ui.dp(activity,18),Ui.dp(activity,7));
+        box.addView(Ui.text(activity,
+                "받는 TV에서 한 번만 설정하세요. 인터넷에 공개된 본인 소유 HTTPS 중계 " +
+                "서버가 필요합니다. 휴대폰은 QR에서 서버 주소를 자동으로 읽습니다.",
+                13,Ui.TEXT,false),Ui.lp(activity,-1,-2));
+        Ui.gap(box,activity,10);
+        box.addView(input,Ui.lp(activity,-1,55));
+        AlertDialog dialog=new AlertDialog.Builder(activity)
+                .setTitle("인터넷 QR 중계 서버")
+                .setView(box)
+                .setNegativeButton("취소",null)
+                .setPositiveButton("주소 저장",null).create();
+        dialog.setOnShowListener(ignored->dialog.getButton(
+                AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            try {
+                String url=InternetQrTransfer.validateEndpoint(
+                        input.getText().toString());
+                activity.getSharedPreferences(QR_PREFS,Activity.MODE_PRIVATE)
+                        .edit().putString(RELAY_URL,url).apply();
+                dialog.dismiss();
+                if(afterSave!=null)afterSave.run();
+            }catch(Exception invalid) {
+                input.setError("https://도메인 형식으로 입력하세요.");
+            }
+        }));
+        dialog.show();
+    }
+
+    private void startInternetQrReceive() {
+        if(savedRelayUrl().isEmpty()){
+            editRelayUrl(this::startInternetQrReceive);
+            return;
+        }
+        stopInternetQr();
+        final int generation=qrGeneration;
+        final InternetQrTransfer.Session session;
+        try {session=InternetQrTransfer.newSession(savedRelayUrl());}
+        catch(Exception invalid){editRelayUrl(null);return;}
+        receivingQr=session;
+        AlertDialog connecting=new AlertDialog.Builder(activity)
+                .setTitle("인터넷 QR 준비 중")
+                .setMessage("설정한 HTTPS 중계 서버와 연결하고 있습니다.")
+                .setNegativeButton("취소",(d,w)->stopInternetQr()).create();
+        qrDialog=connecting;
+        connecting.setOnDismissListener(d->{
+            if(qrDialog==connecting && generation==qrGeneration)
+                stopInternetQr();
+        });
+        connecting.show();
+        qrExecutor.execute(()->{
+            long deadline=System.currentTimeMillis()+InternetQrTransfer.LIFETIME_MS;
+            String failure=null;
+            boolean delivered=false;
+            try {
+                InternetQrTransfer.create(session);
+                if(generation!=qrGeneration)return;
+                activity.runOnUiThread(()->showInternetQr(session,generation));
+                while(generation==qrGeneration && System.currentTimeMillis()<deadline) {
+                    byte[] plain=InternetQrTransfer.poll(session);
+                    if(plain!=null){
+                        org.json.JSONObject snapshot;
+                        try {
+                            snapshot=new org.json.JSONObject(new String(
+                                    plain,StandardCharsets.UTF_8));
+                            SettingsBackup.validate(snapshot);
+                        }finally{Arrays.fill(plain,(byte)0);}
+                        delivered=true;
+                        activity.runOnUiThread(()->{
+                            if(generation!=qrGeneration || activity.isFinishing())return;
+                            stopInternetQr();
+                            previewRestore(snapshot);
+                        });
+                        break;
+                    }
+                    Thread.sleep(1400);
+                }
+                if(!delivered && generation==qrGeneration)
+                    failure="QR 유효시간 2분이 지났습니다. 새로운 QR을 만드세요.";
+            }catch(Exception e) {
+                failure="인터넷 QR 수신에 실패했습니다. 공개 HTTPS 주소, " +
+                        "서버 동작 상태 및 네트워크를 확인하세요.";
+            }finally{
+                if(generation==qrGeneration && !delivered) {
+                    String message=failure;
+                    activity.runOnUiThread(()->{
+                        if(generation!=qrGeneration)return;
+                        stopInternetQr();
+                        if(!activity.isFinishing())alert(message);
+                    });
+                }
+                if(!delivered)InternetQrTransfer.cancel(session);
+                session.clear();
+            }
+        });
+    }
+
+    private void showInternetQr(InternetQrTransfer.Session session,int generation) {
+        if(generation!=qrGeneration || activity.isFinishing())return;
+        try {
+            Bitmap code=TvQrCode.bitmap(session.qrUri(),440);
+            LinearLayout body=Ui.vertical(activity);
+            body.setGravity(Gravity.CENTER);
+            body.setPadding(Ui.dp(activity,12),Ui.dp(activity,8),
+                    Ui.dp(activity,12),Ui.dp(activity,12));
+            body.addView(Ui.text(activity,
+                    "휴대폰 기본 카메라로 QR을 스캔한 뒤 웹페이지에서 " +
+                    "'FileHub에서 열기'를 누르고 전송을 승인하세요."+
+                    "\n두 기기가 다른 Wi-Fi여도 가능합니다. 2분간 유효합니다.",
+                    13,Ui.TEXT,false),Ui.lp(activity,-1,-2));
+            Ui.gap(body,activity,12);
+            ImageView qr=new ImageView(activity);
+            qr.setImageBitmap(code);
+            qr.setBackgroundColor(Color.WHITE);
+            qr.setPadding(Ui.dp(activity,8),Ui.dp(activity,8),
+                    Ui.dp(activity,8),Ui.dp(activity,8));
+            LinearLayout.LayoutParams imageSize=Ui.lp(activity,260,260);
+            imageSize.gravity=Gravity.CENTER;
+            body.addView(qr,imageSize);
+            Ui.gap(body,activity,9);
+            TextView check=Ui.text(activity,
+                    "확인 코드: "+session.invitation.shortCode(),18,Ui.TEAL,true);
+            check.setGravity(Gravity.CENTER);
+            body.addView(check,Ui.lp(activity,-1,-2));
+            AlertDialog open=new AlertDialog.Builder(activity)
+                    .setTitle("인터넷 QR · 설정 가져오기")
+                    .setView(body)
+                    .setNegativeButton("수신 취소",(d,w)->stopInternetQr()).create();
+            open.setOnDismissListener(d->{
+                if(qrDialog==open && generation==qrGeneration)
+                    stopInternetQr();
+            });
+            AlertDialog previous=qrDialog;
+            qrDialog=open;
+            if(previous!=null){
+                previous.setOnDismissListener(null);
+                previous.dismiss();
+            }
+            open.show();
+        }catch(Exception failed){stopInternetQr();alert("QR 화면을 만들지 못했습니다.");}
+    }
+
+    private void stopInternetQr() {
+        qrGeneration++;
+        InternetQrTransfer.Session session=receivingQr;
+        receivingQr=null;
+        AlertDialog open=qrDialog;
+        qrDialog=null;
+        if(open!=null){
+            open.setOnDismissListener(null);
+            open.dismiss();
+        }
+        if(session!=null && !qrExecutor.isShutdown())
+            qrExecutor.execute(()->InternetQrTransfer.cancel(session));
+    }
+
+    /** The Android camera opens a filehubaio://relay deep link, not a web page. */
+    void showInternetQrSend(String scannedUri) {
+        if(activity.isFinishing())return;
+        EditText qrInput=new EditText(activity);
+        qrInput.setText(scannedUri==null?"":scannedUri);
+        qrInput.setSingleLine(true);
+        qrInput.setInputType(InputType.TYPE_CLASS_TEXT|
+                InputType.TYPE_TEXT_VARIATION_URI);
+        qrInput.setHint("https://relay.example.com/pair#...");
+        LinearLayout body=Ui.vertical(activity);
+        body.setPadding(Ui.dp(activity,18),Ui.dp(activity,6),
+                Ui.dp(activity,18),Ui.dp(activity,9));
+        body.addView(Ui.text(activity,
+                "받는 TV가 보여주는 QR을 휴대폰 카메라로 스캔하세요. " +
+                "브라우저에서 'FileHub에서 열기'를 누릅니다. " +
+                "링크가 자동으로 열리지 않으면 QR 주소를 붙여넣으세요."+
+                "\n\n설정에는 NAS 비밀번호나 클라우드 토큰이 포함될 수 있으니 " +
+                "본인의 TV와 확인 코드를 반드시 대조하세요.",
+                13,Ui.TEXT,false),Ui.lp(activity,-1,-2));
+        Ui.gap(body,activity,12);
+        body.addView(qrInput,Ui.lp(activity,-1,58));
+        AlertDialog dialog=new AlertDialog.Builder(activity)
+                .setTitle("인터넷 QR · TV로 설정 보내기")
+                .setView(body)
+                .setNegativeButton("취소",null)
+                .setPositiveButton("TV 확인",null).create();
+        dialog.setOnShowListener(d->dialog.getButton(
+                AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            final InternetQrTransfer.Invitation invite;
+            try{invite=InternetQrTransfer.parseQr(qrInput.getText().toString());}
+            catch(Exception bad){qrInput.setError("TV의 인터넷 QR을 다시 확인하세요.");return;}
+            dialog.dismiss();
+            new AlertDialog.Builder(activity)
+                    .setTitle("TV 확인 · "+invite.shortCode())
+                    .setMessage("TV QR 확인 코드가 위 번호와 같나요?\n\n중계 서버: "+
+                            invite.endpoint+"\n\n네트워크·계정 비밀번호·즐겨찾기·" +
+                            "재생/독서 설정을 종단 간 암호화해 전송합니다. " +
+                            "TV에서 다시 병합·교체를 승인해야 저장됩니다.")
+                    .setNegativeButton("취소",(cancel,w)->invite.clear())
+                    .setPositiveButton("암호화 전송",(send,w)->sendInternetQr(invite))
+                    .show();
+        }));
+        dialog.show();
+    }
+
+    private void sendInternetQr(InternetQrTransfer.Invitation invitation) {
+        if(busy){invitation.clear();alert("현재 다른 설정 전송 작업이 진행 중입니다.");return;}
+        busy=true;
+        AlertDialog sending=new AlertDialog.Builder(activity)
+                .setTitle("인터넷 QR 설정 전송")
+                .setMessage("일회용 QR 키로 설정을 암호화해 보내고 있습니다.")
+                .setCancelable(false).create();
+        sending.show();
+        qrExecutor.execute(()->{
+            boolean success=false;
+            byte[] plain=null;
+            try{
+                plain=SettingsBackup.snapshot(activity,store).toString()
+                        .getBytes(StandardCharsets.UTF_8);
+                InternetQrTransfer.send(invitation,plain);
+                success=true;
+            }catch(Exception ignored){}
+            finally {
+                if(plain!=null)Arrays.fill(plain,(byte)0);
+                invitation.clear();
+            }
+            boolean done=success;
+            activity.runOnUiThread(()->{
+                busy=false;
+                sending.dismiss();
+                if(activity.isFinishing())return;
+                alert(done?"TV로 암호화 전송을 완료했습니다.\n" +
+                        "TV에서 병합 또는 전체 교체를 승인하세요.":
+                        "QR 전송에 실패했습니다. QR 2분 제한, HTTPS 서버 " +
+                        "연결 및 확인 코드를 점검해 주세요.");
+            });
+        });
     }
 
     private static final class TransferSection {
@@ -480,7 +755,13 @@ final class SettingsBackupUi {
         pendingPassword=null;
     }
 
-    void shutdown(){closeLan();clearPending();executor.shutdownNow();}
+    void shutdown(){
+        closeLan();
+        stopInternetQr();
+        clearPending();
+        executor.shutdownNow();
+        qrExecutor.shutdownNow();
+    }
 
     private void alert(String text){
         if(activity.isFinishing() || activity.isDestroyed())return;

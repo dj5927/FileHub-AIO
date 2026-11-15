@@ -81,6 +81,7 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="filehubaio" android:host="pair"/>
+                <data android:scheme="filehubaio" android:host="relay"/>
             </intent-filter>
         </activity>
         <provider

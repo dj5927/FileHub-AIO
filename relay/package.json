@@ -1,0 +1,11 @@
+{
+  "name": "filehub-aio-qr-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Ephemeral end-to-end encrypted QR settings relay for FileHub AIO",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {"node": ">=20"}
+}
