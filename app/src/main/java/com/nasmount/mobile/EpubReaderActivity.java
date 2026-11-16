@@ -3,6 +3,7 @@ package com.nasmount.mobile;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.SharedPreferences;
+import android.graphics.Canvas;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
@@ -71,6 +72,13 @@ public final class EpubReaderActivity extends Activity {
     private boolean loadingChapter,visibleBars=true,readerErrorVisible;
     private int chapterLayoutGeneration;
     private int barReflowGeneration;
+    private int settlingChapterGeneration=-1;
+    private int finishedChapterGeneration=-1;
+    private long settlingChapterSince;
+    private EpubLayoutSettlePolicy settlingChapterPolicy;
+    private final EpubEndPositionGuard endPositionGuard=
+            new EpubEndPositionGuard();
+    private boolean pinUpdatePosted;
     private long lastProgressWrite;
     private String historyId;
     private final int[] paper={0xFFF8F1E4,Color.WHITE,0xFFDFD2B2,0xFF161A1C};
@@ -649,9 +657,12 @@ public final class EpubReaderActivity extends Activity {
                                             loadingChapter||
                                             generation!=barReflowGeneration)return;
                                     if(mode==0)
-                                        web.scrollTo(EpubChromeReflow.horizontalSnap(
-                                                fraction,web.maximumX(),
-                                                web.getWidth()),0);
+                                        web.scrollTo(
+                                                endPositionGuard.activeFor(chapterIndex)?
+                                                        web.maximumX():
+                                                        EpubChromeReflow.horizontalSnap(
+                                                                fraction,web.maximumX(),
+                                                                web.getWidth()),0);
                                     else web.scrollTo(0,
                                             EpubChromeReflow.verticalRestore(
                                                     fraction,web.maximumY()));
@@ -696,6 +707,10 @@ public final class EpubReaderActivity extends Activity {
         if(archive==null||number<0||number>=archive.chapters.size())return;
         ++chapterLayoutGeneration;
         ++barReflowGeneration;
+        settlingChapterGeneration=-1;
+        settlingChapterPolicy=null;
+        finishedChapterGeneration=-1;
+        endPositionGuard.clear();
         chapterIndex=number;
         restoreChapterEnd=fraction<0;
         restoreFraction=Math.max(0,Math.min(9999,fraction));
@@ -732,8 +747,64 @@ public final class EpubReaderActivity extends Activity {
         if(!HOST.equals(loaded.getHost())||
                 !("/"+archive.chapters.get(chapterIndex).path)
                         .equals(loaded.getPath()))return;
+        if(settlingChapterGeneration==generation||
+                finishedChapterGeneration==generation)return;
+        // Font-face resources and large paragraphs can change page counts
+        // AFTER onPageFinished and the first visual-state callback.
+        settlingChapterGeneration=generation;
+        settlingChapterSince=SystemClock.uptimeMillis();
+        settlingChapterPolicy=EpubLayoutSettlePolicy.create();
+        pollChapterLayout(generation);
+    }
+    private void pollChapterLayout(int generation){
+        if(isFinishing()||isDestroyed()||generation!=chapterLayoutGeneration||
+                settlingChapterGeneration!=generation||archive==null)return;
+        int extent=mode==0?web.maximumX():web.maximumY();
+        int viewport=mode==0?web.getWidth():web.getHeight();
+        boolean atEnd=restoreChapterEnd;
+        if(atEnd&&viewport>0){
+            if(mode==0)web.scrollTo(extent,0);
+            else web.scrollTo(0,extent);
+        }
+        long elapsed=SystemClock.uptimeMillis()-settlingChapterSince;
+        if(!settlingChapterPolicy.observe(extent,viewport,elapsed,atEnd)){
+            web.postDelayed(()->pollChapterLayout(generation),
+                    EpubLayoutSettlePolicy.POLL_MS);
+            return;
+        }
+        // Check once more after WebView has actually committed the new
+        // frame, not merely after its scroll range looked unchanged.
+        final int acceptedExtent=extent,acceptedViewport=viewport;
+        web.postVisualStateCallback(generation,new WebView.VisualStateCallback(){
+            @Override public void onComplete(long requestId){
+                web.postDelayed(()->{
+                    if(isFinishing()||isDestroyed()||
+                            generation!=chapterLayoutGeneration||
+                            settlingChapterGeneration!=generation)return;
+                    int currentExtent=mode==0?web.maximumX():web.maximumY();
+                    int currentViewport=mode==0?web.getWidth():web.getHeight();
+                    if(currentExtent!=acceptedExtent||
+                            currentViewport!=acceptedViewport){
+                        pollChapterLayout(generation);
+                        return;
+                    }
+                    finishStableChapterLayout();
+                },50);
+            }
+        });
+    }
+    private void finishStableChapterLayout(){
+        boolean pinEnd=restoreChapterEnd&&mode==0;
+        finishedChapterGeneration=chapterLayoutGeneration;
+        settlingChapterGeneration=-1;
+        settlingChapterPolicy=null;
         loadingChapter=false;
         restorePosition();
+        if(pinEnd){
+            // Keep this destination pinned even if a late font layout
+            // invalidation happens after we have released the page animation.
+            endPositionGuard.pin(chapterIndex,web.getWidth(),web.maximumX());
+        }
         applyReaderStatus();
         recordProgress(); // Rewrite the old chapter-count-based cached %.
         if(pendingChapterTurn){
@@ -886,6 +957,7 @@ public final class EpubReaderActivity extends Activity {
         boolean cross=old==target;
         if(cross&&(archive==null||chapterIndex+direction<0||
                 chapterIndex+direction>=archive.chapters.size()))return false;
+        endPositionGuard.clear(); // User action wins over late-layout pin.
         fingerCurl=true;turnBusy=true;
         fingerReleased=false;fingerCommit=false;fingerReady=false;
         fingerCrossChapter=cross;fingerReturning=false;
@@ -1058,6 +1130,7 @@ public final class EpubReaderActivity extends Activity {
             return;
         }
         if(archive==null||loadingChapter||turnBusy)return;
+        endPositionGuard.clear(); // Do not snap back after a manual turn.
         if(mode==0){
             int max=web.maximumX();
             int target=EpubPaginationPolicy.target(
@@ -1237,6 +1310,24 @@ public final class EpubReaderActivity extends Activity {
         BookWebView(){super(EpubReaderActivity.this);}
         int maximumX(){return Math.max(0,computeHorizontalScrollRange()-getWidth());}
         int maximumY(){return Math.max(0,computeVerticalScrollRange()-getHeight());}
+        @Override protected void onDraw(Canvas canvas){
+            super.onDraw(canvas);
+            // A late font-face or image can grow the column count even AFTER
+            // the first stable frames. While this chapter was reached via
+            // PREVIOUS, remain on its actual last page as the range changes.
+            if(!pdfMode&&!loadingChapter&&archive!=null&&mode==0&&
+                    endPositionGuard.observe(chapterIndex,getWidth(),
+                            maximumX())&&!pinUpdatePosted){
+                pinUpdatePosted=true;
+                post(()->{
+                    pinUpdatePosted=false;
+                    if(isFinishing()||isDestroyed()||loadingChapter||
+                            !endPositionGuard.activeFor(chapterIndex))return;
+                    scrollTo(maximumX(),0);
+                    recordProgress();
+                });
+            }
+        }
         @Override protected void onScrollChanged(int x,int y,int oldX,int oldY){
             super.onScrollChanged(x,y,oldX,oldY);
             long now=SystemClock.uptimeMillis();
