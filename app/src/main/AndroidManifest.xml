@@ -59,8 +59,13 @@
         <activity
             android:name=".VideoPlayerActivity"
             android:exported="false"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
             android:screenOrientation="unspecified"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"/>
+        <receiver
+            android:name=".VideoPlayerActivity$PipControlReceiver"
+            android:exported="false"/>
         <activity
             android:name=".SettingsActivity"
             android:exported="false"
