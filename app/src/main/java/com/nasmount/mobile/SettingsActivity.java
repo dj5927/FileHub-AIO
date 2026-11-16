@@ -231,7 +231,7 @@ public final class SettingsActivity extends Activity {
                                     recreate();
                                 }).setNegativeButton("취소", null).show());
         note("시스템 설정에 맞춤을 선택하면 Android의 라이트/다크 설정을 따릅니다.");
-        action("현재 앱","FileHub AIO v0.1.98",
+        action("현재 앱","FileHub AIO v0.1.99",
                 ()->new AlertDialog.Builder(this).setTitle("FileHub AIO")
                         .setMessage("개별 폴더 설정과 기존 원격 저장소 연결 정보는 유지됩니다.")
                         .setPositiveButton("확인",null).show());

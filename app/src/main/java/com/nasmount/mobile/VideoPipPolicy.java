@@ -12,6 +12,9 @@ final class VideoPipPolicy {
                              boolean tv,boolean isPlaying,boolean ended){
         return userOptedIn&&canOffer(supported,tv,ended)&&isPlaying;
     }
+    static boolean releaseWhenStopped(boolean everEnteredPip,boolean finishing){
+        return everEnteredPip||finishing;
+    }
 
     /**
      * Android PiP accepts [1:2.39, 2.39:1]. Video dimensions are used in

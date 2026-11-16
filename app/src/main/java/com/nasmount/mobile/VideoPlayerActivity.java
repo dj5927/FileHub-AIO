@@ -84,9 +84,16 @@ import java.util.concurrent.Executors;
 @androidx.media3.common.util.UnstableApi
 public final class VideoPlayerActivity extends Activity {
     private static final String PIP_PREFS="video_popup_playback";
-    private static final String PIP_AUTO_ON_HOME="auto_on_home";
     private static final String ACTION_PIP_TOGGLE=
             "com.nasmount.mobile.action.PIP_TOGGLE";
+    private static final String ACTION_PIP_REWIND=
+            "com.nasmount.mobile.action.PIP_REWIND";
+    private static final String ACTION_PIP_FORWARD=
+            "com.nasmount.mobile.action.PIP_FORWARD";
+    private static final String ACTION_PIP_ACCEPT=
+            "com.nasmount.mobile.action.PIP_ACCEPT";
+    private static final String ACTION_PIP_STOP=
+            "com.nasmount.mobile.action.PIP_STOP";
     private static WeakReference<VideoPlayerActivity> currentPipOwner=
             new WeakReference<>(null);
     static final String EXTRA_PROFILE_ID = "profileId";
@@ -136,8 +143,13 @@ public final class VideoPlayerActivity extends Activity {
     private TextView swipeHint;
     private LinearLayout topBar;
     private PlayerView videoView;
-    private TextView popupButton;
     private boolean popupUiActive;
+    private boolean playbackReleased;
+    private boolean pipWasEntered;
+    private boolean pipDecisionPending;
+    private boolean pipShouldResumeAfterDecision;
+    private boolean openingOverlayPermissionSettings;
+    private AlertDialog pipHomeDecisionDialog;
     private int pipAspectWidth=16,pipAspectHeight=9;
     private DataSource.Factory dataFactory;
     private AudioManager audioManager;
@@ -232,6 +244,13 @@ public final class VideoPlayerActivity extends Activity {
         setTheme(AppearanceSettings.isDark(this) ?
                 R.style.AppThemeDark : R.style.AppTheme);
         super.onCreate(state);
+        // Launching another video must never leave an old hidden PiP audio
+        // stream alongside the new player.
+        VideoPlayerActivity previous=currentPipOwner.get();
+        if(previous!=null&&previous!=this){
+            previous.stopAndReleasePlayback();
+            previous.finish();
+        }
         currentPipOwner=new WeakReference<>(this);
         folderSettingsScope=FolderMediaSettings.video(this,getIntent());
         // Start portrait until Media3 reports the *video* dimensions.
@@ -287,12 +306,6 @@ public final class VideoPlayerActivity extends Activity {
         title.setSingleLine(true);
         title.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         topBar.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
-        popupButton=button("▣",23);
-        popupButton.setGravity(Gravity.CENTER);
-        popupButton.setContentDescription("팝업 재생으로 전환하거나 홈으로 나가기");
-        topBar.addView(popupButton,
-                new LinearLayout.LayoutParams(dp(48),-1));
-        popupButton.setOnClickListener(v->confirmPopupOrLeave());
         TextView more = button("⋯", 26);
         more.setGravity(Gravity.CENTER);
         more.setContentDescription("동영상 재생 추가 설정");
@@ -905,64 +918,6 @@ public final class VideoPlayerActivity extends Activity {
                 player!=null&&player.getPlaybackState()==Player.STATE_ENDED);
     }
 
-    private boolean autoPopupOnHome(){
-        return getSharedPreferences(PIP_PREFS,MODE_PRIVATE)
-                .getBoolean(PIP_AUTO_ON_HOME,false);
-    }
-
-    private void saveAutoPopupOnHome(boolean enabled){
-        getSharedPreferences(PIP_PREFS,MODE_PRIVATE).edit()
-                .putBoolean(PIP_AUTO_ON_HOME,enabled).apply();
-        refreshPictureInPictureParams();
-    }
-
-    /**
-     * Home belongs to Android system navigation: after it is pressed this
-     * Activity is not allowed to show a reliable foreground yes/no dialog.
-     * The visible player popup button provides that dialog before leaving;
-     * this preference optionally enables seamless Home -> PiP afterwards.
-     */
-    private void confirmPopupOrLeave(){
-        if(!supportsPopupPlayback()){
-            Toast.makeText(this,"이 기기에서는 팝업 재생을 사용할 수 없습니다.",
-                    Toast.LENGTH_LONG).show();
-            return;
-        }
-        new AlertDialog.Builder(this)
-                .setTitle("팝업 재생")
-                .setMessage("팝업 재생으로 전환할까요?\n"+
-                        "예: 재생을 유지한 채 팝업으로 전환합니다. "+
-                        "이후 홈 버튼으로 나갈 때도 자동 팝업을 사용합니다.\n"+
-                        "아니오: 팝업 없이 홈으로 나갑니다.")
-                .setPositiveButton("예",(dialog,which)->{
-                    saveAutoPopupOnHome(true);
-                    enterPopupPlayback();
-                })
-                .setNegativeButton("아니오",(dialog,which)->{
-                    saveAutoPopupOnHome(false);
-                    moveTaskToBack(true);
-                })
-                .setNeutralButton("취소",null)
-                .show();
-    }
-
-    private void configurePopupOnHome(){
-        if(!supportsPopupPlayback()){
-            Toast.makeText(this,"이 기기에서는 팝업 재생을 사용할 수 없습니다.",
-                    Toast.LENGTH_LONG).show();
-            return;
-        }
-        new AlertDialog.Builder(this)
-                .setTitle("홈 버튼 팝업 재생")
-                .setMessage("재생 중 홈으로 이동하면 자동으로 팝업 재생할까요?\n"+
-                        "끄면 홈으로 나갈 때 일반적인 방식으로 재생이 중단됩니다.")
-                .setPositiveButton("예, 사용",(dialog,which)->
-                        saveAutoPopupOnHome(true))
-                .setNegativeButton("아니오, 끄기",(dialog,which)->
-                        saveAutoPopupOnHome(false))
-                .show();
-    }
-
     private PictureInPictureParams pictureInPictureParameters(){
         PictureInPictureParams.Builder builder=
                 new PictureInPictureParams.Builder()
@@ -975,28 +930,53 @@ public final class VideoPlayerActivity extends Activity {
         }
         if(player!=null){
             boolean playing=player.isPlaying();
-            Intent intent=new Intent(this,PipControlReceiver.class)
-                    .setAction(ACTION_PIP_TOGGLE);
-            PendingIntent toggle=PendingIntent.getBroadcast(this,198,
-                    intent,PendingIntent.FLAG_UPDATE_CURRENT|
-                            PendingIntent.FLAG_IMMUTABLE);
-            RemoteAction control=new RemoteAction(
-                    Icon.createWithResource(this,playing?
-                            android.R.drawable.ic_media_pause:
-                            android.R.drawable.ic_media_play),
-                    playing?"일시정지":"재생",
-                    playing?"동영상 일시정지":"동영상 다시 재생",toggle);
-            builder.setActions(Collections.singletonList(control));
+            List<RemoteAction> actions=new ArrayList<>(3);
+            if(pipDecisionPending){
+                actions.add(pipAction(ACTION_PIP_ACCEPT,193,
+                        android.R.drawable.ic_media_play,"팝업 계속 재생"));
+                actions.add(pipAction(ACTION_PIP_STOP,194,
+                        android.R.drawable.ic_menu_close_clear_cancel,
+                        "재생 종료"));
+            }else{
+                actions.add(pipAction(ACTION_PIP_REWIND,191,
+                        android.R.drawable.ic_media_rew,"10초 뒤로"));
+                actions.add(pipAction(ACTION_PIP_TOGGLE,198,
+                        playing?android.R.drawable.ic_media_pause:
+                                android.R.drawable.ic_media_play,
+                        playing?"일시정지":"재생"));
+                actions.add(pipAction(ACTION_PIP_FORWARD,192,
+                        android.R.drawable.ic_media_ff,"10초 앞으로"));
+            }
+            builder.setActions(actions);
         }
         if(Build.VERSION.SDK_INT>=31){
             builder.setSeamlessResizeEnabled(true);
-            builder.setAutoEnterEnabled(VideoPipPolicy.autoEnter(
-                    autoPopupOnHome(),supportsPopupPlayback(),
+            builder.setAutoEnterEnabled(!openingOverlayPermissionSettings&&
+                    VideoPipPolicy.autoEnter(
+                    true,supportsPopupPlayback(),
                     TvMode.isTv(this),player!=null&&player.getPlayWhenReady()&&
                             player.getPlaybackState()!=Player.STATE_IDLE,
                     player!=null&&player.getPlaybackState()==Player.STATE_ENDED));
         }
         return builder.build();
+    }
+    private RemoteAction pipAction(String action,int requestCode,
+                                   int iconId,String label){
+        PendingIntent click=PendingIntent.getBroadcast(this,requestCode,
+                new Intent(this,PipControlReceiver.class).setAction(action),
+                PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+        return new RemoteAction(Icon.createWithResource(this,iconId),
+                label,label,click);
+    }
+
+    private void skipPip(int seconds){
+        if(player==null||!player.isCurrentMediaItemSeekable())return;
+        long target=Math.max(0,player.getCurrentPosition()+seconds*1000L);
+        long duration=player.getDuration();
+        if(duration>0&&duration!=C.TIME_UNSET)
+            target=Math.min(target,duration);
+        player.seekTo(target);
+        saveWatchPosition();
     }
 
     private void refreshPictureInPictureParams(){
@@ -1025,14 +1005,129 @@ public final class VideoPlayerActivity extends Activity {
     /** PiP's system controls include close and expand/full-screen. */
     public static final class PipControlReceiver extends BroadcastReceiver {
         @Override public void onReceive(Context context,Intent intent){
-            if(intent==null||
-                    !ACTION_PIP_TOGGLE.equals(intent.getAction()))return;
+            if(intent==null)return;
+            String action=intent.getAction();
+            if(!ACTION_PIP_TOGGLE.equals(action)&&
+                    !ACTION_PIP_REWIND.equals(action)&&
+                    !ACTION_PIP_FORWARD.equals(action)&&
+                    !ACTION_PIP_ACCEPT.equals(action)&&
+                    !ACTION_PIP_STOP.equals(action))return;
             VideoPlayerActivity activity=currentPipOwner.get();
             if(activity==null||activity.player==null||
                     !activity.isInPictureInPictureMode())return;
-            if(activity.player.isPlaying())activity.player.pause();
+            if(ACTION_PIP_ACCEPT.equals(action)){
+                activity.acceptPipPlayback();
+            }else if(ACTION_PIP_STOP.equals(action)){
+                activity.stopAndReleasePlayback();
+                activity.finish();
+            }else if(activity.pipDecisionPending)return;
+            else if(ACTION_PIP_REWIND.equals(action))activity.skipPip(-10);
+            else if(ACTION_PIP_FORWARD.equals(action))activity.skipPip(10);
+            else if(activity.player.isPlaying())activity.player.pause();
             else activity.player.play();
             activity.refreshPictureInPictureParams();
+        }
+    }
+
+    private boolean canShowHomeConfirmation(){
+        return android.provider.Settings.canDrawOverlays(this);
+    }
+
+    private void showHomeConfirmationPermissionSetup(){
+        if(canShowHomeConfirmation()){
+            Toast.makeText(this,"홈 버튼 확인창 권한이 허용되어 있습니다.",
+                    Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("홈 버튼 확인창 권한")
+                .setMessage("재생 도중 홈 버튼을 누를 때마다 홈 화면에 "+
+                        "'팝업 재생 / 재생 정지' 확인창을 띄우려면 "+
+                        "Android의 '다른 앱 위에 표시' 권한을 최초 한 번 "+
+                        "허용해야 합니다.\n\n"+
+                        "권한이 없어도 홈 버튼으로 팝업은 바로 열리고, "+
+                        "팝업을 터치하면 계속 재생/종료를 선택할 수 있습니다.")
+                .setPositiveButton("한 번만 권한 허용",(d,w)->{
+                    openingOverlayPermissionSettings=true;
+                    refreshPictureInPictureParams();
+                    Intent permission=new Intent(
+                            android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:"+getPackageName()));
+                    try{startActivity(permission);}
+                    catch(Exception denied){
+                        openingOverlayPermissionSettings=false;
+                        Toast.makeText(this,"권한 설정을 열 수 없습니다.",
+                                Toast.LENGTH_SHORT).show();
+                    }
+                }).setNegativeButton("나중에",null).show();
+    }
+
+    private void offerPermissionSetupOnce(){
+        if(canShowHomeConfirmation()||isFinishing()||isDestroyed()||
+                isInPictureInPictureMode())return;
+        android.content.SharedPreferences prefs=getSharedPreferences(
+                PIP_PREFS,MODE_PRIVATE);
+        if(prefs.getBoolean("home_dialog_permission_asked",false))return;
+        prefs.edit().putBoolean("home_dialog_permission_asked",true).apply();
+        showHomeConfirmationPermissionSetup();
+    }
+
+    private void acceptPipPlayback(){
+        pipDecisionPending=false;
+        dismissPipDecisionDialog();
+        if(player!=null&&pipShouldResumeAfterDecision)player.play();
+        refreshPictureInPictureParams();
+    }
+
+    private void dismissPipDecisionDialog(){
+        AlertDialog dialog=pipHomeDecisionDialog;
+        pipHomeDecisionDialog=null;
+        if(dialog!=null&&dialog.isShowing())dialog.dismiss();
+    }
+
+    private void showPipHomeDecision(){
+        if(!pipDecisionPending||!isInPictureInPictureMode()||
+                isFinishing()||isDestroyed()||!canShowHomeConfirmation())
+            return;
+        dismissPipDecisionDialog();
+        AlertDialog dialog=new AlertDialog.Builder(this)
+                .setTitle("팝업 재생")
+                .setMessage("팝업으로 계속 재생하시겠습니까?")
+                .setCancelable(false)
+                .setPositiveButton("팝업 재생",(d,w)->acceptPipPlayback())
+                .setNegativeButton("재생 정지",(d,w)->{
+                    stopAndReleasePlayback();
+                    finish();
+                }).create();
+        try{
+            if(dialog.getWindow()!=null)
+                dialog.getWindow().setType(
+                        android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
+            dialog.show();
+            pipHomeDecisionDialog=dialog;
+        }catch(RuntimeException denied){
+            // OEMs can suppress app overlays. Native PiP confirm/stop
+            // actions remain available on tap even when this is blocked.
+            dialog.dismiss();
+            pipHomeDecisionDialog=null;
+            if(player!=null&&pipShouldResumeAfterDecision)player.play();
+        }
+    }
+
+    private void stopAndReleasePlayback(){
+        if(playbackReleased)return;
+        playbackReleased=true;
+        pipDecisionPending=false;
+        dismissPipDecisionDialog();
+        watchHandler.removeCallbacks(saveWatchTick);
+        watchHandler.removeCallbacks(monitorActualVideoEnd);
+        if(player!=null){
+            saveWatchPosition();
+            player.pause();
+            player.stop();
+            if(videoView!=null)videoView.setPlayer(null);
+            player.release();
+            player=null;
         }
     }
 
@@ -1042,8 +1137,7 @@ public final class VideoPlayerActivity extends Activity {
                         "자막 설정", "오디오 트랙 및 정보",
                         "화면 회전 · " + PlaybackControlPolicy.orientationLabel(orientationMode),
                         "재생 속도 초기화 (1.0×)", "화면 맞춤 / 확대",
-                        "팝업 재생 / 홈으로 나가기",
-                        "홈 버튼 자동 팝업 · " + (autoPopupOnHome()?"켜짐":"꺼짐"),
+                        "홈 버튼 확인창 권한 설정",
                         "이 폴더 개별 설정 초기화 (기본값 사용)"
                 }, (dialog, which) -> {
                     if (which == 0) chooseSubtitle();
@@ -1051,9 +1145,8 @@ public final class VideoPlayerActivity extends Activity {
                     else if (which == 2) rotateVideo();
                     else if (which == 3) resetPlaybackSpeed();
                     else if (which == 4) toggleVideoFit();
-                    else if (which == 5) confirmPopupOrLeave();
-                    else if (which == 6) configurePopupOnHome();
-                    else if (which == 7) resetVideoFolderOverrides();
+                    else if (which == 5) showHomeConfirmationPermissionSetup();
+                    else if (which == 6) resetVideoFolderOverrides();
                 }).show();
     }
 
@@ -2160,6 +2253,13 @@ public final class VideoPlayerActivity extends Activity {
     }
     @Override protected void onResume() {
         super.onResume();
+        if(!isInPictureInPictureMode()){
+            pipWasEntered=false;
+            if(openingOverlayPermissionSettings)
+                openingOverlayPermissionSettings=false;
+            if(videoView!=null)
+                videoView.postDelayed(this::offerPermissionSetupOnce,650L);
+        }
         refreshPictureInPictureParams();
         watchHandler.removeCallbacks(saveWatchTick);
         watchHandler.postDelayed(saveWatchTick, 5000L);
@@ -2181,17 +2281,20 @@ public final class VideoPlayerActivity extends Activity {
         touchLock.end();
         swipePolicy.reset();
         if (unlockButton != null) unlockButton.removeCallbacks(hideUnlockButton);
-        // A video in Android native PiP is still visible and must keep
-        // playing. Normal Home (when the user declined PiP) still pauses.
-        if (player != null && !isInPictureInPictureMode()) player.pause();
+        // The PiP X can cause onStop while isInPiPMode still reports true.
+        // Once stopped, this Activity is no longer visible: release audio.
+        if(VideoPipPolicy.releaseWhenStopped(pipWasEntered,isFinishing()))
+            stopAndReleasePlayback();
+        else if(player!=null)player.pause();
         super.onStop();
     }
     @Override protected void onUserLeaveHint(){
         super.onUserLeaveHint();
         // Android 12+ performs this itself with setAutoEnterEnabled.
         // Pre-12 needs to enter explicitly while Activity is foreground.
-        if(Build.VERSION.SDK_INT<31&&VideoPipPolicy.autoEnter(
-                autoPopupOnHome(),supportsPopupPlayback(),TvMode.isTv(this),
+        if(Build.VERSION.SDK_INT<31&&!openingOverlayPermissionSettings&&
+                VideoPipPolicy.autoEnter(
+                true,supportsPopupPlayback(),TvMode.isTv(this),
                 player!=null&&player.getPlayWhenReady()&&
                         player.getPlaybackState()!=Player.STATE_IDLE,
                 player!=null&&player.getPlaybackState()==Player.STATE_ENDED))
@@ -2204,6 +2307,10 @@ public final class VideoPlayerActivity extends Activity {
         popupUiActive=inPictureInPictureMode;
         if(videoView==null)return;
         if(inPictureInPictureMode){
+            pipWasEntered=true;
+            pipDecisionPending=true;
+            pipShouldResumeAfterDecision=
+                    player!=null&&player.getPlayWhenReady();
             watchHandler.removeCallbacks(saveWatchTick);
             watchHandler.postDelayed(saveWatchTick,5000L);
             watchHandler.removeCallbacks(monitorActualVideoEnd);
@@ -2219,7 +2326,14 @@ public final class VideoPlayerActivity extends Activity {
             if(swipeHint!=null)swipeHint.setVisibility(View.GONE);
             if(skipHint!=null)skipHint.setVisibility(View.GONE);
             refreshPictureInPictureParams();
+            if(canShowHomeConfirmation()){
+                if(player!=null)player.pause();
+                videoView.postDelayed(this::showPipHomeDecision,170L);
+            }
         }else{
+            if(pipDecisionPending&&!isFinishing())
+                acceptPipPlayback();
+            else dismissPipDecisionDialog();
             videoView.setUseController(true);
             if(!touchLock.isLocked()){
                 controlsVisible=true;
@@ -2250,10 +2364,7 @@ public final class VideoPlayerActivity extends Activity {
         if (unlockButton != null) unlockButton.removeCallbacks(hideUnlockButton);
         if (swipeHint != null) swipeHint.removeCallbacks(hideSwipeHint);
         jobs.shutdownNow();
-        if (player != null) {
-            player.release();
-            player = null;
-        }
+        stopAndReleasePlayback();
         super.onDestroy();
     }
 }

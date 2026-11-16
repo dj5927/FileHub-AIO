@@ -12,6 +12,11 @@ public class VideoPipPolicyTest {
         assertFalse(VideoPipPolicy.autoEnter(true,true,false,true,true));
         assertTrue(VideoPipPolicy.autoEnter(true,true,false,true,false));
     }
+    @Test public void closingPipMustReleaseEvenBeforeModeFlagClears(){
+        assertTrue(VideoPipPolicy.releaseWhenStopped(true,false));
+        assertTrue(VideoPipPolicy.releaseWhenStopped(false,true));
+        assertFalse(VideoPipPolicy.releaseWhenStopped(false,false));
+    }
     @Test public void portraitAndLandscapeVideoKeepCorrectShape(){
         assertArrayEquals(new int[]{16,9},VideoPipPolicy.aspect(0,0));
         assertArrayEquals(new int[]{1920,1080},
