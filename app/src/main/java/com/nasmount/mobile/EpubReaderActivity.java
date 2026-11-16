@@ -72,6 +72,7 @@ public final class EpubReaderActivity extends Activity {
     private boolean loadingChapter,visibleBars=true,readerErrorVisible;
     private int chapterLayoutGeneration;
     private int barReflowGeneration;
+    private int previousRevealGeneration;
     private int settlingChapterGeneration=-1;
     private int finishedChapterGeneration=-1;
     private long settlingChapterSince;
@@ -996,16 +997,39 @@ public final class EpubReaderActivity extends Activity {
     }
     private void capturePreviousSheetForFinger(){
         final int generation=fingerGeneration;
-        EpubPageCapture.capture(this,web,bitmap->{
+        // PixelCopy requests copy the entire composited window rectangle,
+        // including the page-turn overlay covering the WebView. Previously
+        // "incoming" was therefore often another copy of the OLD text,
+        // which made the page jump after the curl completed.
+        // Reveal the real previously-rendered WebView underneath instead.
+        afterVisiblePreviousPage(()->{
             if(generation!=fingerGeneration||!fingerCurl||
-                    isFinishing()||isDestroyed()){
-                if(bitmap!=null&&!bitmap.isRecycled())bitmap.recycle();
-                return;
-            }
-            if(bitmap!=null)pageTurnOverlay.setIncoming(bitmap);
+                    isFinishing()||isDestroyed())return;
             fingerReady=true;
             if(fingerReleased)settleEpubFinger();
         });
+    }
+    /** Ensure the new WebView frame is ready before uncovering the old sheet. */
+    private void afterVisiblePreviousPage(Runnable action){
+        final int chapterGeneration=chapterLayoutGeneration;
+        final int revealGeneration=++previousRevealGeneration;
+        final boolean[] started={false};
+        Runnable deliver=()->{
+            if(started[0]||isFinishing()||isDestroyed()||
+                    chapterGeneration!=chapterLayoutGeneration||
+                    revealGeneration!=previousRevealGeneration)return;
+            started[0]=true;
+            action.run();
+        };
+        web.postVisualStateCallback(chapterGeneration,
+                new WebView.VisualStateCallback(){
+                    @Override public void onComplete(long id){
+                        web.post(deliver);
+                    }
+                });
+        // Some vendor WebViews don't complete visual callbacks after a
+        // hardware frame is already available. Never freeze a turn forever.
+        web.postDelayed(deliver,220);
     }
     private void updateEpubFinger(float x,float y){
         if(!fingerCurl||fingerReleased)return;
@@ -1083,17 +1107,16 @@ public final class EpubReaderActivity extends Activity {
      * The snapshot of the actual previous XHTML page is acquired after
      * WebView has completed its paint, not before scrolling. */
     private void completeTurn(){
-        if(pendingTurnDirection<0&&pageEffect==EpubTurnGeometry.CURL){
-            EpubPageCapture.capture(this,web,bitmap->{
-                if(isFinishing()||isDestroyed()||!turnBusy||
-                        !pageTurnOverlay.holding()){
-                    if(bitmap!=null&&!bitmap.isRecycled())bitmap.recycle();
-                    return;
-                }
-                if(bitmap!=null)pageTurnOverlay.setIncoming(bitmap);
-                playPageTurn();
+        if(pendingTurnDirection<0&&pageEffect==EpubTurnGeometry.CURL&&!pdfMode){
+            // Old sheet is in the overlay, NEW page already lives behind it.
+            // Do not PixelCopy that rectangle: it captures the overlay, not
+            // the underlying WebView, causing a sudden text replacement.
+            afterVisiblePreviousPage(()->{
+                if(turnBusy&&pageTurnOverlay.holding())playPageTurn();
             });
-        }else playPageTurn();
+            return;
+        }
+        playPageTurn();
     }
     private void playPageTurn(){
         if(isFinishing()||isDestroyed()){
@@ -1111,6 +1134,7 @@ public final class EpubReaderActivity extends Activity {
     }
     private void cancelPageTurn(){
         ++fingerGeneration;
+        ++previousRevealGeneration;
         if(fingerCurl&&web!=null){
             if(fingerCrossChapter&&chapterIndex!=fingerOldChapter&&
                     archive!=null&&!isFinishing()&&!isDestroyed())

@@ -6,11 +6,14 @@ package com.nasmount.mobile;
  * This policy watches the actual scroll extent and viewport until stable.
  */
 final class EpubLayoutSettlePolicy {
-    static final int POLL_MS=100;
-    static final int STABLE_SAMPLES=5;
-    static final int END_MIN_WAIT_MS=1250;
-    static final int OTHER_MIN_WAIT_MS=500;
-    static final int MAX_WAIT_MS=3500;
+    // The older 1250/500ms hard holds were visible as a chapter-turn freeze.
+    // The separate end-position guard already follows any *late* font reflow.
+    // Only wait for several consistent initial viewport/content observations.
+    static final int POLL_MS=70;
+    static final int STABLE_SAMPLES=3;
+    static final int END_MIN_WAIT_MS=300;
+    static final int OTHER_MIN_WAIT_MS=160;
+    static final int MAX_WAIT_MS=1800;
 
     private int lastExtent=-1,lastViewport=-1,stableSamples;
     private EpubLayoutSettlePolicy(){}
