@@ -12,9 +12,13 @@ import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.content.Context;
 import android.graphics.Rect;
+import android.graphics.Point;
+import android.graphics.PixelFormat;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.Icon;
+import android.hardware.display.DisplayManager;
 import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Bundle;
@@ -26,6 +30,7 @@ import android.provider.Settings;
 import android.util.TypedValue;
 import android.util.Rational;
 import android.view.GestureDetector;
+import android.view.Display;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -149,7 +154,9 @@ public final class VideoPlayerActivity extends Activity {
     private boolean pipDecisionPending;
     private boolean pipShouldResumeAfterDecision;
     private boolean openingOverlayPermissionSettings;
-    private AlertDialog pipHomeDecisionDialog;
+    private View pipHomeOverlayView;
+    private WindowManager pipHomeOverlayManager;
+    private DisplayManager.DisplayListener pipOverlayDisplayListener;
     private int pipAspectWidth=16,pipAspectHeight=9;
     private DataSource.Factory dataFactory;
     private AudioManager audioManager;
@@ -1080,9 +1087,62 @@ public final class VideoPlayerActivity extends Activity {
     }
 
     private void dismissPipDecisionDialog(){
-        AlertDialog dialog=pipHomeDecisionDialog;
-        pipHomeDecisionDialog=null;
-        if(dialog!=null&&dialog.isShowing())dialog.dismiss();
+        View view=pipHomeOverlayView;
+        WindowManager manager=pipHomeOverlayManager;
+        pipHomeOverlayView=null;
+        pipHomeOverlayManager=null;
+        if(pipOverlayDisplayListener!=null){
+            DisplayManager displays=(DisplayManager)getApplicationContext()
+                    .getSystemService(Context.DISPLAY_SERVICE);
+            if(displays!=null)
+                displays.unregisterDisplayListener(pipOverlayDisplayListener);
+            pipOverlayDisplayListener=null;
+        }
+        if(view!=null&&manager!=null){
+            try{manager.removeViewImmediate(view);}
+            catch(IllegalArgumentException ignored){
+                // The OS can already have removed this overlay on task close.
+            }
+        }
+    }
+
+    private int homeOverlayDisplayWidth(){
+        // The player Activity is in PiP, so its window metrics can be
+        // hundreds of pixels wide even when the unfolded phone is large.
+        // Use the physical default display instead of Activity resources.
+        DisplayManager manager=(DisplayManager)getApplicationContext()
+                .getSystemService(Context.DISPLAY_SERVICE);
+        Display display=manager==null?null:
+                manager.getDisplay(Display.DEFAULT_DISPLAY);
+        Point size=new Point();
+        if(display!=null)display.getRealSize(size);
+        return size.x>0?size.x:
+                getApplicationContext().getResources()
+                        .getDisplayMetrics().widthPixels;
+    }
+
+    private int homeOverlayWidth(){
+        return PipOverlaySizing.widthPx(homeOverlayDisplayWidth(),
+                dp(16),dp(420));
+    }
+
+    private void resizePipHomeDecisionOverlay(){
+        if(pipHomeOverlayView==null||pipHomeOverlayManager==null)return;
+        try{
+            View view=pipHomeOverlayView;
+            WindowManager.LayoutParams lp=
+                    (WindowManager.LayoutParams)view.getLayoutParams();
+            if(lp==null)return;
+            int updatedWidth=homeOverlayWidth();
+            if(lp.width!=updatedWidth){
+                lp.width=updatedWidth;
+                lp.height=WindowManager.LayoutParams.WRAP_CONTENT;
+                pipHomeOverlayManager.updateViewLayout(view,lp);
+            }
+            view.requestLayout();
+        }catch(IllegalArgumentException ignored){
+            // A display switch and a PiP close can race; dismissal wins.
+        }
     }
 
     private void showPipHomeDecision(){
@@ -1090,26 +1150,104 @@ public final class VideoPlayerActivity extends Activity {
                 isFinishing()||isDestroyed()||!canShowHomeConfirmation())
             return;
         dismissPipDecisionDialog();
-        AlertDialog dialog=new AlertDialog.Builder(this)
-                .setTitle("팝업 재생")
-                .setMessage("팝업으로 계속 재생하시겠습니까?")
-                .setCancelable(false)
-                .setPositiveButton("팝업 재생",(d,w)->acceptPipPlayback())
-                .setNegativeButton("재생 정지",(d,w)->{
-                    stopAndReleasePlayback();
-                    finish();
-                }).create();
+        // AlertDialog built from the video's full-screen Activity retains its
+        // landscape layout when the Fold closes. On the cover screen only
+        // its title fits, with the action buttons clipped off. A separate
+        // application-context overlay owns a WRAP_CONTENT card and sizes it
+        // using the *current physical display* on every fold transition.
+        Context context=getApplicationContext();
+        LinearLayout card=new LinearLayout(context);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(18),dp(16),dp(18),dp(12));
+        GradientDrawable background=new GradientDrawable();
+        background.setColor(0xFF424242);
+        background.setCornerRadius(dp(10));
+        card.setBackground(background);
+        card.setElevation(dp(10));
+
+        TextView heading=new TextView(context);
+        heading.setText("팝업 재생");
+        heading.setTextColor(Color.WHITE);
+        heading.setTextSize(TypedValue.COMPLEX_UNIT_SP,20);
+        heading.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        card.addView(heading,new LinearLayout.LayoutParams(-1,-2));
+
+        TextView description=new TextView(context);
+        description.setText("팝업으로 계속 재생하시겠습니까?");
+        description.setTextColor(0xFFF3F3F3);
+        description.setTextSize(TypedValue.COMPLEX_UNIT_SP,15);
+        description.setLineSpacing(dp(2),1f);
+        LinearLayout.LayoutParams descriptionParams=
+                new LinearLayout.LayoutParams(-1,-2);
+        descriptionParams.topMargin=dp(12);
+        descriptionParams.bottomMargin=dp(16);
+        card.addView(description,descriptionParams);
+
+        LinearLayout actions=new LinearLayout(context);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);
+        TextView stop=new TextView(context);
+        stop.setText("재생 정지");
+        stop.setTextColor(0xFF4BC2B8);
+        stop.setTextSize(TypedValue.COMPLEX_UNIT_SP,14);
+        stop.setGravity(Gravity.CENTER);
+        stop.setContentDescription("동영상 재생 종료");
+        actions.addView(stop,new LinearLayout.LayoutParams(0,dp(46),1f));
+        stop.setOnClickListener(v->{
+            stopAndReleasePlayback();
+            finish();
+        });
+        TextView continuePlayback=new TextView(context);
+        continuePlayback.setText("팝업 재생");
+        continuePlayback.setTextColor(0xFF4BC2B8);
+        continuePlayback.setTextSize(TypedValue.COMPLEX_UNIT_SP,14);
+        continuePlayback.setGravity(Gravity.CENTER);
+        continuePlayback.setContentDescription("팝업으로 계속 재생");
+        actions.addView(continuePlayback,
+                new LinearLayout.LayoutParams(0,dp(46),1f));
+        continuePlayback.setOnClickListener(v->acceptPipPlayback());
+        card.addView(actions,new LinearLayout.LayoutParams(-1,-2));
+
+        WindowManager manager=(WindowManager)context
+                .getSystemService(Context.WINDOW_SERVICE);
+        if(manager==null)return;
+        WindowManager.LayoutParams params=new WindowManager.LayoutParams(
+                homeOverlayWidth(),WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL|
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|
+                        WindowManager.LayoutParams.FLAG_DIM_BEHIND,
+                PixelFormat.TRANSLUCENT);
+        params.gravity=Gravity.CENTER;
+        params.dimAmount=0.35f;
+        params.setTitle("FileHub AIO 팝업 재생 확인");
         try{
-            if(dialog.getWindow()!=null)
-                dialog.getWindow().setType(
-                        android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
-            dialog.show();
-            pipHomeDecisionDialog=dialog;
+            manager.addView(card,params);
+            pipHomeOverlayView=card;
+            pipHomeOverlayManager=manager;
+            DisplayManager displays=(DisplayManager)context
+                    .getSystemService(Context.DISPLAY_SERVICE);
+            if(displays!=null){
+                pipOverlayDisplayListener=new DisplayManager.DisplayListener(){
+                    @Override public void onDisplayAdded(int displayId){}
+                    @Override public void onDisplayRemoved(int displayId){}
+                    @Override public void onDisplayChanged(int displayId){
+                        if(displayId==Display.DEFAULT_DISPLAY)
+                            resizePipHomeDecisionOverlay();
+                    }
+                };
+                displays.registerDisplayListener(pipOverlayDisplayListener,
+                        new Handler(Looper.getMainLooper()));
+            }
+            // On a Fold, Home->PiP and cover-display resize can overlap.
+            // Check again once both the animation and WM metrics have settled.
+            card.postDelayed(this::resizePipHomeDecisionOverlay,200L);
+            card.postDelayed(this::resizePipHomeDecisionOverlay,650L);
         }catch(RuntimeException denied){
             // OEMs can suppress app overlays. Native PiP confirm/stop
             // actions remain available on tap even when this is blocked.
-            dialog.dismiss();
-            pipHomeDecisionDialog=null;
+            dismissPipDecisionDialog();
             if(player!=null&&pipShouldResumeAfterDecision)player.play();
         }
     }
@@ -1388,6 +1526,10 @@ public final class VideoPlayerActivity extends Activity {
     }
     @Override public void onConfigurationChanged(Configuration configuration) {
         super.onConfigurationChanged(configuration);
+        resizePipHomeDecisionOverlay();
+        if(pipHomeOverlayView!=null)
+            pipHomeOverlayView.postDelayed(
+                    this::resizePipHomeDecisionOverlay,250L);
         // PiP is system-resized; do not fight its window geometry by forcing
         // an activity rotation while the player lives in a small overlay.
         if(isInPictureInPictureMode()||popupUiActive)return;
