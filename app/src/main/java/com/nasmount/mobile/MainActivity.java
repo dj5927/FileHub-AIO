@@ -83,6 +83,10 @@ public class MainActivity extends Activity {
     private final ExecutorService previewWorker = Executors.newFixedThreadPool(2);
     private final ExecutorService subtitleProbeWorker =
             Executors.newSingleThreadExecutor();
+    private final ExecutorService recursiveSearchWorker=
+            Executors.newSingleThreadExecutor();
+    private Future<?> recursiveSearchTask;
+    private volatile int recursiveSearchGeneration;
     private final Set<String> videoHeadersProbed = ConcurrentHashMap.newKeySet();
     private final Set<String> localSubtitleProbed = ConcurrentHashMap.newKeySet();
     private final FolderSessionCache folderCache = new FolderSessionCache();
@@ -345,6 +349,8 @@ public class MainActivity extends Activity {
         worker.shutdownNow();
         previewWorker.shutdownNow();
         subtitleProbeWorker.shutdownNow();
+        if(recursiveSearchTask!=null)recursiveSearchTask.cancel(true);
+        recursiveSearchWorker.shutdownNow();
         super.onDestroy();
     }
 
@@ -3323,11 +3329,10 @@ public class MainActivity extends Activity {
                 }).show();
     }
     private void searchCurrentFolder() {
-        if (currentSearch.isEmpty()) {
-            toast("검색할 파일 목록을 불러온 후 다시 시도하세요.");
-            return;
-        }
         List<SearchResult> snapshot = new ArrayList<>(currentSearch);
+        boolean canRecurse=("local".equals(currentScreen)&&localFolder!=null)||
+                ("saf".equals(currentScreen)&&safFolder!=null)||
+                ("remote".equals(currentScreen)&&remote!=null);
         LinearLayout content = Ui.vertical(this);
         content.setPadding(dp(18), dp(3), dp(18), dp(10));
         EditText query = new EditText(this);
@@ -3335,6 +3340,15 @@ public class MainActivity extends Activity {
         query.setTextSize(16);
         query.setHint("현재 폴더에서 파일명 검색");
         content.addView(query, Ui.lp(this, -1, 53));
+        CheckBox recursive=new CheckBox(this);
+        recursive.setText("하위 폴더 포함 검색");
+        recursive.setEnabled(canRecurse);
+        recursive.setChecked(false);
+        content.addView(recursive,Ui.lp(this,-1,49));
+        TextView searchButton=Ui.action(this,"하위 폴더까지 검색 시작");
+        searchButton.setGravity(Gravity.CENTER);
+        searchButton.setVisibility(View.GONE);
+        content.addView(searchButton,Ui.lp(this,-1,46));
         ScrollView scroller = new ScrollView(this);
         LinearLayout results = Ui.vertical(this);
         scroller.addView(results);
@@ -3346,6 +3360,14 @@ public class MainActivity extends Activity {
         Runnable update = () -> {
             results.removeAllViews();
             String keyword = query.getText().toString().trim();
+            if(recursive.isChecked()){
+                results.addView(Ui.text(this,keyword.isEmpty()?
+                        "검색어를 입력하고 검색 시작을 누르세요.":
+                        "검색 시작을 누르면 하위 폴더도 확인합니다. "+
+                        "NAS 검색은 파일 수에 따라 시간이 걸릴 수 있습니다.",
+                        13,Ui.MUTED,false),Ui.lp(this,-1,68));
+                return;
+            }
             if (keyword.isEmpty()) {
                 TextView notice = Ui.text(this,
                         "파일명 일부를 입력하세요. 현재 폴더의 항목에서 검색합니다.",
@@ -3382,15 +3404,186 @@ public class MainActivity extends Activity {
                 results.addView(more, Ui.lp(this, -1, 40));
             }
         };
+        recursive.setOnCheckedChangeListener((check,enabled)->{
+            ++recursiveSearchGeneration;
+            if(recursiveSearchTask!=null)recursiveSearchTask.cancel(true);
+            searchButton.setVisibility(enabled?View.VISIBLE:View.GONE);
+            update.run();
+        });
+        searchButton.setOnClickListener(v->{
+            String keyword=query.getText().toString().trim();
+            if(keyword.isEmpty()){
+                query.setError("파일명 일부를 입력해 주세요.");
+                return;
+            }
+            if(!canRecurse)return;
+            final int generation=++recursiveSearchGeneration;
+            if(recursiveSearchTask!=null)recursiveSearchTask.cancel(true);
+            final String screen=currentScreen;
+            final File localRoot=localFolder;
+            final DocumentFile safRoot=safFolder;
+            final String relative=safRelative;
+            final Models.RemoteProfile profile=remote;
+            final String remoteRoot=remoteFolder;
+            final boolean includeHidden=showHidden;
+            results.removeAllViews();
+            results.addView(Ui.text(this,
+                    "하위 폴더를 검색하고 있습니다…",
+                    14,Ui.MUTED,false),Ui.lp(this,-1,55));
+            recursiveSearchTask=recursiveSearchWorker.submit(()->{
+                RecursiveSearchBatch batch=recursiveSearchMatches(
+                        screen,localRoot,safRoot,relative,
+                        profile,remoteRoot,keyword,includeHidden,
+                        ()->generation!=recursiveSearchGeneration);
+                runOnUiThread(()->{
+                    if(generation!=recursiveSearchGeneration||
+                            !dialog.isShowing()||!recursive.isChecked()||
+                            isFinishing()||isDestroyed())return;
+                    results.removeAllViews();
+                    String summary="검색 결과 "+batch.hits.size()+"개 · "+
+                            "파일/폴더 "+batch.entries+"개 확인"+
+                            (batch.limited?" · 검색 상한 도달":"")+
+                            (batch.errors>0?" · 읽지 못한 폴더 "+batch.errors+"개":"");
+                    results.addView(Ui.text(this,summary,12,Ui.MUTED,false),
+                            Ui.lp(this,-1,42));
+                    if(batch.hits.isEmpty())
+                        results.addView(Ui.text(this,"일치하는 파일이 없습니다.",
+                                14,Ui.MUTED,false),Ui.lp(this,-1,55));
+                    for(SearchResult hit:batch.hits){
+                        TextView item=Ui.text(this,hit.name,14,Ui.TEXT,false);
+                        item.setMaxLines(2);
+                        results.addView(item,Ui.lp(this,-1,57));
+                        item.setOnClickListener(click->{
+                            dialog.dismiss();
+                            hit.open.run();
+                        });
+                        View divider=new View(this);
+                        divider.setBackgroundColor(Ui.BORDER);
+                        results.addView(divider,Ui.lp(this,-1,1));
+                    }
+                });
+            });
+        });
         query.addTextChangedListener(new android.text.TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int st, int n, int a) {}
             @Override public void onTextChanged(CharSequence s, int st, int before, int count) {
+                if(recursive.isChecked()){
+                    ++recursiveSearchGeneration;
+                    if(recursiveSearchTask!=null)recursiveSearchTask.cancel(true);
+                }
                 update.run();
             }
             @Override public void afterTextChanged(android.text.Editable e) {}
         });
+        dialog.setOnDismissListener(ignored->{
+            ++recursiveSearchGeneration;
+            if(recursiveSearchTask!=null)recursiveSearchTask.cancel(true);
+        });
         update.run();
         dialog.show();
+    }
+    private static final class RecursiveSearchBatch {
+        final List<SearchResult> hits=new ArrayList<>();
+        int entries,errors;
+        boolean limited;
+    }
+    private RecursiveSearchBatch recursiveSearchMatches(
+            String screen,File localRoot,DocumentFile safRoot,
+            String safBase,Models.RemoteProfile profile,String remoteRoot,
+            String keyword,boolean includeHidden,
+            java.util.function.BooleanSupplier cancel){
+        RecursiveSearchBatch batch=new RecursiveSearchBatch();
+        if("local".equals(screen)&&localRoot!=null){
+            FolderRecursiveSearch.Result<File> result=
+                    FolderRecursiveSearch.find(localRoot,
+                    new FolderRecursiveSearch.Adapter<File>(){
+                        public List<File> list(File dir){
+                            File[] children=dir.listFiles();
+                            return children==null?Collections.emptyList():
+                                    Arrays.asList(children);
+                        }
+                        public boolean directory(File item){
+                            // Do not escape the selected subtree through a
+                            // local symlink, or follow directory cycles.
+                            return item.isDirectory()&&
+                                    !java.nio.file.Files.isSymbolicLink(
+                                            item.toPath());
+                        }
+                        public String name(File item){return item.getName();}
+                        public String id(File item){
+                            try{return item.getCanonicalPath();}
+                            catch(IOException denied){return item.getAbsolutePath();}
+                        }
+                    },keyword,includeHidden,cancel);
+            for(FolderRecursiveSearch.Hit<File> hit:result.hits){
+                File file=hit.node;
+                batch.hits.add(new SearchResult(hit.path,()->{
+                    if(file.isDirectory())browseLocal(file);
+                    else if(isVideo(file.getName()))
+                        openVideo(Uri.fromFile(file),file.getName());
+                    else openFile(file);
+                }));
+            }
+            batch.entries=result.entries;
+            batch.errors=result.errors;
+            batch.limited=result.limited;
+        }else if("saf".equals(screen)&&safRoot!=null){
+            FolderRecursiveSearch.Result<DocumentFile> result=
+                    FolderRecursiveSearch.find(safRoot,
+                    new FolderRecursiveSearch.Adapter<DocumentFile>(){
+                        public List<DocumentFile> list(DocumentFile dir){
+                            return Arrays.asList(dir.listFiles());
+                        }
+                        public boolean directory(DocumentFile item){
+                            return item.isDirectory();
+                        }
+                        public String name(DocumentFile item){return item.getName();}
+                        public String id(DocumentFile item){
+                            return item.getUri().toString();
+                        }
+                    },keyword,includeHidden,cancel);
+            for(FolderRecursiveSearch.Hit<DocumentFile> hit:result.hits){
+                DocumentFile file=hit.node;
+                String path=RemoteProvider.relativePath(safBase+"/"+hit.path);
+                batch.hits.add(new SearchResult(hit.path,()->{
+                    if(file.isDirectory())browseSaf(file,path);
+                    else if(isVideo(file.getName()))
+                        openVideo(file.getUri(),file.getName());
+                    else openNamedUri(file.getUri(),file.getName());
+                }));
+            }
+            batch.entries=result.entries;
+            batch.errors=result.errors;
+            batch.limited=result.limited;
+        }else if("remote".equals(screen)&&profile!=null){
+            Models.Entry root=new Models.Entry("",
+                    RemoteProvider.relativePath(remoteRoot),true);
+            FolderRecursiveSearch.Result<Models.Entry> result=
+                    FolderRecursiveSearch.find(root,
+                    new FolderRecursiveSearch.Adapter<Models.Entry>(){
+                        public List<Models.Entry> list(Models.Entry folder)
+                                throws Exception {
+                            return cachedRemoteFiles(profile,folder.path);
+                        }
+                        public boolean directory(Models.Entry node){
+                            return node.directory;
+                        }
+                        public String name(Models.Entry node){return node.name;}
+                        public String id(Models.Entry node){return node.path;}
+                    },keyword,includeHidden,cancel);
+            for(FolderRecursiveSearch.Hit<Models.Entry> hit:result.hits){
+                Models.Entry item=hit.node;
+                batch.hits.add(new SearchResult(hit.path,()->{
+                    if(item.directory)openRemote(profile,item.path);
+                    else if(isVideo(item.name))openRemoteVideo(profile,item);
+                    else openRemoteFile(profile,item);
+                }));
+            }
+            batch.entries=result.entries;
+            batch.errors=result.errors;
+            batch.limited=result.limited;
+        }
+        return batch;
     }
     private ReaderFolders.Scope currentReaderFolder(String mode) {
         if ("local".equals(currentScreen) && localFolder != null)

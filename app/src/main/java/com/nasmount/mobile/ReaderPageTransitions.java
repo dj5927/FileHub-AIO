@@ -186,41 +186,21 @@ final class ReaderPageTransitions {
     void ready(){
         if(!busy)return;
         if(fingerMode){
-            final int generation=token;
-            if(fingerDirection<0&&overlay.holding()){
-                EpubPageCapture.capture(activity,page,
-                        pageBounds.isEmpty()?null:new RectF(pageBounds),shot->{
-                    if(generation!=token||!fingerMode){
-                        if(shot!=null&&!shot.isRecycled())shot.recycle();
-                        return;
-                    }
-                    if(shot!=null)overlay.setIncoming(shot);
-                    fingerReady=true;
-                    if(fingerReleased&&fingerCommit)finishRelease();
-                });
-            }else{
-                fingerReady=true;
-                if(fingerReleased&&fingerCommit)finishRelease();
-            }
+            // The previous-page image/text is already rendered in the view
+            // beneath the curl. Capturing the Window here includes our own
+            // overlay (OLD page), then the outgoing bitmap is incorrectly
+            // used as the incoming sheet and text jumps after animation.
+            fingerReady=true;
+            if(fingerReleased&&fingerCommit)finishRelease();
             return;
         }
         if(!overlay.holding()){
             busy=false;
             return;
         }
-        if(style==EpubTurnGeometry.CURL&&automaticDirection<0){
-            final int generation=token;
-            EpubPageCapture.capture(activity,page,
-                    pageBounds.isEmpty()?null:new RectF(pageBounds),shot->{
-                if(generation!=token||!busy){
-                    if(shot!=null&&!shot.isRecycled())shot.recycle();
-                    return;
-                }
-                if(shot!=null)overlay.setIncoming(shot);
-                animateReady();
-            });
-            return;
-        }
+        // Same for backwards button/tap turns. Let the *actual* incoming
+        // TextView or decoded comic bitmap gradually appear behind the fold.
+        // Never capture the composited Window while our overlay is visible.
         animateReady();
     }
     private void animateReady(){

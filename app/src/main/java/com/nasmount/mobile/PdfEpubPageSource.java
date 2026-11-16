@@ -108,6 +108,29 @@ final class PdfEpubPageSource implements Closeable {
                 "<body><img alt='PDF 책 페이지' src='/pdf-current-page.png'></body></html>";
     }
 
+    /** Two native PDF leaves in the existing EPUB reading screen on Fold. */
+    static String spreadHtml(int zoomPercent,boolean hasRight){
+        int zoom=Math.max(75,Math.min(250,zoomPercent));
+        String width=zoom==100?"50vw":(zoom/2f)+"vw";
+        return "<!doctype html><html lang='ko'><head>"+
+                "<meta name='viewport' content='width=device-width, initial-scale=1.0, user-scalable=no'>"+
+                "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; img-src 'self'; style-src 'unsafe-inline'\">"+
+                "<style>*{box-sizing:border-box}html,body{padding:0;margin:0;"+
+                "background:#171b20;min-height:100%;}"+
+                "body{display:flex;flex-wrap:nowrap;align-items:center;"+
+                "justify-content:"+(zoom==100?"center":"flex-start")+";"+
+                "min-height:100vh;overflow:auto;}"+
+                ".leaf{height:100vh;width:"+width+";flex:0 0 "+width+";"+
+                "display:flex;align-items:center;justify-content:center;}"+
+                ".leaf img{display:block;object-fit:contain;max-width:100%;"+
+                "max-height:100vh;width:auto;height:auto;}"+
+                "</style></head><body>"+
+                "<div class='leaf'><img alt='왼쪽 PDF 페이지' src='/pdf-current-page.png'></div>"+
+                "<div class='leaf'>"+(hasRight?
+                "<img alt='오른쪽 PDF 페이지' src='/pdf-right-page.png'>":"")+
+                "</div></body></html>";
+    }
+
     @Override public void close()throws IOException {
         if(closed)return;
         closed=true;

@@ -18,6 +18,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.ArrayAdapter;
+import android.widget.CheckBox;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -54,7 +55,9 @@ public final class EpubReaderActivity extends Activity {
     private boolean pdfMode;
     private PdfEpubPageSource pdfSource;
     private volatile byte[] pdfPageImage;
+    private volatile byte[] pdfRightPageImage;
     private int pdfPageIndex,pdfPageCount,pdfZoomPercent=100;
+    private boolean pdfTwoPageFold=true;
     private TextView pdfZoomPrevZone,pdfZoomNextZone;
     private SharedPreferences pdfPrefs;
     private File stagedFile;
@@ -114,6 +117,7 @@ public final class EpubReaderActivity extends Activity {
             slowPageTurn=pdfPrefs.getBoolean("slow_turn",slowPageTurn);
             pdfZoomPercent=Math.max(75,Math.min(250,
                     pdfPrefs.getInt("zoom",100)));
+            pdfTwoPageFold=pdfPrefs.getBoolean("two_page_fold",true);
         }
         int remembered=ReaderHistory.position(this,historyId,0);
         if(pdfMode)pdfPageIndex=Math.max(0,remembered);
@@ -187,6 +191,11 @@ public final class EpubReaderActivity extends Activity {
                             pdfPageImage!=null)
                         return new WebResourceResponse("image/png",null,
                                 new ByteArrayInputStream(pdfPageImage));
+                    if("https".equals(uri.getScheme())&&HOST.equals(uri.getHost())&&
+                            "/pdf-right-page.png".equals(uri.getPath())&&
+                            pdfRightPageImage!=null)
+                        return new WebResourceResponse("image/png",null,
+                                new ByteArrayInputStream(pdfRightPageImage));
                     return blocked();
                 }
                 if(!"https".equals(uri.getScheme()) ||
@@ -391,6 +400,10 @@ public final class EpubReaderActivity extends Activity {
             }
         });
     }
+    private boolean pdfSpread(){
+        return pdfMode&&PdfSpreadPolicy.active(pdfTwoPageFold,
+                getResources().getConfiguration().screenWidthDp);
+    }
     /** PDF uses PdfRenderer as the source but all EPUB reader chrome/controls. */
     private void openPdfDocument(){
         loadingChapter=true;
@@ -420,11 +433,14 @@ public final class EpubReaderActivity extends Activity {
 
     private void loadPdfPage(int destination){
         if(pdfPageCount<1||pdfSource==null)return;
-        final int selected=PdfPageSizing.page(destination,pdfPageCount);
+        final boolean spread=pdfSpread();
+        final int selected=PdfSpreadPolicy.start(
+                destination,pdfPageCount,spread);
         final int layout=++chapterLayoutGeneration;
         final int zoom=pdfZoomPercent;
         final int viewport=Math.max(280,
-                getResources().getDisplayMetrics().widthPixels);
+                getResources().getDisplayMetrics().widthPixels/
+                        (spread?2:1));
         pdfPageIndex=selected;
         loadingChapter=true;
         readerErrorVisible=false;
@@ -433,14 +449,21 @@ public final class EpubReaderActivity extends Activity {
         worker.execute(()->{
             try {
                 byte[] data=pdfSource.renderPng(selected,viewport,zoom);
+                byte[] right=spread&&selected+1<pdfPageCount?
+                        pdfSource.renderPng(selected+1,viewport,zoom):null;
                 runOnUiThread(()->{
                     if(isFinishing()||isDestroyed()||
                             layout!=chapterLayoutGeneration)return;
                     pdfPageImage=data;
+                    pdfRightPageImage=right;
                     String url="https://"+HOST+"/pdf/page/"+layout+".html";
-                    String html=PdfEpubPageSource.pageHtml(zoom)
+                    String html=(spread?
+                            PdfEpubPageSource.spreadHtml(zoom,right!=null):
+                            PdfEpubPageSource.pageHtml(zoom))
                             .replace("pdf-current-page.png",
-                                    "pdf-current-page.png?rev="+layout);
+                                    "pdf-current-page.png?rev="+layout)
+                            .replace("pdf-right-page.png",
+                                    "pdf-right-page.png?rev="+layout);
                     web.setBackgroundColor(0xFF171B20);
                     web.loadDataWithBaseURL(url,html,"text/html","UTF-8",url);
                 });
@@ -479,7 +502,8 @@ public final class EpubReaderActivity extends Activity {
 
     private void turnPdf(int direction){
         if(pdfPageCount<1||pdfSource==null||loadingChapter||turnBusy)return;
-        int target=pdfPageIndex+direction;
+        int target=PdfSpreadPolicy.next(pdfPageIndex,direction,
+                pdfPageCount,pdfSpread());
         if(target<0)return;
         if(target>=pdfPageCount){
             new AlertDialog.Builder(this)
@@ -551,6 +575,10 @@ public final class EpubReaderActivity extends Activity {
         SeekBar zoom=ReaderNumericSlider.add(this,controls,
                 "페이지 확대 · 75~250%",75,250,pdfZoomPercent,
                 ReaderNumericSlider::percent);
+        CheckBox foldSpread=new CheckBox(this);
+        foldSpread.setText("폴드 펼침 화면에서 두 페이지 나란히 보기");
+        foldSpread.setChecked(pdfTwoPageFold);
+        controls.addView(foldSpread,Ui.lp(this,-1,50));
         ScrollView scroll=new ScrollView(this);
         scroll.addView(controls);
         new AlertDialog.Builder(this).setTitle("PDF 독서 설정")
@@ -561,12 +589,15 @@ public final class EpubReaderActivity extends Activity {
                     slowPageTurn=speed.getSelectedItemPosition()==1;
                     int nextZoom=75+zoom.getProgress();
                     boolean zoomChanged=pdfZoomPercent!=nextZoom;
+                    boolean spreadChanged=pdfTwoPageFold!=foldSpread.isChecked();
                     pdfZoomPercent=nextZoom;
+                    pdfTwoPageFold=foldSpread.isChecked();
                     pdfPrefs.edit().putInt("turn_effect",pageEffect)
                             .putBoolean("slow_turn",slowPageTurn)
-                            .putInt("zoom",pdfZoomPercent).apply();
+                            .putInt("zoom",pdfZoomPercent)
+                            .putBoolean("two_page_fold",pdfTwoPageFold).apply();
                     updatePdfZoomEdgeNavigation();
-                    if(zoomChanged)jumpToPdf(pdfPageIndex);
+                    if(zoomChanged||spreadChanged)jumpToPdf(pdfPageIndex);
                 }).show();
     }
 
@@ -850,7 +881,8 @@ public final class EpubReaderActivity extends Activity {
         if(pdfMode){
             if(pdfPageCount>0&&!loadingChapter){
                 ReaderHistory.save(this,historyId,pdfPageIndex,
-                        pdfPageIndex+1,pdfPageCount);
+                        PdfSpreadPolicy.lastVisible(pdfPageIndex,
+                                pdfPageCount,pdfSpread()),pdfPageCount);
                 updateLabel();
             }
             return;
@@ -869,9 +901,11 @@ public final class EpubReaderActivity extends Activity {
         if(pdfMode){
             if(pdfPageCount==0)return;
             TextView info=(TextView)bottom.getTag();
-            int percent=Math.round(100f*(pdfPageIndex+1)/pdfPageCount);
-            info.setText((pdfPageIndex+1)+" / "+pdfPageCount+
-                    "쪽 · "+percent+"%");
+            int percent=Math.round(100f*
+                    PdfSpreadPolicy.lastVisible(pdfPageIndex,
+                            pdfPageCount,pdfSpread())/pdfPageCount);
+            info.setText(PdfSpreadPolicy.pageLabel(pdfPageIndex,
+                    pdfPageCount,pdfSpread())+" · "+percent+"%");
             return;
         }
         if(archive==null)return;
@@ -1320,6 +1354,7 @@ public final class EpubReaderActivity extends Activity {
                     pdfSource=null;
                 }
                 pdfPageImage=null;
+                pdfRightPageImage=null;
             });
             worker.shutdown();
         }else worker.shutdownNow();
