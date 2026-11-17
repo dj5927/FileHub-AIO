@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <AssemblyName>FileHubAIO</AssemblyName>
+    <Product>FileHub AIO</Product>
+    <Title>FileHub AIO for Windows</Title>
+    <Version>1.3.83</Version>
+    <ApplicationIcon>assets\NASMountBadge.ico</ApplicationIcon>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="assets\NASMountBadge.ico" Link="tools\NASMountBadge.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="assets\GoogleDriveMark.png" Link="tools\GoogleDriveMark.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="assets\TeraBoxMark.png" Link="tools\TeraBoxMark.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Compile Remove="LockBridge\**\*.cs" />
+    <Compile Remove="tests\**\*.cs" />
+    <Compile Remove="dist\**\*.cs" />
+    <PackageReference Include="FluentFTP" Version="55.1.0" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3800.47" />
+    <PackageReference Include="SSH.NET" Version="2026.0.0" />
+    <EmbeddedResource Include="README_COMPONENTS_1378.md" LogicalName="NASMount.ComponentsManifest" />
+    <Content Include="README_COMPONENTS_1378.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

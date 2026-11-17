@@ -1,0 +1,126 @@
+name: Publish Windows PC release
+
+on:
+  push:
+    branches:
+      - pc/windows
+
+permissions:
+  contents: write
+
+concurrency:
+  group: filehub-pc-release
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out Windows PC sources
+        uses: actions/checkout@v4
+
+      - name: Install .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Derive PC-only release tag
+        id: version
+        shell: pwsh
+        run: |
+          [xml]$project = Get-Content NASMount.csproj
+          $version = [string]$project.Project.PropertyGroup.Version
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Unexpected Windows version $version" }
+          $tag = "pc-v$version"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "asset=FileHub-AIO-PC-$version-win-x64.zip" >> $env:GITHUB_OUTPUT
+
+      - name: Reject an already published Windows version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ steps.version.outputs.tag }}'
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) { throw "Version $tag already published; increase PC version" }
+          exit 0
+
+      - name: Offline updater tests
+        shell: pwsh
+        run: |
+          dotnet restore NASMount.csproj
+          dotnet run --project NASMount.csproj -c Release -- --pc-updater-policy-test
+          if ($LASTEXITCODE -ne 0) { throw 'PC update policy test failed' }
+
+      - name: Build Windows app and lock bridge
+        shell: pwsh
+        run: |
+          dotnet publish NASMount.csproj -c Release -r win-x64 --self-contained true -o publish
+          if ($LASTEXITCODE -ne 0) { throw 'App publish failed' }
+          dotnet publish LockBridge/LockBridge.csproj -c Release -r win-x64 --self-contained true -o bridge
+          if ($LASTEXITCODE -ne 0) { throw 'Bridge publish failed' }
+          New-Item -ItemType Directory -Force -Path publish/tools | Out-Null
+          Copy-Item bridge/* publish/tools -Recurse -Force
+
+      - name: Fetch SHA-256 pinned upstream engines
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path vendor | Out-Null
+          function FetchVerified($url, $filename, $digest) {
+            $path = Join-Path vendor $filename
+            Invoke-WebRequest -Uri $url -OutFile $path -MaximumRedirection 6
+            if ((Get-FileHash $path -Algorithm SHA256).Hash -ne $digest) {
+              throw "Checksum mismatch for $filename"
+            }
+            return $path
+          }
+          $regular = FetchVerified 'https://github.com/rclone/rclone/releases/download/v1.76.0/rclone-v1.76.0-windows-amd64.zip' 'rclone.zip' '8B4FD2737ADE4E70C057EF4A49DEB7CFFE94B0FB9D7587C189D149823F21A1DC'
+          $extra = FetchVerified 'https://github.com/gulp79/rclone-extra/releases/download/v1.76.0-extra/rclone-windows-amd64.zip' 'rclone-extra.zip' 'A9BB4C6F30E7C6F73ABA05D9EA3355C0C540E7ADD2E10480A7C976516DCD2D37'
+          $msi = FetchVerified 'https://github.com/winfsp/winfsp/releases/download/v2.2B4/winfsp-2.2.26215.msi' 'winfsp-2.2.26215.msi' '2ECB5C89405488A95BBD8A01875E02C48534FD37BBDFD84488F7590464D65944'
+          Expand-Archive $regular -DestinationPath vendor/rclone -Force
+          Expand-Archive $extra -DestinationPath vendor/rclone-extra -Force
+          $normalExe = Get-ChildItem vendor/rclone -Filter rclone.exe -Recurse -File | Select-Object -First 1 -ExpandProperty FullName
+          $extraExe = Get-ChildItem vendor/rclone-extra -Filter rclone.exe -Recurse -File | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $normalExe -or -not $extraExe) { throw 'Missing backend binary' }
+          if ((Get-FileHash $normalExe -Algorithm SHA256).Hash -ne 'ACD80683E23151E93BBE0D6FFA74D26E542EC510332F630BEECB9944F8D1A623') { throw 'Regular rclone changed' }
+          if ((Get-FileHash $extraExe -Algorithm SHA256).Hash -ne 'A72B8D123517696C4CC996FD17BD7509DDD7850B5E13893EE970F8C8A2B8390C') { throw 'TeraBox engine changed' }
+          Copy-Item $normalExe publish/tools/rclone.exe -Force
+          Copy-Item $extraExe publish/tools/rclone-terabox.exe -Force
+          Copy-Item $msi publish/tools/winfsp-2.2.26215.msi -Force
+          (Get-FileHash publish/tools/rclone.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content publish/tools/rclone.sha256 -Encoding ascii
+          (Get-FileHash publish/tools/rclone-terabox.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content publish/tools/rclone-terabox.sha256 -Encoding ascii
+
+      - name: Build Windows full ZIP
+        shell: pwsh
+        run: |
+          $asset = '${{ steps.version.outputs.asset }}'
+          foreach ($required in @('FileHubAIO.exe','tools/NASMountLockBridge.exe','tools/rclone.exe','tools/rclone-terabox.exe','tools/winfsp-2.2.26215.msi')) {
+            if (-not (Test-Path ("publish/" + $required))) { throw "Missing $required" }
+          }
+          Copy-Item README.md publish/README.md -Force
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          Compress-Archive -Path publish/* -DestinationPath ("release-assets/" + $asset) -CompressionLevel Optimal
+          $hash = (Get-FileHash ("release-assets/" + $asset) -Algorithm SHA256).Hash
+          "$hash  $asset" | Set-Content release-assets/SHA256SUMS -Encoding ascii
+          @"
+          ## FileHub AIO PC ${{ steps.version.outputs.tag }}
+          - Windows PC 전용 릴리즈 / GitHub OTA 기능 포함
+          - SHA-256 검증 후 NAS 드라이브 안전 해제 및 프로그램 업데이트
+          - Android APK와 별도 버전, 별도 릴리즈 태그
+          - 실제 사용자 NAS의 다중 PC Office 편집은 시험 검증 후 사용하세요.
+          "@ | Set-Content release-assets/RELEASE_NOTES.md -Encoding utf8
+
+      - name: Publish PC-only release without changing Android latest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $tag = '${{ steps.version.outputs.tag }}'
+          $asset = '${{ steps.version.outputs.asset }}'
+          gh release create $tag ("release-assets/" + $asset) 'release-assets/SHA256SUMS' --target '${{ github.sha }}' --title "FileHub AIO PC $tag" --notes-file release-assets/RELEASE_NOTES.md --latest=false
+          if ($LASTEXITCODE -ne 0) { throw 'PC release publication failed' }
+          gh release view $tag --json url,tagName,assets
