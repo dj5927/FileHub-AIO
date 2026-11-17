@@ -350,7 +350,7 @@ internal sealed partial class MainForm
 
     private void InitializeModernUi(bool minimized)
     {
-        Text = "FileHub AIO v1.3.87  |  PC 드라이브";
+        Text = "FileHub AIO v1.3.88  |  PC 드라이브";
         FormBorderStyle = FormBorderStyle.None;
         ControlBox = false;
         MaximizeBox = false;
@@ -390,7 +390,7 @@ internal sealed partial class MainForm
             headerIcon.Image = badge.ToBitmap();
         } catch { /* A missing icon must never block connection controls. */ }
         header.Controls.Add(headerIcon);
-        var brand = ModernTheme.Label("FileHub AIO  v1.3.87", 9.3f, true);
+        var brand = ModernTheme.Label("FileHub AIO  v1.3.88", 9.3f, true);
         brand.SetBounds(35, 1, 215, 31);
         header.Controls.Add(brand);
         var actions = new FlowLayoutPanel
@@ -460,10 +460,10 @@ internal sealed partial class MainForm
 
         tray = new NotifyIcon
         {
-            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.87",
+            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.88",
             Visible = true, ContextMenuStrip = new ContextMenuStrip()
         };
-        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.87 열기", null, (_, _) => ShowWindow());
+        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.88 열기", null, (_, _) => ShowWindow());
         tray.ContextMenuStrip.Items.Add("모두 연결", null, async (_, _) => await ConnectAll(true));
         tray.ContextMenuStrip.Items.Add("프로그램 종료", null, async (_, _) => await ExitSafely());
         tray.BalloonTipClicked += async (_, _) =>
@@ -487,7 +487,14 @@ internal sealed partial class MainForm
             if (!startupDependenciesReady) await PrepareStartupEnginesAsync();
             if (startupDependenciesReady) await ConnectAll(false);
         };
-        timer.Tick += async (_, _) => await UpdateTransferIndicator();
+        // If rclone's local RC call lasts longer than five seconds, skip
+        // that timer tick rather than queueing redundant requests forever.
+        // Explicit card selection can still request one follow-up check.
+        uploadStatusTimer.Tick += async (_, _) =>
+        {
+            if (!transferStatusRefreshing)
+                await UpdateTransferIndicator();
+        };
         RefreshList();
         Shown += async (_, _) =>
         {
@@ -517,7 +524,11 @@ internal sealed partial class MainForm
             finally
             {
                 if (!shutdownRequested && !IsDisposed)
+                {
                     timer.Start();
+                    uploadStatusTimer.Start();
+                    _ = UpdateTransferIndicator();
+                }
             }
         };
     }
@@ -563,7 +574,8 @@ internal sealed partial class MainForm
             }
             string footer = $"{(RemoteMount.HasWinFsp ? "● WinFsp 정상" : "● WinFsp 설치 필요")}    ·    " +
                 "NAS 연결 및 파일 잠금 상태";
-            if (status.Text != footer) status.Text = footer;
+            if (status.Text != footer && status.Text != lastTransferWarning)
+                status.Text = footer;
             return;
         }
         cards.SuspendLayout();
@@ -595,8 +607,8 @@ internal sealed partial class MainForm
                 placeholder.Controls.Add(message);
                 cards.Controls.Add(placeholder);
             }
-            status.Text = $"{(RemoteMount.HasWinFsp ? "● WinFsp 정상" : "● WinFsp 설치 필요")}    ·    " +
-                "NAS 연결 및 파일 잠금 상태";
+            if (status.Text != lastTransferWarning)
+                status.Text = NormalTransferFooter();
         }
         finally
         {
@@ -656,7 +668,12 @@ internal sealed partial class MainForm
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false, Padding = new Padding(3, 8, 0, 0)
         };
-        void FocusCard() { selectedId = p.Id; card.Invalidate(); }
+        void FocusCard()
+        {
+            selectedId = p.Id;
+            card.Invalidate();
+            RefreshSelectedTransferStatus();
+        }
         bool mountedOrRunning = online || runningNotBrowsable;
         var hints = new ToolTip { AutoPopDelay = 6000, InitialDelay = 320, ReshowDelay = 150 };
         DriveActionButton Action(string kind, string label, Action click)
@@ -750,6 +767,7 @@ internal sealed partial class MainForm
         {
             selectedId = p.Id;
             foreach (Control c in cards.Controls) c.Invalidate();
+            RefreshSelectedTransferStatus();
         }
         card.Click += SelectCard;
         content.Click += SelectCard;
@@ -759,7 +777,11 @@ internal sealed partial class MainForm
         info.Click += SelectCard;
         badge.Click += SelectCard;
         letter.Click += SelectCard;
-        card.DoubleClick += (_, _) => { selectedId = p.Id; OpenDrive(); };
+        card.DoubleClick += (_, _) => {
+            selectedId = p.Id;
+            RefreshSelectedTransferStatus();
+            OpenDrive();
+        };
         card.ContextMenuStrip = MakeCardMenu(p);
         var view = new ModernCardView
         {
@@ -929,7 +951,11 @@ internal sealed partial class MainForm
             ForeColor = ModernTheme.Text, ShowImageMargin = false };
         void Item(string caption, Action action)
         {
-            menu.Items.Add(caption, null, (_, _) => { selectedId = p.Id; action(); });
+            menu.Items.Add(caption, null, (_, _) => {
+                selectedId = p.Id;
+                RefreshSelectedTransferStatus();
+                action();
+            });
         }
         Item("드라이브 열기", OpenDrive);
         Item("연결 설정", Edit);
@@ -969,6 +995,7 @@ internal sealed partial class MainForm
         // The card lifecycle owns disposal; Closed must NOT dispose it.
         var menu = control.ContextMenuStrip ??= MakeCardMenu(p);
         selectedId = p.Id;
+        RefreshSelectedTransferStatus();
         menu.Show(control, new Point(Math.Max(0, control.Width - 200), control.Height - 7));
     }
 

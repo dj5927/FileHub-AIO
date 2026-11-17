@@ -911,6 +911,7 @@ internal static class Program
                 dashboard.VerifyParallelGatesForUiTest();
                 dashboard.VerifyShutdownGuardForUiTest();
                 dashboard.VerifySafeExitNoKeepAliveForUiTest();
+                dashboard.VerifyTransferFooterForUiTest();
                 if (dashboard.ClientSize.Width < 755 || dashboard.ClientSize.Width > 785 ||
                     dashboard.ClientSize.Height < 550 || dashboard.ClientSize.Height > 582)
                     throw new InvalidOperationException("Compact window dimensions invalid");

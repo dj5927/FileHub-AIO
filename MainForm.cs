@@ -10,6 +10,12 @@ internal sealed partial class MainForm : Form
     readonly Label status = new() { Dock = DockStyle.Fill, ForeColor = Color.LightGray };
     NotifyIcon tray = null!;
     readonly System.Windows.Forms.Timer timer = new() { Interval = 30000 };
+    // Keep reconnect attempts at 30s but refresh upload status separately.
+    readonly System.Windows.Forms.Timer uploadStatusTimer = new() { Interval = 5000 };
+    bool transferStatusRefreshing;
+    bool transferStatusRefreshAgain;
+    string? lastTransferWarning;
+    Guid? lastTransferWarningProfile;
     readonly ExplorerRefreshCoalescer shellRefresh;
     readonly ShellArrivalBatch batchArrivals;
     bool connectBatchRunning;
@@ -68,6 +74,7 @@ internal sealed partial class MainForm : Form
         });
         Disposed += (_, _) => shellRefresh.Dispose();
         Disposed += (_, _) => batchArrivals.Dispose();
+        Disposed += (_, _) => uploadStatusTimer.Dispose();
         InitializeModernUi(minimized);
         if (previewConfig is null)
         {
@@ -76,7 +83,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.87 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.88 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -677,28 +684,152 @@ internal sealed partial class MainForm : Form
         }
         var result=await RemoteMount.GetTransferStatus(p);
         AppStore.Log("UPLOAD_STATUS "+p.Id+" "+result.Message);
+        if (!IsDisposed && !Disposing && Selected()?.Id == p.Id)
+            PresentTransferStatus(p, result);
         MessageBox.Show(result.Message,
             result.Success?"업로드 대기 없음":"업로드 미완료 또는 오류",
             MessageBoxButtons.OK,result.Success?MessageBoxIcon.Information:MessageBoxIcon.Warning);
     }
+
+    private static string NormalTransferFooter() =>
+        $"{(RemoteMount.HasWinFsp ? "● WinFsp 정상" : "● WinFsp 설치 필요")}    ·    " +
+        "NAS 연결 및 파일 잠금 상태";
+
+    // This footer owns only the upload text it last wrote. A completed
+    // upload must not overwrite PC update downloads or other diagnostics.
+    private void ClearTransferWarning()
+    {
+        if (lastTransferWarning is not null && status.Text == lastTransferWarning)
+            status.Text = NormalTransferFooter();
+        lastTransferWarning = null;
+        lastTransferWarningProfile = null;
+    }
+
+    private void PresentTransferStatus(NasProfile profile, OperationResult result)
+    {
+        if (result.Success)
+        {
+            ClearTransferWarning();
+            return;
+        }
+        string next = profile.DisplayName + " | " +
+            result.Message.Replace('\r', ' ').Replace('\n', ' ');
+        if (status.Text != next) status.Text = next;
+        lastTransferWarning = next;
+        lastTransferWarningProfile = profile.Id;
+    }
+
+    private void RefreshSelectedTransferStatus()
+    {
+        if (lastTransferWarningProfile != selectedId)
+            ClearTransferWarning();
+        if (IsHandleCreated && !IsDisposed && !Disposing)
+            _ = UpdateTransferIndicator();
+    }
+
     async Task UpdateTransferIndicator()
     {
-        var p=Selected();
-        if(p is null || p.Protocol=="SMB" || !IsConnected(p))return;
+        if (transferStatusRefreshing)
+        {
+            transferStatusRefreshAgain = true;
+            return;
+        }
+        if (IsDisposed || Disposing || shutdownRequested) return;
+        transferStatusRefreshing = true;
         try
         {
-            if(RemoteMount.GetIntegrityAlert(p.Id) is { } critical &&
-                integrityNoticesShown.Add(p.Id))
+            do
             {
-                tray.ShowBalloonTip(15000,"FileHub AIO: 파일 저장 무결성 경고",
-                    critical,ToolTipIcon.Error);
+                transferStatusRefreshAgain = false;
+                var p = Selected();
+                if (p is null || p.Protocol == "SMB" || !IsConnected(p))
+                {
+                    ClearTransferWarning();
+                    continue;
+                }
+                try
+                {
+                    if (RemoteMount.GetIntegrityAlert(p.Id) is { } critical &&
+                        integrityNoticesShown.Add(p.Id))
+                    {
+                        tray.ShowBalloonTip(15000, "FileHub AIO: 파일 저장 무결성 경고",
+                            critical, ToolTipIcon.Error);
+                    }
+                    var result = await RemoteMount.GetTransferStatus(p);
+                    if (IsDisposed || Disposing || shutdownRequested) break;
+                    if (Selected()?.Id != p.Id)
+                    {
+                        // The selected NAS changed during the network probe.
+                        // Never render the old drive's result on the new card.
+                        transferStatusRefreshAgain = true;
+                        continue;
+                    }
+                    PresentTransferStatus(p, result);
+                }
+                catch (Exception ex)
+                {
+                    AppStore.Log("UPLOAD_STATUS_REFRESH " + ex.GetType().Name);
+                }
             }
-            var state=await RemoteMount.GetTransferStatus(p);
-            if(!state.Success)
-                status.Text=p.DisplayName+" | "+state.Message.Replace('\n',' ');
+            while (transferStatusRefreshAgain && !IsDisposed && !shutdownRequested);
         }
-        catch(Exception ex) { AppStore.Log("UPLOAD_STATUS_REFRESH "+ex.Message); }
+        finally
+        {
+            transferStatusRefreshing = false;
+        }
     }
+    internal void VerifyTransferFooterForUiTest()
+    {
+        string savedText = status.Text;
+        Guid? savedSelection = selectedId;
+        string? savedWarning = lastTransferWarning;
+        Guid? savedWarningProfile = lastTransferWarningProfile;
+        try
+        {
+            var profile = cfg.Profiles.First(p => p.Protocol != "SMB");
+            selectedId = profile.Id;
+            PresentTransferStatus(profile, OperationResult.Fail(
+                "업로드 대기 1개 / 전송 중 0개 / 실패 0개"));
+            if (!status.Text.Contains("업로드 대기 1개"))
+                throw new InvalidOperationException("Pending upload was not shown");
+
+            // Reported regression: rclone becomes idle but stale warning remains.
+            PresentTransferStatus(profile, OperationResult.Ok(
+                "업로드 대기 0개 / 전송 중 0개 / 실패 0개"));
+            if (status.Text != NormalTransferFooter() ||
+                lastTransferWarning is not null)
+                throw new InvalidOperationException("Completed upload warning remained");
+
+            PresentTransferStatus(profile, OperationResult.Fail(
+                "업로드 대기 1개 / 전송 중 0개 / 실패 0개"));
+            status.Text = "PC 업데이트 파일 다운로드 중...";
+            PresentTransferStatus(profile, OperationResult.Ok(
+                "업로드 대기 0개 / 전송 중 0개 / 실패 0개"));
+            if (status.Text != "PC 업데이트 파일 다운로드 중...")
+                throw new InvalidOperationException(
+                    "Completed upload overwrote unrelated operation");
+
+            PresentTransferStatus(profile, OperationResult.Fail(
+                "업로드 대기 1개 / 전송 중 0개 / 실패 0개"));
+            selectedId = cfg.Profiles.First(p => p.Id != profile.Id).Id;
+            ClearTransferWarning();
+            if (status.Text != NormalTransferFooter())
+                throw new InvalidOperationException(
+                    "Old drive warning survived profile switch");
+            if (uploadStatusTimer.Interval != 5000 || timer.Interval != 30000)
+                throw new InvalidOperationException(
+                    "Wrong upload refresh or reconnection interval");
+            Console.WriteLine("UPLOAD_FOOTER_LIVE_REFRESH_UI_POLICY_PASS");
+        }
+        finally
+        {
+            selectedId = savedSelection;
+            status.Text = savedText;
+            lastTransferWarning = savedWarning;
+            lastTransferWarningProfile = savedWarningProfile;
+        }
+    }
+
     async Task InstallWinFsp()
     {
         if(RemoteMount.HasWinFsp)
