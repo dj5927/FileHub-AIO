@@ -1295,15 +1295,44 @@ internal static class Program
                     if (!buttons.Any(b => b.Text == "공유 링크 생성") ||
                         !buttons.Any(b => b.Text == "링크 목록 새로고침") ||
                         !buttons.Any(b => b.Text == "선택 링크 해제") ||
+                        !buttons.Any(b => b.Text == "목록 불러오기 · 다중선택") ||
+                        !buttons.Any(b => b.Text == "NAS 파일 / 폴더 탐색") ||
+                        !synology.Controls.OfType<CheckBox>().Any(x =>
+                            x.Text.Contains("이 PC 신뢰") && x.Visible &&
+                            x.Right <= synology.ClientSize.Width) ||
                         !buttons.Any(b => b.Text.Contains("탐색기 메뉴")) ||
                         buttons.Any(b => b.Bottom > synology.ClientSize.Height ||
-                            b.Right > synology.ClientSize.Width))
+                            b.Right > synology.ClientSize.Width ||
+                            b.Left < 0 || b.Top < 0) ||
+                        buttons.Any(b => synology.Controls.OfType<TextBox>().Any(
+                            tb => b.Bounds.IntersectsWith(tb.Bounds))))
                         throw new InvalidOperationException(
-                            "Synology sharing UI buttons missing or clipped");
+                            "Synology multi-share controls missing, overlapping or clipped");
                     using var bitmap = new Bitmap(synology.Width, synology.Height);
                     synology.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
                     bitmap.Save(Path.Combine(directory, "synology-sharing.png"));
                     synology.Hide();
+                }
+                using (var selector = new SynologyShareSelectorDialog([
+                    new SynologyFileEntry("01자료", "/01자료", true),
+                    new SynologyFileEntry("video", "/video", true),
+                    new SynologyFileEntry("Public", "/Public", true)
+                ], ["/video", "/Public"]))
+                {
+                    selector.Show(dashboard);
+                    Application.DoEvents();
+                    if (!selector.SelectedRoots.SequenceEqual(["/video", "/Public"]) ||
+                        !selector.Controls.OfType<CheckedListBox>().Any(l =>
+                            l.Items.Count == 3 && l.CheckedItems.Count == 2) ||
+                        selector.Controls.OfType<Button>().Any(b =>
+                            b.Bottom > selector.ClientSize.Height ||
+                            b.Right > selector.ClientSize.Width))
+                        throw new InvalidOperationException(
+                            "Synology multi-share checkbox dialog regression");
+                    using var bitmap = new Bitmap(selector.Width, selector.Height);
+                    selector.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+                    bitmap.Save(Path.Combine(directory, "synology-share-selection.png"));
+                    selector.Hide();
                 }
                 using (var components = new ComponentInventoryDialog())
                 {

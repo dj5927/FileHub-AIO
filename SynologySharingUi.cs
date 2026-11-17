@@ -9,9 +9,14 @@ internal sealed class SynologyShareForm : Form
     private readonly TextBox dsmBox = new();
     private readonly TextBox userBox = new();
     private readonly TextBox passwordBox = new() { UseSystemPasswordChar = true };
-    private readonly TextBox rootBox = new();
+    private readonly TextBox rootBox = new() { ReadOnly = true };
     private readonly TextBox relativeBox = new();
     private readonly TextBox otpBox = new() { MaxLength = 6 };
+    private readonly CheckBox rememberDeviceBox = new() {
+        Text = "이 PC 신뢰 (다음부터 2FA 생략)",
+        AutoSize = false, ForeColor = ModernTheme.Text,
+        BackColor = ModernTheme.Background
+    };
     private readonly ComboBox daysBox = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly TextBox sharePasswordBox = new() { UseSystemPasswordChar = true, MaxLength = 16 };
     private readonly TextBox resultBox = new() { ReadOnly = true };
@@ -22,6 +27,8 @@ internal sealed class SynologyShareForm : Form
     private readonly Button toggleMenu = new();
     private readonly Label status = new() { AutoEllipsis = true };
     private readonly string? explorerPath;
+    private readonly List<string> selectedRoots = [];
+    private string? browserPickedPath;
     private bool changingProfile;
     private bool busy;
 
@@ -78,9 +85,29 @@ internal sealed class SynologyShareForm : Form
         L("DSM HTTPS 주소", 91); Input(dsmBox, 91);
         L("DSM 로그인 계정", 132); Input(userBox, 132);
         L("DSM 로그인 암호", 173); Input(passwordBox, 173);
-        L("DSM 공유 폴더", 214); Input(rootBox, 214);
-        L("선택 파일 / 상대 경로", 255); Input(relativeBox, 255);
-        L("DSM 2FA 코드 (선택)", 296); Input(otpBox, 296);
+        L("DSM 공유 폴더 (복수)", 214); Input(rootBox, 214, 333);
+        B("목록 불러오기 · 다중선택", 528, 214, 237,
+            () => _ = LoadAvailableSharesAsync());
+        L("파일 / DSM 경로", 255); Input(relativeBox, 255, 333);
+        B("NAS 파일 / 폴더 탐색", 528, 255, 237,
+            () => _ = BrowseFilesAsync());
+        L("DSM 2FA 코드 (선택)", 296); Input(otpBox, 296, 159);
+        rememberDeviceBox.SetBounds(361, 298, 404, 27);
+        rememberDeviceBox.CheckedChanged += (_, _) => {
+            if (!changingProfile && !rememberDeviceBox.Checked) {
+                try {
+                    var key = SynologySharing.TrustedDeviceCredentialId(
+                        Profile.Id, dsmBox.Text, userBox.Text);
+                    WindowsCredentials.Delete(key);
+                    SetStatus("저장된 PC 신뢰 인증을 해제했습니다. 다음 연결부터 OTP가 필요할 수 있습니다.");
+                }
+                catch (Exception ex) {
+                    AppStore.Log("DSM_TRUST_DEVICE_REVOKE_FAILED " + ex.GetType().Name);
+                    SetStatus("PC 신뢰 인증 해제 실패: " + ex.Message);
+                }
+            }
+        };
+        Controls.Add(rememberDeviceBox);
         L("링크 유효기간", 337); Input(daysBox, 337, 160);
         var pwdLabel = new Label { Text = "링크 비밀번호 (선택)",
             Location = new Point(379, 343), Size = new Size(150, 24),
@@ -205,11 +232,19 @@ internal sealed class SynologyShareForm : Form
             dsmBox.Text = saved?.DsmUrl ?? "";
             userBox.Text = saved?.User ?? "";
             passwordBox.Clear();
-            rootBox.Text = saved?.ShareRoot ?? (item.Profile.Protocol == "SMB" &&
-                !string.IsNullOrEmpty(item.Profile.Share) ?
-                "/" + item.Profile.Share.Trim('/','\\') : "");
+            rememberDeviceBox.Checked = saved is not null &&
+                !string.IsNullOrWhiteSpace(saved.DsmUrl) &&
+                !string.IsNullOrWhiteSpace(saved.User) &&
+                !string.IsNullOrWhiteSpace(WindowsCredentials.Read(
+                    SynologySharing.TrustedDeviceCredentialId(item.Profile.Id,
+                        saved.DsmUrl, saved.User)));
+            selectedRoots.Clear();
+            if (saved is not null)
+                selectedRoots.AddRange(SynologySharing.Roots(saved));
+            UpdateShareRootSummary();
             resultBox.Clear();
             links.Items.Clear();
+            browserPickedPath = null;
             relativeBox.Text = !string.IsNullOrEmpty(explorerPath) &&
                 explorerPath.Length > 2 &&
                 char.ToUpperInvariant(explorerPath[0]) ==
@@ -221,15 +256,34 @@ internal sealed class SynologyShareForm : Form
         finally { changingProfile = false; }
     }
 
+    private void UpdateShareRootSummary()
+    {
+        rootBox.Text = selectedRoots.Count == 0 ? "(미선택 · 목록 불러오기)" :
+            string.Join(", ", selectedRoots);
+        rootBox.AccessibleDescription = $"{selectedRoots.Count}개 공유 폴더 선택됨";
+    }
+
+    private SynologyShareSettings DraftSettings(bool requireRoots)
+    {
+        var roots = SynologySharing.NormalizeRoots(selectedRoots);
+        if (requireRoots && roots.Count == 0)
+            throw new ArgumentException("공유 폴더 목록을 불러와 하나 이상 체크하세요.");
+        var settings = new SynologyShareSettings {
+            DsmUrl = SynologySharing.ValidateDsmUrl(dsmBox.Text)
+                .GetLeftPart(UriPartial.Authority),
+            ShareRoot = roots.FirstOrDefault() ?? "",
+            ShareRoots = roots,
+            User = userBox.Text.Trim()
+        };
+        if (settings.User.Length == 0)
+            throw new ArgumentException("DSM 계정을 입력하세요.");
+        return settings;
+    }
+
     private void SaveSettings()
     {
         if (changingProfile) return;
-        var current = new SynologyShareSettings {
-            DsmUrl = SynologySharing.ValidateDsmUrl(dsmBox.Text).GetLeftPart(UriPartial.Authority),
-            ShareRoot = SynologySharing.NormalizeRoot(rootBox.Text),
-            User = userBox.Text.Trim()
-        };
-        if (current.User.Length == 0) throw new ArgumentException("DSM 계정을 입력하세요.");
+        var current = DraftSettings(requireRoots: true);
         if (!string.IsNullOrWhiteSpace(passwordBox.Text))
             WindowsCredentials.Store(SynologySharing.CredentialId(Profile.Id),
                 current.User, passwordBox.Text);
@@ -237,31 +291,110 @@ internal sealed class SynologyShareForm : Form
         passwordBox.Clear();
     }
 
-    private SynologySharingClient Client()
+    private SynologySharingClient Client(bool shareDiscovery = false)
     {
-        SaveSettings();
-        var settings = SynologyShareStore.Read(Profile.Id)!;
-        string password = WindowsCredentials.Read(SynologySharing.CredentialId(Profile.Id)) ?? "";
-        return new SynologySharingClient(settings, password, otpBox.Text);
+        if (!shareDiscovery) SaveSettings();
+        var settings = shareDiscovery ? DraftSettings(requireRoots: false) :
+            SynologyShareStore.Read(Profile.Id)!;
+        string password = !string.IsNullOrWhiteSpace(passwordBox.Text) ?
+            passwordBox.Text :
+            WindowsCredentials.Read(SynologySharing.CredentialId(Profile.Id)) ?? "";
+        Guid tokenKey = SynologySharing.TrustedDeviceCredentialId(
+            Profile.Id, settings.DsmUrl, settings.User);
+        return new SynologySharingClient(settings, password, otpBox.Text,
+            trustThisPc: rememberDeviceBox.Checked,
+            savedDeviceId: rememberDeviceBox.Checked ?
+                WindowsCredentials.Read(tokenKey) ?? "" : "",
+            onTrustedDeviceId: did => {
+                WindowsCredentials.Store(tokenKey, settings.User, did);
+                AppStore.Log("DSM_TRUSTED_DEVICE_REGISTERED profile=" + Profile.Id);
+            },
+            onRejectedDeviceId: () => {
+                WindowsCredentials.Delete(tokenKey);
+                AppStore.Log("DSM_TRUSTED_DEVICE_EXPIRED profile=" + Profile.Id);
+            });
     }
 
     private string ResolvePath()
     {
-        string root = SynologyShareStore.Read(Profile.Id)?.ShareRoot ?? rootBox.Text;
+        var settings = SynologyShareStore.Read(Profile.Id) ??
+            DraftSettings(requireRoots: true);
+        if (browserPickedPath is not null &&
+            string.Equals(relativeBox.Text, browserPickedPath,
+                StringComparison.Ordinal) &&
+            SynologySharing.IsAllowed(settings, browserPickedPath))
+            return browserPickedPath;
         if (explorerPath is not null)
-            return SynologySharing.MapExplorerPath(Profile, root, explorerPath);
-        return SynologySharing.MapRelativePath(root, relativeBox.Text);
+            return SynologySharing.MapExplorerPath(Profile, settings, explorerPath);
+        if (string.IsNullOrWhiteSpace(relativeBox.Text))
+            throw new ArgumentException(
+                "공유할 대상이 선택되지 않았습니다. NAS 파일 / 폴더 탐색에서 " +
+                "실제 파일이나 폴더를 먼저 선택하세요.");
+        return SynologySharing.MapRelativePath(settings, relativeBox.Text);
     }
 
-    private async Task RunAsync(Func<SynologySharingClient, Task> operation)
+    private async Task LoadAvailableSharesAsync()
+    {
+        await RunAsync(async client => {
+            var shares = await client.ListSharesAsync();
+            if (shares.Count == 0) {
+                throw new IOException(
+                    "DSM File Station에서 접근 가능한 공유 폴더가 없습니다. 계정 권한을 확인하세요.");
+            }
+            using var chooser = new SynologyShareSelectorDialog(
+                shares, selectedRoots);
+            if (chooser.ShowDialog(this) != DialogResult.OK) return;
+            selectedRoots.Clear();
+            selectedRoots.AddRange(chooser.SelectedRoots);
+            UpdateShareRootSummary();
+            if (browserPickedPath is not null &&
+                !SynologySharing.IsAllowed(DraftSettings(true), browserPickedPath))
+            {
+                browserPickedPath = null;
+                if (explorerPath is null) relativeBox.Clear();
+            }
+            SaveSettings();
+            SetStatus($"DSM 공유 폴더 {selectedRoots.Count}개 선택·저장 완료");
+        }, shareDiscovery: true);
+    }
+
+    private async Task BrowseFilesAsync()
+    {
+        await RunAsync(async client => {
+            var roots = selectedRoots.ToArray();
+            string? path = await client.BrowseAsync(async folderList => {
+                using var browser = new SynologyFileBrowserDialog(roots, folderList);
+                return await browser.ChooseAsync(this);
+            });
+            if (path is null) return;
+            browserPickedPath = path;
+            relativeBox.Text = path;
+            SetStatus("DSM에서 파일/폴더 선택: " + path);
+        });
+    }
+
+    private async Task RunAsync(Func<SynologySharingClient, Task> operation,
+        bool shareDiscovery = false)
     {
         if (busy) return;
         busy = true;
+        profileBox.Enabled = false;
         UseWaitCursor = true;
         try
         {
-            var client = Client();
-            await operation(client);
+            var client = Client(shareDiscovery);
+            try
+            {
+                await operation(client);
+            }
+            catch (SynologyOtpRequiredException ex) when
+                (string.IsNullOrWhiteSpace(otpBox.Text))
+            {
+                // DSM login rejected before the requested operation ran.
+                // One retry after an OTP prompt is safe.
+                if (!PromptForOtp(ex.Message)) return;
+                await operation(Client(shareDiscovery));
+            }
         }
         catch (Exception ex)
         {
@@ -274,8 +407,64 @@ internal sealed class SynologyShareForm : Form
             otpBox.Clear();
             sharePasswordBox.Clear();
             UseWaitCursor = false;
+            profileBox.Enabled = true;
             busy = false;
         }
+    }
+
+    private bool PromptForOtp(string reason)
+    {
+        using var dialog = new Form {
+            Text = "DSM 2단계 인증", ClientSize = new Size(420, 215),
+            Font = new Font("Malgun Gothic", 9f), MaximizeBox = false,
+            MinimizeBox = false, FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterParent,
+            BackColor = ModernTheme.Background, ForeColor = ModernTheme.Text
+        };
+        ModernTheme.EnableDarkTitleBar(dialog);
+        var prompt = new Label {
+            Text = reason, ForeColor = ModernTheme.Text,
+            Location = new Point(18, 17), Size = new Size(387, 48),
+            AutoEllipsis = true
+        };
+        dialog.Controls.Add(prompt);
+        var code = new TextBox {
+            Location = new Point(18, 72), Width = 384,
+            MaxLength = 6, UseSystemPasswordChar = true,
+            BackColor = ModernTheme.Surface, ForeColor = ModernTheme.Text
+        };
+        dialog.Controls.Add(code);
+        var trust = new CheckBox {
+            Text = "이 PC를 신뢰하고 다음 DSM 로그인부터 OTP 생략",
+            Checked = rememberDeviceBox.Checked, AutoSize = false,
+            Location = new Point(18, 111), Size = new Size(384, 26),
+            ForeColor = ModernTheme.Text, BackColor = ModernTheme.Background
+        };
+        dialog.Controls.Add(trust);
+        var confirm = ModernTheme.Button("인증하고 계속", 188, () => {
+            if (!System.Text.RegularExpressions.Regex.IsMatch(code.Text, @"^[0-9]{6}$"))
+            {
+                MessageBox.Show(dialog, "OTP 6자리 숫자를 입력하세요.",
+                    "DSM 인증", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            otpBox.Text = code.Text;
+            rememberDeviceBox.Checked = trust.Checked;
+            dialog.DialogResult = DialogResult.OK;
+            dialog.Close();
+        }, accent: true);
+        confirm.SetBounds(18, 159, 188, 35);
+        dialog.Controls.Add(confirm);
+        var cancel = ModernTheme.Button("취소", 188, () => {
+            dialog.DialogResult = DialogResult.Cancel;
+            dialog.Close();
+        });
+        cancel.SetBounds(214, 159, 188, 35);
+        dialog.Controls.Add(cancel);
+        dialog.AcceptButton = confirm;
+        dialog.CancelButton = cancel;
+        dialog.Shown += (_, _) => code.Focus();
+        return dialog.ShowDialog(this) == DialogResult.OK;
     }
 
     private async Task RevokeAsync()

@@ -47,12 +47,14 @@ jobs:
           if ($LASTEXITCODE -eq 0) { throw "Version $tag already published; increase PC version" }
           exit 0
 
-      - name: Offline updater tests
+      - name: Offline updater and Synology sharing policy tests
         shell: pwsh
         run: |
           dotnet restore NASMount.csproj
           dotnet run --project NASMount.csproj -c Release -- --pc-updater-policy-test
           if ($LASTEXITCODE -ne 0) { throw 'PC update policy test failed' }
+          dotnet run --project NASMount.csproj -c Release -- --synology-share-policy-test
+          if ($LASTEXITCODE -ne 0) { throw 'Synology multi-share/path policy test failed' }
 
       - name: Build Windows app and lock bridge
         shell: pwsh

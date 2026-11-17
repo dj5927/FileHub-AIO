@@ -12,11 +12,14 @@ public sealed class SynologyShareSettings
 {
     public string DsmUrl { get; set; } = "";
     public string User { get; set; } = "";
+    // v1.3.85 legacy field: retained for backward-compatible migration.
     public string ShareRoot { get; set; } = "";
+    public List<string> ShareRoots { get; set; } = [];
 }
 
 internal sealed record SynologySharedLink(string Id, string Path, string Url,
     string Owner, string Expires);
+internal sealed record SynologyFileEntry(string Name, string Path, bool IsDirectory);
 
 internal static class SynologyShareStore
 {
@@ -58,6 +61,15 @@ internal static class SynologySharing
         return new Guid(SHA256.HashData(input).AsSpan(0, 16));
     }
 
+    // Trust tokens must not leak from one DSM endpoint/account to another.
+    internal static Guid TrustedDeviceCredentialId(Guid profileId, string dsmUrl, string username)
+    {
+        string scoped = "FileHubAIO:DSM:TrustedDevice:v1:" + profileId.ToString("D") +
+            ":" + ValidateDsmUrl(dsmUrl).GetLeftPart(UriPartial.Authority)
+                .ToLowerInvariant() + ":" + username.Trim().ToLowerInvariant();
+        return new Guid(SHA256.HashData(Encoding.UTF8.GetBytes(scoped)).AsSpan(0, 16));
+    }
+
     internal static Uri ValidateDsmUrl(string url)
     {
         if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri) ||
@@ -79,6 +91,76 @@ internal static class SynologySharing
         if (value.IndexOf('/', 1) >= 0)
             throw new ArgumentException("DSM 공유 폴더는 /video 처럼 최상위 폴더 1개만 지정하세요.");
         return value;
+    }
+
+    internal static List<string> NormalizeRoots(IEnumerable<string>? roots)
+    {
+        if (roots is null) return [];
+        return roots.Select(NormalizeRoot).Distinct(StringComparer.Ordinal).ToList();
+    }
+
+    internal static List<string> Roots(SynologyShareSettings settings) =>
+        settings.ShareRoots is { Count: > 0 }
+            ? NormalizeRoots(settings.ShareRoots)
+            : string.IsNullOrWhiteSpace(settings.ShareRoot)
+                ? []
+                : [NormalizeRoot(settings.ShareRoot)];
+
+    internal static bool IsAllowed(SynologyShareSettings settings, string path) =>
+        Roots(settings).Any(root => InRoot(root, path));
+
+    // A mounted drive may expose all DSM shares or start inside one share.
+    // Never guess the first selected share when multiple shares are allowed.
+    internal static string MapExplorerPath(NasProfile profile,
+        SynologyShareSettings settings, string windowsPath)
+    {
+        var roots = Roots(settings);
+        if (roots.Count == 0)
+            throw new ArgumentException("DSM 공유 폴더를 하나 이상 선택하세요.");
+        if (!Regex.IsMatch(profile.Letter ?? "", "^[A-Za-z]$"))
+            throw new ArgumentException("드라이브 문자를 확인하세요.");
+        string drive = char.ToUpperInvariant(profile.Letter[0]) + @":\";
+        if (windowsPath.Split('\\').Any(s => s is "." or ".."))
+            throw new ArgumentException("상대 이동 구문은 허용되지 않습니다.");
+        string full = Path.GetFullPath(windowsPath);
+        if (!full.StartsWith(drive, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("선택한 파일은 해당 FileHub AIO 드라이브에 없습니다.");
+        string relative = full[drive.Length..].Replace('\\', '/').Trim('/');
+        string direct = "/" + relative;
+        if (IsAllowed(settings, direct)) return direct;
+        string[] parts = (profile.Share ?? "").Replace('\\', '/').Trim('/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries);
+        foreach (string root in roots)
+        {
+            string name = root[1..];
+            int i = Array.FindIndex(parts, part =>
+                string.Equals(part, name, StringComparison.Ordinal));
+            if (i < 0) continue;
+            string prefix = root + (i + 1 < parts.Length
+                ? "/" + string.Join("/", parts[(i + 1)..]) : "");
+            string mapped = prefix + (relative.Length == 0 ? "" : "/" + relative);
+            if (IsAllowed(settings, mapped)) return mapped;
+        }
+        if (roots.Count == 1) return MapExplorerPath(profile, roots[0], windowsPath);
+        throw new ArgumentException(
+            "드라이브 경로가 어느 DSM 공유 폴더에 속하는지 특정할 수 없습니다. " +
+            "NAS 파일/폴더 탐색에서 직접 선택하세요.");
+    }
+
+    internal static string MapRelativePath(SynologyShareSettings settings, string relative)
+    {
+        var roots = Roots(settings);
+        if (roots.Count == 0)
+            throw new ArgumentException("DSM 공유 폴더를 하나 이상 선택하세요.");
+        string clean = relative.Trim().Replace('\\', '/').Trim('/');
+        if (clean.Split('/').Any(s => s is "." or ".." || s.Contains(':')))
+            throw new ArgumentException("공유 경로를 다시 확인하세요.");
+        string direct = "/" + clean;
+        if (IsAllowed(settings, direct)) return direct;
+        if (roots.Count == 1) return MapRelativePath(roots[0], relative);
+        throw new ArgumentException(
+            "여러 공유 폴더를 선택했다면 폴더명부터 경로를 입력하거나 " +
+            "NAS 파일/폴더 탐색에서 선택하세요.");
     }
 
     internal static string MapExplorerPath(NasProfile profile, string shareRoot, string windowsPath)
@@ -140,6 +222,53 @@ internal static class SynologySharing
         if (!SynologyExplorerMenu.BuildCommand(@"C:\Apps\FileHubAIO.exe")
             .Contains("--synology-share \"%1\"", StringComparison.Ordinal))
             throw new Exception("Explorer shell argument quoting broken.");
+        var legacy = new SynologyShareSettings { ShareRoot = "/video" };
+        var multi = new SynologyShareSettings {
+            ShareRoot = "/video", ShareRoots = ["/video", "/Public", "/video"]
+        };
+        if (!Roots(legacy).SequenceEqual(["/video"]) ||
+            !Roots(multi).SequenceEqual(["/video", "/Public"]) ||
+            !IsAllowed(multi, "/Public/movie.mp4") ||
+            IsAllowed(multi, "/private/movie.mp4") ||
+            IsAllowed(multi, "/videos/movie.mp4") ||
+            MapRelativePath(multi, "Public/folder/movie.mp4") != "/Public/folder/movie.mp4" ||
+            MapExplorerPath(p, multi, @"X:\Public\movie.mp4") != "/Public/movie.mp4")
+            throw new Exception("Multi-share/legacy selection policy failed.");
+        try {
+            MapExplorerPath(p, multi, @"X:\movie.mp4");
+            throw new Exception("Ambiguous multi-share path accepted.");
+        } catch (ArgumentException) { }
+        var mounted = new NasProfile { Protocol = "WebDAV", Letter = "X",
+            Share = "/remote.php/dav/files/testuser/Public/subfolder" };
+        if (MapExplorerPath(mounted, multi, @"X:\file.mp4") !=
+            "/Public/subfolder/file.mp4")
+            throw new Exception("Mapped transport path ignored share folder.");
+        var roundTrip = JsonSerializer.Deserialize<SynologyShareSettings>(
+            JsonSerializer.Serialize(multi))!;
+        if (!Roots(roundTrip).SequenceEqual(["/video", "/Public"]))
+            throw new Exception("Multi-share JSON compatibility failed.");
+        if (TrustedDeviceCredentialId(p.Id, "https://nas.example.com:5001", "abc") ==
+            TrustedDeviceCredentialId(p.Id, "https://nas.example.com:5001", "xyz") ||
+            TrustedDeviceCredentialId(p.Id, "https://nas.example.com:5001", "abc") ==
+            TrustedDeviceCredentialId(p.Id, "https://other.example.com:5001", "abc"))
+            throw new Exception("DSM trusted-device token scope failed.");
+        SynologySharingClient.TrustedDevicePolicyTest();
+        using (var sampleShares = JsonDocument.Parse(
+            """{"shares":[{"name":"01자료","path":"/01자료"},{"name":"video","path":"/video"},{"name":"invalid","path":"/video/nested"}]}"""))
+        {
+            var entries = SynologySharingClient.ParseShareEntries(sampleShares.RootElement);
+            if (entries.Count != 2 || entries.All(e => e.Path != "/01자료") ||
+                entries.Any(e => e.Path == "/video/nested"))
+                throw new Exception("DSM list_share parsing failed.");
+        }
+        using (var sampleFolder = JsonDocument.Parse(
+            """{"files":[{"name":"ok.mp4","path":"/Public/ok.mp4","isdir":false},{"name":"secret.txt","path":"/private/secret.txt","isdir":false},{"name":"sub","path":"/Public/sub","isdir":true}]}"""))
+        {
+            var entries = SynologySharingClient.ParseFolderEntries(multi, sampleFolder.RootElement);
+            if (entries.Count != 2 || entries.Any(e => e.Path.StartsWith("/private/")) ||
+                entries[0].Path != "/Public/sub")
+                throw new Exception("Multi-share File Station list scope failed.");
+        }
         Console.WriteLine("SYNOLOGY_SHARING_PATH_URL_REGISTRY_POLICY_PASS");
     }
 }
@@ -153,18 +282,29 @@ internal sealed class SynologySharingClient
     private readonly SynologyShareSettings settings;
     private readonly string password;
     private readonly string otp;
+    private readonly bool trustThisPc;
+    private readonly string savedDeviceId;
+    private readonly Action<string>? onTrustedDeviceId;
+    private readonly Action? onRejectedDeviceId;
     private readonly Uri baseUri;
     private static readonly HttpClient Http = new(new HttpClientHandler {
         AllowAutoRedirect = false, UseCookies = false
     }) { Timeout = TimeSpan.FromSeconds(22) };
 
-    internal SynologySharingClient(SynologyShareSettings settings, string password, string otp)
+    internal SynologySharingClient(SynologyShareSettings settings, string password, string otp,
+        bool trustThisPc = false, string savedDeviceId = "",
+        Action<string>? onTrustedDeviceId = null, Action? onRejectedDeviceId = null)
     {
         this.settings = settings;
         this.password = password;
         this.otp = otp.Trim();
+        this.trustThisPc = trustThisPc;
+        this.savedDeviceId = savedDeviceId;
+        this.onTrustedDeviceId = onTrustedDeviceId;
+        this.onRejectedDeviceId = onRejectedDeviceId;
         baseUri = SynologySharing.ValidateDsmUrl(settings.DsmUrl);
-        SynologySharing.NormalizeRoot(settings.ShareRoot);
+        // Listing shares must work before the first share is selected.
+        SynologySharing.Roots(settings);
         if (string.IsNullOrWhiteSpace(settings.User))
             throw new ArgumentException("DSM 계정을 입력하세요.");
         if (string.IsNullOrEmpty(password))
@@ -190,11 +330,24 @@ internal sealed class SynologySharingClient
         request.Headers.TryAddWithoutValidation("Cache-Control", "no-store");
         request.Content = new FormUrlEncodedContent(parameters ?? new Dictionary<string,string>());
         using var response = await Http.SendAsync(request);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+            throw new IOException("DSM 관리 API HTTP " +
+                (int)response.StatusCode + " 오류입니다. HTTPS 관리 주소·역방향 프록시 및 " +
+                "File Station 권한을 확인하세요.");
         string raw = await response.Content.ReadAsStringAsync();
         if (raw.Length > 2_000_000)
             throw new IOException("DSM 응답이 너무 큽니다.");
-        using var json = JsonDocument.Parse(raw);
+        if (raw.TrimStart().StartsWith("<", StringComparison.Ordinal))
+            throw new IOException("DSM이 API JSON 대신 웹 로그인 페이지를 반환했습니다. " +
+                "DSM 관리 HTTPS 주소와 역방향 프록시 경로를 확인하세요.");
+        JsonDocument parsed;
+        try { parsed = JsonDocument.Parse(raw); }
+        catch (JsonException)
+        {
+            throw new IOException("DSM API 응답이 JSON 형식이 아닙니다. 관리 주소와 " +
+                "File Station API 지원 여부를 확인하세요.");
+        }
+        using var json = parsed;
         JsonElement obj = json.RootElement;
         if (!obj.TryGetProperty("success", out var success) || !success.GetBoolean())
         {
@@ -205,14 +358,66 @@ internal sealed class SynologySharingClient
                 parameters.TryGetValue("method", out var method) && method == "login" &&
                 (code == 403 || code == 404))
                 throw new SynologyOtpRequiredException(code == 404);
-            throw new IOException("DSM " + (parameters is not null &&
-                parameters.TryGetValue("api", out var name) ? name : "API") +
-                " 요청 거부 (코드 " + code + "). 권한과 DSM 설정을 확인하세요.");
+            string apiName = parameters is not null &&
+                parameters.TryGetValue("api", out var name) ? name : "API";
+            string methodName = parameters is not null &&
+                parameters.TryGetValue("method", out var m) ? m : "unknown";
+            string advice = apiName == "SYNO.FileStation.Sharing" &&
+                methodName == "create" ?
+                "NAS 파일/폴더 탐색에서 실제 파일을 다시 선택하고 DSM File Station의 " +
+                "공유 권한을 확인하세요." :
+                apiName == "SYNO.FileStation.List" ?
+                "DSM File Station 권한과 선택한 공유 폴더 접근 권한을 확인하세요." :
+                "DSM 계정 권한과 NAS 관리 주소를 확인하세요.";
+            throw new IOException("DSM " + apiName + " / " + methodName +
+                " 요청 거부 (코드 " + code + "). " + advice);
         }
         return obj.TryGetProperty("data", out var data) ? data.Clone() : default;
     }
 
     private sealed record ApiSpec(string Path, int Version);
+
+    internal static Dictionary<string, string> BuildLoginFields(
+        string user, string password, int version, string otp,
+        bool trustThisPc, string savedDeviceId)
+    {
+        var fields = new Dictionary<string, string> {
+            ["api"] = "SYNO.API.Auth", ["version"] = version.ToString(),
+            ["method"] = "login", ["account"] = user, ["passwd"] = password,
+            ["session"] = "FileStation", ["format"] = "sid",
+            ["enable_syno_token"] = "yes"
+        };
+        if (otp.Length == 6)
+        {
+            fields["otp_code"] = otp;
+            if (trustThisPc)
+            {
+                fields["enable_device_token"] = "yes";
+                fields["device_name"] = "FileHub AIO Windows";
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(savedDeviceId))
+        {
+            fields["device_name"] = "FileHub AIO Windows";
+            fields["device_id"] = savedDeviceId;
+        }
+        return fields;
+    }
+
+    internal static void TrustedDevicePolicyTest()
+    {
+        var first = BuildLoginFields("user", "secret", 6, "123456", true, "");
+        var followup = BuildLoginFields("user", "secret", 6, "", false, "did-example");
+        var notTrusted = BuildLoginFields("user", "secret", 6, "123456", false, "");
+        if (first.GetValueOrDefault("otp_code") != "123456" ||
+            first.GetValueOrDefault("enable_device_token") != "yes" ||
+            first.GetValueOrDefault("device_name") != "FileHub AIO Windows" ||
+            first.ContainsKey("device_id") ||
+            followup.GetValueOrDefault("device_id") != "did-example" ||
+            followup.ContainsKey("otp_code") ||
+            notTrusted.ContainsKey("enable_device_token"))
+            throw new Exception("Synology trusted-device / 2FA policy failed.");
+    }
 
     private async Task<ApiSpec> Discover(string api, int requestedVersion)
     {
@@ -231,18 +436,30 @@ internal sealed class SynologySharingClient
     }
 
     private async Task<T> WithSession<T>(Func<Func<string,IDictionary<string,string>,
-        Task<JsonElement>>,Task<T>> operation)
+        Task<JsonElement>>,Task<T>> operation, bool useFileList = false)
     {
         var auth = await Discover("SYNO.API.Auth", 6);
-        var share = await Discover("SYNO.FileStation.Sharing", 3);
-        var login = new Dictionary<string,string> {
-            ["api"] = "SYNO.API.Auth", ["version"] = auth.Version.ToString(),
-            ["method"] = "login", ["account"] = settings.User,
-            ["passwd"] = password, ["session"] = "FileStation",
-            ["format"] = "sid", ["enable_syno_token"] = "yes"
-        };
-        if (otp.Length == 6) login["otp_code"] = otp;
-        var loginData = await Request(auth.Path, login);
+        string targetApi = useFileList ? "SYNO.FileStation.List" :
+            "SYNO.FileStation.Sharing";
+        var share = await Discover(targetApi, useFileList ? 2 : 3);
+        var login = BuildLoginFields(settings.User, password, auth.Version,
+            otp, trustThisPc, savedDeviceId);
+        JsonElement loginData;
+        try { loginData = await Request(auth.Path, login); }
+        catch (SynologyOtpRequiredException)
+        {
+            if (otp.Length == 0 && !string.IsNullOrEmpty(savedDeviceId))
+                onRejectedDeviceId?.Invoke();
+            throw;
+        }
+        if (otp.Length == 6 && trustThisPc &&
+            loginData.TryGetProperty("did", out var didValue) &&
+            didValue.ValueKind == JsonValueKind.String)
+        {
+            string did = didValue.GetString() ?? "";
+            if (did.Length is >= 4 and <= 512 && !did.Any(char.IsControl))
+                onTrustedDeviceId?.Invoke(did);
+        }
         string sid = loginData.TryGetProperty("sid", out var sn) ? sn.GetString() ?? "" : "";
         string token = loginData.TryGetProperty("synotoken", out var tn) ? tn.GetString() ?? "" :
             loginData.TryGetProperty("SynoToken", out var alt) ? alt.GetString() ?? "" : "";
@@ -251,7 +468,7 @@ internal sealed class SynologySharingClient
         async Task<JsonElement> Invoke(string method, IDictionary<string,string> fields)
         {
             var values = new Dictionary<string,string>(fields) {
-                ["api"] = "SYNO.FileStation.Sharing", ["version"] = share.Version.ToString(),
+                ["api"] = targetApi, ["version"] = share.Version.ToString(),
                 ["method"] = method, ["_sid"] = sid
             };
             return await Request(share.Path, values, token);
@@ -280,10 +497,79 @@ internal sealed class SynologySharingClient
         });
     }
 
+    internal static List<SynologyFileEntry> ParseShareEntries(JsonElement data)
+    {
+        if (!data.TryGetProperty("shares", out var values) ||
+            values.ValueKind != JsonValueKind.Array)
+            throw new IOException("DSM이 공유 폴더 목록을 반환하지 않았습니다.");
+        var result = new List<SynologyFileEntry>();
+        foreach (var item in values.EnumerateArray())
+        {
+            string path = item.TryGetProperty("path", out var p) ? p.GetString() ?? "" : "";
+            string name = item.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+            try
+            {
+                path = SynologySharing.NormalizeRoot(path);
+                if (result.Any(existing => existing.Path == path)) continue;
+                result.Add(new SynologyFileEntry(
+                    string.IsNullOrWhiteSpace(name) ? path[1..] : name, path, true));
+            }
+            catch (ArgumentException) { /* Ignore non-share nested paths. */ }
+        }
+        return result.OrderBy(e => e.Name, StringComparer.CurrentCulture).ToList();
+    }
+
+    internal async Task<List<SynologyFileEntry>> ListSharesAsync() =>
+        await WithSession(async invoke => {
+            var data = await invoke("list_share", new Dictionary<string,string>());
+            return ParseShareEntries(data);
+        }, useFileList: true);
+
+    internal static List<SynologyFileEntry> ParseFolderEntries(
+        SynologyShareSettings settings, JsonElement data)
+    {
+        if (!data.TryGetProperty("files", out var values) ||
+            values.ValueKind != JsonValueKind.Array)
+            throw new IOException("DSM이 폴더 내용을 반환하지 않았습니다.");
+        var result = new List<SynologyFileEntry>();
+        foreach (var item in values.EnumerateArray())
+        {
+            string path = item.TryGetProperty("path", out var p) ? p.GetString() ?? "" : "";
+            string name = item.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+            if (!SynologySharing.IsAllowed(settings, path) ||
+                string.IsNullOrWhiteSpace(name) || name is "." or ".." ||
+                name.Contains('/') || name.Contains('\\')) continue;
+            bool directory = item.TryGetProperty("isdir", out var d) &&
+                d.ValueKind == JsonValueKind.True;
+            result.Add(new(name, path, directory));
+        }
+        return result.OrderByDescending(e => e.IsDirectory)
+            .ThenBy(e => e.Name, StringComparer.CurrentCulture).ToList();
+    }
+
+    // Keep one DSM login alive for a full browsing dialog, avoiding OTP
+    // re-prompts for every folder expansion.
+    internal async Task<string?> BrowseAsync(
+        Func<Func<string, Task<List<SynologyFileEntry>>>, Task<string?>> browse)
+    {
+        if (SynologySharing.Roots(settings).Count == 0)
+            throw new ArgumentException("공유 폴더를 하나 이상 선택하세요.");
+        return await WithSession(async invoke =>
+            await browse(async folder => {
+                if (!SynologySharing.IsAllowed(settings, folder))
+                    throw new ArgumentException("선택하지 않은 DSM 공유 폴더입니다.");
+                var data = await invoke("list", new Dictionary<string,string> {
+                    ["folder_path"] = JsonSerializer.Serialize(folder),
+                    ["offset"] = "0", ["limit"] = "500"
+                });
+                return ParseFolderEntries(settings, data);
+            }), useFileList: true);
+    }
+
     internal async Task<SynologySharedLink> CreateAsync(string filePath,
         int expiryDays, string linkPassword)
     {
-        if (!SynologySharing.InRoot(settings.ShareRoot, filePath))
+        if (!SynologySharing.IsAllowed(settings, filePath))
             throw new ArgumentException("설정된 공유 폴더 밖의 경로는 링크를 만들 수 없습니다.");
         if (linkPassword.Length > 16)
             throw new ArgumentException("시놀로지 링크 암호는 16자 이내여야 합니다.");
@@ -331,7 +617,7 @@ internal sealed class SynologySharingClient
                 {
                     string path = item.TryGetProperty("path", out var p) ? p.GetString() ?? "" : "";
                     string owner = item.TryGetProperty("link_owner", out var o) ? o.GetString() ?? "" : "";
-                    if (!SynologySharing.InRoot(settings.ShareRoot, path) ||
+                    if (!SynologySharing.IsAllowed(settings, path) ||
                         (owner.Length > 0 &&
                          !string.Equals(owner, settings.User, StringComparison.OrdinalIgnoreCase)))
                         continue;
@@ -353,7 +639,7 @@ internal sealed class SynologySharingClient
     {
         var target = links.ToArray();
         if (target.Length == 0 || target.Length > 100 ||
-            target.Any(x => !SynologySharing.InRoot(settings.ShareRoot, x.Path) ||
+            target.Any(x => !SynologySharing.IsAllowed(settings, x.Path) ||
                 string.IsNullOrWhiteSpace(x.Id) || x.Id.Length > 128 ||
                 x.Id.Any(char.IsControl)))
             throw new ArgumentException("선택한 공유 링크를 다시 확인하세요.");

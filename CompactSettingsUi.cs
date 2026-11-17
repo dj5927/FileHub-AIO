@@ -103,7 +103,7 @@ internal sealed partial class MainForm
                         "빨간 X가 그대로라면 이 파일을 보내 주세요.\n" +
                         "실제 볼륨이 남아 있는 경우 다른 연결 보호를 위해" +
                         " WinFsp 전체 재시작은 자동 실행하지 않습니다.",
-                        "FileHub AIO v1.3.85 · 네트워크 위치 정밀 진단",
+                        "FileHub AIO v1.3.86 · 네트워크 위치 정밀 진단",
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
                 catch (Exception ex)
