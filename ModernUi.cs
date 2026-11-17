@@ -350,7 +350,7 @@ internal sealed partial class MainForm
 
     private void InitializeModernUi(bool minimized)
     {
-        Text = "FileHub AIO v1.3.86  |  PC 드라이브";
+        Text = "FileHub AIO v1.3.87  |  PC 드라이브";
         FormBorderStyle = FormBorderStyle.None;
         ControlBox = false;
         MaximizeBox = false;
@@ -390,7 +390,7 @@ internal sealed partial class MainForm
             headerIcon.Image = badge.ToBitmap();
         } catch { /* A missing icon must never block connection controls. */ }
         header.Controls.Add(headerIcon);
-        var brand = ModernTheme.Label("FileHub AIO  v1.3.86", 9.3f, true);
+        var brand = ModernTheme.Label("FileHub AIO  v1.3.87", 9.3f, true);
         brand.SetBounds(35, 1, 215, 31);
         header.Controls.Add(brand);
         var actions = new FlowLayoutPanel
@@ -460,10 +460,10 @@ internal sealed partial class MainForm
 
         tray = new NotifyIcon
         {
-            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.86",
+            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.87",
             Visible = true, ContextMenuStrip = new ContextMenuStrip()
         };
-        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.86 열기", null, (_, _) => ShowWindow());
+        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.87 열기", null, (_, _) => ShowWindow());
         tray.ContextMenuStrip.Items.Add("모두 연결", null, async (_, _) => await ConnectAll(true));
         tray.ContextMenuStrip.Items.Add("프로그램 종료", null, async (_, _) => await ExitSafely());
         tray.BalloonTipClicked += async (_, _) =>
@@ -934,12 +934,12 @@ internal sealed partial class MainForm
         Item("드라이브 열기", OpenDrive);
         Item("연결 설정", Edit);
         if (SynologySharing.IsNas(p))
-            Item("Synology 공유 링크 생성 / 관리", () => {
+            Item("Synology 공유 설정", () => {
                 // Open after the card menu closes to avoid WinForms reentry
                 // into ContextMenuStrip keyboard processing.
                 BeginInvoke((Action)(() => {
                     if (IsDisposed || Disposing) return;
-                    using var form = new SynologyShareForm(cfg, preferredProfileId: p.Id);
+                    using var form = new SynologySettingsForm(cfg, preferredProfileId: p.Id);
                     form.ShowDialog(this);
                 }));
             });

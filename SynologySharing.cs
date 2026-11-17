@@ -15,6 +15,10 @@ public sealed class SynologyShareSettings
     // v1.3.85 legacy field: retained for backward-compatible migration.
     public string ShareRoot { get; set; } = "";
     public List<string> ShareRoots { get; set; } = [];
+    // Stored separately for each mapped NAS. The optional password itself
+    // is stored only in Windows Credential Manager.
+    public int DefaultExpiryDays { get; set; } = 7;
+    public bool DefaultLinkPasswordEnabled { get; set; }
 }
 
 internal sealed record SynologySharedLink(string Id, string Path, string Url,
@@ -58,6 +62,13 @@ internal static class SynologySharing
     internal static Guid CredentialId(Guid profileId)
     {
         byte[] input = Encoding.UTF8.GetBytes("FileHubAIO:DSM:Sharing:v1:" + profileId.ToString("D"));
+        return new Guid(SHA256.HashData(input).AsSpan(0, 16));
+    }
+
+    internal static Guid LinkPasswordCredentialId(Guid profileId)
+    {
+        byte[] input = Encoding.UTF8.GetBytes(
+            "FileHubAIO:DSM:LinkPassword:v1:" + profileId.ToString("D"));
         return new Guid(SHA256.HashData(input).AsSpan(0, 16));
     }
 
@@ -247,6 +258,10 @@ internal static class SynologySharing
             JsonSerializer.Serialize(multi))!;
         if (!Roots(roundTrip).SequenceEqual(["/video", "/Public"]))
             throw new Exception("Multi-share JSON compatibility failed.");
+        if (LinkPasswordCredentialId(p.Id) == CredentialId(p.Id) ||
+            new SynologyShareSettings().DefaultExpiryDays != 7 ||
+            new SynologyShareSettings().DefaultLinkPasswordEnabled)
+            throw new Exception("Quick-link defaults policy failed.");
         if (TrustedDeviceCredentialId(p.Id, "https://nas.example.com:5001", "abc") ==
             TrustedDeviceCredentialId(p.Id, "https://nas.example.com:5001", "xyz") ||
             TrustedDeviceCredentialId(p.Id, "https://nas.example.com:5001", "abc") ==
@@ -363,6 +378,10 @@ internal sealed class SynologySharingClient
             string methodName = parameters is not null &&
                 parameters.TryGetValue("method", out var m) ? m : "unknown";
             string advice = apiName == "SYNO.FileStation.Sharing" &&
+                methodName == "create" && code == 408 ?
+                "DSM File Station에서 해당 경로의 파일/폴더를 찾을 수 없습니다. " +
+                "Windows 드라이브의 상대 경로와 DSM 공유 폴더 경로가 일치하는지 확인하세요." :
+                apiName == "SYNO.FileStation.Sharing" &&
                 methodName == "create" ?
                 "NAS 파일/폴더 탐색에서 실제 파일을 다시 선택하고 DSM File Station의 " +
                 "공유 권한을 확인하세요." :
@@ -589,7 +608,11 @@ internal sealed class SynologySharingClient
                 throw new IOException("DSM이 생성된 공유 링크를 반환하지 않았습니다.");
             var link = links[0];
             int error = link.TryGetProperty("error", out var e) ? e.GetInt32() : 0;
-            if (error != 0) throw new IOException("DSM 링크 생성 실패 (코드 " + error + ").");
+            if (error != 0)
+                throw new IOException(error == 408
+                    ? "DSM 공유 링크 생성 실패 (408): File Station에 지정한 파일 경로가 없습니다. " +
+                      "선택 파일의 DSM 공유 폴더 경로를 확인하세요."
+                    : "DSM 링크 생성 실패 (코드 " + error + ").");
             string url = link.TryGetProperty("url", out var u) ? u.GetString() ?? "" : "";
             if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed) ||
                 parsed.Scheme is not ("http" or "https"))

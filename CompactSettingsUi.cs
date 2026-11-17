@@ -103,7 +103,7 @@ internal sealed partial class MainForm
                         "빨간 X가 그대로라면 이 파일을 보내 주세요.\n" +
                         "실제 볼륨이 남아 있는 경우 다른 연결 보호를 위해" +
                         " WinFsp 전체 재시작은 자동 실행하지 않습니다.",
-                        "FileHub AIO v1.3.86 · 네트워크 위치 정밀 진단",
+                        "FileHub AIO v1.3.87 · 네트워크 위치 정밀 진단",
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
                 catch (Exception ex)
@@ -145,7 +145,7 @@ internal sealed partial class MainForm
             accent: true, height: 34);
         close.SetBounds(417, 385, 109, 33);
         window.Controls.Add(close);
-        var share = ModernTheme.Button("Synology 공유 링크 생성 / 관리", 498,
+        var share = ModernTheme.Button("Synology 공유 설정", 498,
             OpenSynologyShare, height: 34);
         share.SetBounds(28, 303, 498, 33);
         window.Controls.Add(share);
@@ -161,7 +161,7 @@ internal sealed partial class MainForm
 
     private void OpenSynologyShare()
     {
-        using var form = new SynologyShareForm(cfg);
+        using var form = new SynologySettingsForm(cfg);
         form.ShowDialog(this);
     }
 }

@@ -66,6 +66,12 @@ jobs:
           New-Item -ItemType Directory -Force -Path publish/tools | Out-Null
           Copy-Item bridge/* publish/tools -Recurse -Force
 
+      - name: Verify LockBridge local-save provenance policy
+        shell: pwsh
+        run: |
+          & ./bridge/NASMountLockBridge.exe --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'LockBridge local-save provenance test failed' }
+
       - name: Fetch SHA-256 pinned upstream engines
         shell: pwsh
         run: |

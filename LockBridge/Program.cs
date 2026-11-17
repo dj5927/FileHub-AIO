@@ -227,6 +227,7 @@ internal static class Program
                     !WriteIntent.IsWrite(2) || !WriteIntent.IsWrite(0x10000000u) ||
                     WriteIntent.IsWrite(1))
                     return 2;
+                LocalWorkbookSaveNotificationGuard.PolicyTest();
                 Console.WriteLine("LOCKBRIDGE_SELF_TEST_PASS");
                 return 0;
             }
@@ -827,6 +828,12 @@ internal sealed class LockingPassthrough : Ptfs
                     return status;
                 }
                 _atomic.MarkLowerRenameCompleted(finalName, fileName, expected);
+                // The remote directory poller can otherwise report OUR OWN
+                // Excel rename/upload to Windows as an external modification.
+                // Save provenance is registered only after local integrity
+                // validation; the poller must independently SHA-verify the
+                // remote bytes before suppressing one matching notification.
+                DirectoryMonitor?.RecordLocalWorkbookSave(finalName, expected);
                 _atomic.ForgetOriginalCase(finalName);
                 if (Environment.GetEnvironmentVariable("NASMOUNT_FSP_TRACE") == "1")
                     Console.Error.WriteLine("SAVELAB SINGLE_WRITER_RENAME_OK " + finalName);

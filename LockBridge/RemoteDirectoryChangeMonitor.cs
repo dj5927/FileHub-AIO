@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
 using System.Xml;
 using System.Xml.Linq;
@@ -21,6 +22,7 @@ internal sealed class RemoteDirectoryChangeMonitor : IDisposable
     }
 
     private readonly HttpClient _webdav;
+    private readonly HttpClient _proofHttp;
     private readonly Uri _remoteRoot;
     private readonly string _backendRoot;
     private readonly string _rcRoot;
@@ -34,6 +36,9 @@ internal sealed class RemoteDirectoryChangeMonitor : IDisposable
     private readonly object _gate = new();
     private readonly CancellationTokenSource _stop = new();
     private readonly Task _worker;
+    private readonly LocalWorkbookSaveNotificationGuard _localSaves = new();
+    // SHA-256 proof is bounded to avoid downloading enormous Office files.
+    private const long MaxProofBytes = 128L * 1024 * 1024;
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(2);
     private const int MaxFolders = 8;
     private const int MaxEntries = 2000;
@@ -51,11 +56,28 @@ internal sealed class RemoteDirectoryChangeMonitor : IDisposable
         _rcUser = rcUser;
         _rcPassword = rcPass;
         _webdav = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
+        _proofHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(24) };
         if (!profile.IsAnonymous)
-            _webdav.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Basic", Convert.ToBase64String(
-                    Encoding.UTF8.GetBytes(profile.Username + ":" + password)));
+        {
+            var auth = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(
+                Encoding.UTF8.GetBytes(profile.Username + ":" + password)));
+            _webdav.DefaultRequestHeaders.Authorization = auth;
+            _proofHttp.DefaultRequestHeaders.Authorization = auth;
+        }
         _worker = Task.Run(PollAsync);
+    }
+
+    /// <summary>
+    /// Called only after Excel's staged document was safely renamed and its
+    /// local SHA-256 checked. Later we verify the remote revision's bytes
+    /// before suppressing a self-generated filesystem change notification.
+    /// </summary>
+    internal void RecordLocalWorkbookSave(string name,
+        WorkbookPayloadGuard.Payload payload)
+    {
+        _localSaves.Record(name, payload.Length, payload.Hash);
+        if (Trace) Console.Error.WriteLine("DIRWATCH OWN_SAVE_RECORDED " +
+            name + " bytes=" + payload.Length);
     }
 
     internal void ObserveDirectory(string lowerDirectory)
@@ -137,11 +159,36 @@ internal sealed class RemoteDirectoryChangeMonitor : IDisposable
                         // and the event is retried once the upload drains.
                         if (!BridgeUploadGate.Check(_rcPort, _rcUser, _rcPassword))
                             continue;
-                        if (Trace) Console.Error.WriteLine("DIRWATCH CHANGE " +
-                            name + " changes=" + string.Join(",", changes.Select(x =>
-                                x.Action + ":" + x.FileName)));
-                        await RefreshRcloneAsync(name, _stop.Token);
-                        Notify(changes);
+                        var external = new List<NotifyInfo>(changes.Length);
+                        foreach (var change in changes)
+                        {
+                            string key = change.FileName.TrimStart('\\')
+                                .Replace('\\', '/');
+                            string basename = Path.GetFileName(key);
+                            if (change.Action == NotifyAction.Modified &&
+                                previous.TryGetValue(basename, out var oldVersion) &&
+                                current.TryGetValue(basename, out var newVersion) &&
+                                _localSaves.MayBeOurSave(key, oldVersion, newVersion,
+                                    out var receipt) &&
+                                await RemoteMatchesLocalSaveAsync(key, receipt, _stop.Token) &&
+                                _localSaves.Acknowledge(key, receipt))
+                            {
+                                AppStore.Log("REMOTE_DIR_LOCAL_EXCEL_SAVE_ACK " +
+                                    key + " bytes=" + receipt.Length);
+                                if (Trace) Console.Error.WriteLine(
+                                    "DIRWATCH OWN_SAVE_RECONCILED " + key);
+                                continue;
+                            }
+                            external.Add(change);
+                        }
+                        if (external.Count > 0)
+                        {
+                            if (Trace) Console.Error.WriteLine("DIRWATCH CHANGE " +
+                                name + " changes=" + string.Join(",", external.Select(x =>
+                                    x.Action + ":" + x.FileName)));
+                            await RefreshRcloneAsync(name, _stop.Token);
+                            Notify(external.ToArray());
+                        }
                         watch.Previous = current;
                     }
                     catch (OperationCanceledException) when (_stop.IsCancellationRequested)
@@ -164,6 +211,55 @@ internal sealed class RemoteDirectoryChangeMonitor : IDisposable
         if (relative.Length == 0) return _remoteRoot;
         return new Uri(_remoteRoot, string.Join("/", relative.Split('/')
             .Select(Uri.EscapeDataString)) + "/");
+    }
+
+    private async Task<bool> RemoteMatchesLocalSaveAsync(string relative,
+        LocalWorkbookSaveNotificationGuard.Receipt receipt,
+        CancellationToken token)
+    {
+        if (receipt.Length > MaxProofBytes) return false;
+        try
+        {
+            Uri file = new(_remoteRoot, string.Join("/", relative.Split('/')
+                .Select(Uri.EscapeDataString)));
+            using var request = new HttpRequestMessage(HttpMethod.Get, file);
+            using var response = await _proofHttp.SendAsync(request,
+                HttpCompletionOption.ResponseHeadersRead, token);
+            if (response.StatusCode != HttpStatusCode.OK ||
+                (response.Content.Headers.ContentLength is long size &&
+                 size != receipt.Length))
+                return false;
+            using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            await using var body = await response.Content.ReadAsStreamAsync(token);
+            byte[] block = new byte[128 * 1024];
+            long total = 0;
+            while (true)
+            {
+                int bytes = await body.ReadAsync(block.AsMemory(), token);
+                if (bytes == 0) break;
+                total += bytes;
+                if (total > receipt.Length || total > MaxProofBytes) return false;
+                sha.AppendData(block.AsSpan(0, bytes));
+            }
+            string remoteHash = Convert.ToHexString(sha.GetHashAndReset());
+            bool matched = total == receipt.Length &&
+                remoteHash.Equals(receipt.Sha256, StringComparison.OrdinalIgnoreCase);
+            if (!matched && Trace)
+                Console.Error.WriteLine("DIRWATCH REMOTE_MISMATCH " + relative +
+                    " expectedBytes=" + receipt.Length + " actualBytes=" + total);
+            return matched;
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Fail closed: a failed proof must not mask a real remote edit.
+            AppStore.Log("REMOTE_DIR_LOCAL_SAVE_PROOF_FAILED " + relative +
+                " " + ex.GetType().Name);
+            return false;
+        }
     }
 
     private async Task<Dictionary<string, string>?> ReadRemoteAsync(
@@ -311,6 +407,7 @@ internal sealed class RemoteDirectoryChangeMonitor : IDisposable
         _stop.Cancel();
         try { _worker.Wait(TimeSpan.FromSeconds(9)); } catch { }
         _webdav.Dispose();
+        _proofHttp.Dispose();
         _stop.Dispose();
     }
 }

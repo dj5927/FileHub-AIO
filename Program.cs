@@ -23,7 +23,7 @@ internal static class Program
                     "Synology 공유 링크", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            Application.Run(new SynologyShareForm(AppStore.Load(), args[1]));
+            Application.Run(new SynologyQuickLinkForm(AppStore.Load(), args[1]));
             return;
         }
         if (args.Contains("--synology-share-policy-test", StringComparer.OrdinalIgnoreCase))
@@ -1268,7 +1268,7 @@ internal static class Program
                         throw new InvalidOperationException(
                             "PC update button missing or overlapping compact settings");
                     var shareButton = settings.Controls.OfType<Button>()
-                        .SingleOrDefault(x => x.Text == "Synology 공유 링크 생성 / 관리");
+                        .SingleOrDefault(x => x.Text == "Synology 공유 설정");
                     if (shareButton is null || !shareButton.Visible ||
                         shareButton.Bounds.IntersectsWith(updateButton.Bounds) ||
                         shareButton.Bottom > settings.ClientSize.Height)
@@ -1282,7 +1282,7 @@ internal static class Program
                     bitmap.Save(Path.Combine(directory, "settings.png"));
                     settings.Hide();
                 }
-                using (var synology = new SynologyShareForm(new AppConfig {
+                using (var synology = new SynologySettingsForm(new AppConfig {
                     Profiles = [new NasProfile {
                         Protocol = "WebDAV", DisplayName = "테스트 NAS",
                         Letter = "X", Host = "nas.test", Share = "/video"
@@ -1292,15 +1292,18 @@ internal static class Program
                     synology.Show(dashboard);
                     Application.DoEvents();
                     var buttons = synology.Controls.OfType<Button>().ToArray();
-                    if (!buttons.Any(b => b.Text == "공유 링크 생성") ||
-                        !buttons.Any(b => b.Text == "링크 목록 새로고침") ||
-                        !buttons.Any(b => b.Text == "선택 링크 해제") ||
+                    if (!buttons.Any(b => b.Text == "설정 저장") ||
+                        !buttons.Any(b => b.Text == "DSM 연결 확인") ||
                         !buttons.Any(b => b.Text == "목록 불러오기 · 다중선택") ||
-                        !buttons.Any(b => b.Text == "NAS 파일 / 폴더 탐색") ||
+                        buttons.Any(b => b.Text == "공유 링크 생성" ||
+                            b.Text == "선택 링크 해제") ||
                         !synology.Controls.OfType<CheckBox>().Any(x =>
                             x.Text.Contains("이 PC 신뢰") && x.Visible &&
                             x.Right <= synology.ClientSize.Width) ||
-                        !buttons.Any(b => b.Text.Contains("탐색기 메뉴")) ||
+                        !synology.Controls.OfType<ComboBox>().Any(x =>
+                            x.Items.Cast<object>().Any(v => v?.ToString() == "무제한")) ||
+                        !buttons.Any(b => b.Text.Contains("탐색기") &&
+                            b.Text.Contains("메뉴")) ||
                         buttons.Any(b => b.Bottom > synology.ClientSize.Height ||
                             b.Right > synology.ClientSize.Width ||
                             b.Left < 0 || b.Top < 0) ||
@@ -1312,6 +1315,26 @@ internal static class Program
                     synology.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
                     bitmap.Save(Path.Combine(directory, "synology-sharing.png"));
                     synology.Hide();
+                }
+                using (var quick = new SynologyQuickLinkForm(new AppConfig(),
+                    @"X:\테스트.xlsx", previewForUiTest: true))
+                {
+                    quick.Show(dashboard);
+                    Application.DoEvents();
+                    if (!quick.HasLink ||
+                        quick.ClientSize.Height > 245 ||
+                        !quick.Controls.OfType<Button>().Any(b =>
+                            b.Text == "링크 복사" && b.Enabled) ||
+                        quick.Controls.OfType<TextBox>().Count() != 1 ||
+                        quick.Controls.OfType<Button>().Any(b =>
+                            b.Bottom > quick.ClientSize.Height ||
+                            b.Right > quick.ClientSize.Width))
+                        throw new InvalidOperationException(
+                            "Synology quick-link copy dialog regression");
+                    using var bitmap = new Bitmap(quick.Width, quick.Height);
+                    quick.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+                    bitmap.Save(Path.Combine(directory, "synology-quick-link.png"));
+                    quick.Hide();
                 }
                 using (var selector = new SynologyShareSelectorDialog([
                     new SynologyFileEntry("01자료", "/01자료", true),
