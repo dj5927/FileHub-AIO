@@ -12,6 +12,29 @@ internal static class Program
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        // Explorer may launch this dialog while the main app owns its mutex.
+        if (args.Length == 2 &&
+            args[0].Equals("--synology-share", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!Path.IsPathFullyQualified(args[1]) ||
+                args[1].Length < 3 || args[1][1] != ':')
+            {
+                MessageBox.Show("FileHub AIO 드라이브 파일을 선택하세요.",
+                    "Synology 공유 링크", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            Application.Run(new SynologyShareForm(AppStore.Load(), args[1]));
+            return;
+        }
+        if (args.Contains("--synology-share-policy-test", StringComparer.OrdinalIgnoreCase))
+        {
+            try { SynologySharing.PolicyTest(); }
+            catch (Exception ex) {
+                Console.Error.WriteLine("SYNOLOGY_SHARING_POLICY_FAILED " + ex);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
         if (args.Length == 2 &&
             args[0].Equals("--apply-pc-update", StringComparison.OrdinalIgnoreCase))
         {
@@ -1244,12 +1267,43 @@ internal static class Program
                         updateButton.Bounds.IntersectsWith(closeButton.Bounds))
                         throw new InvalidOperationException(
                             "PC update button missing or overlapping compact settings");
-                    if (settings.AutoScroll || settings.ClientSize.Height > 400)
+                    var shareButton = settings.Controls.OfType<Button>()
+                        .SingleOrDefault(x => x.Text == "Synology 공유 링크 생성 / 관리");
+                    if (shareButton is null || !shareButton.Visible ||
+                        shareButton.Bounds.IntersectsWith(updateButton.Bounds) ||
+                        shareButton.Bottom > settings.ClientSize.Height)
+                        throw new InvalidOperationException(
+                            "Synology link management button missing or overlapping settings");
+                    if (settings.AutoScroll || settings.ClientSize.Height > 438)
                         throw new InvalidOperationException("Global settings layout too tall");
+                    dashboard.VerifyUpdateNoticeForUiTest();
                     using var bitmap = new Bitmap(settings.Width, settings.Height);
                     settings.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
                     bitmap.Save(Path.Combine(directory, "settings.png"));
                     settings.Hide();
+                }
+                using (var synology = new SynologyShareForm(new AppConfig {
+                    Profiles = [new NasProfile {
+                        Protocol = "WebDAV", DisplayName = "테스트 NAS",
+                        Letter = "X", Host = "nas.test", Share = "/video"
+                    }]
+                }))
+                {
+                    synology.Show(dashboard);
+                    Application.DoEvents();
+                    var buttons = synology.Controls.OfType<Button>().ToArray();
+                    if (!buttons.Any(b => b.Text == "공유 링크 생성") ||
+                        !buttons.Any(b => b.Text == "링크 목록 새로고침") ||
+                        !buttons.Any(b => b.Text == "선택 링크 해제") ||
+                        !buttons.Any(b => b.Text.Contains("탐색기 메뉴")) ||
+                        buttons.Any(b => b.Bottom > synology.ClientSize.Height ||
+                            b.Right > synology.ClientSize.Width))
+                        throw new InvalidOperationException(
+                            "Synology sharing UI buttons missing or clipped");
+                    using var bitmap = new Bitmap(synology.Width, synology.Height);
+                    synology.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+                    bitmap.Save(Path.Combine(directory, "synology-sharing.png"));
+                    synology.Hide();
                 }
                 using (var components = new ComponentInventoryDialog())
                 {

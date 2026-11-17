@@ -350,7 +350,7 @@ internal sealed partial class MainForm
 
     private void InitializeModernUi(bool minimized)
     {
-        Text = "FileHub AIO v1.3.84  |  PC 드라이브";
+        Text = "FileHub AIO v1.3.85  |  PC 드라이브";
         FormBorderStyle = FormBorderStyle.None;
         ControlBox = false;
         MaximizeBox = false;
@@ -390,7 +390,7 @@ internal sealed partial class MainForm
             headerIcon.Image = badge.ToBitmap();
         } catch { /* A missing icon must never block connection controls. */ }
         header.Controls.Add(headerIcon);
-        var brand = ModernTheme.Label("FileHub AIO  v1.3.84", 9.3f, true);
+        var brand = ModernTheme.Label("FileHub AIO  v1.3.85", 9.3f, true);
         brand.SetBounds(35, 1, 215, 31);
         header.Controls.Add(brand);
         var actions = new FlowLayoutPanel
@@ -427,12 +427,31 @@ internal sealed partial class MainForm
         root.Controls.Add(body, 0, 1);
         var bottom = new Panel { Dock = DockStyle.Bottom, Height = 22,
             BackColor = ModernTheme.Background };
+        updateNotice = new LinkLabel {
+            Text = "",
+            Dock = DockStyle.Right,
+            Width = 0,
+            AutoSize = false,
+            Visible = false,
+            TextAlign = ContentAlignment.MiddleRight,
+            Padding = new Padding(3, 0, 10, 0),
+            LinkColor = Color.FromArgb(255, 198, 75),
+            ActiveLinkColor = Color.White,
+            VisitedLinkColor = Color.FromArgb(255, 198, 75),
+            BackColor = ModernTheme.Background,
+            Font = new Font("Malgun Gothic", 8.1f, FontStyle.Bold),
+            LinkBehavior = LinkBehavior.HoverUnderline,
+            Cursor = Cursors.Hand
+        };
+        updateNotice.LinkClicked += async (_, _) =>
+            await CheckForPcUpdateAsync(preferCached: true, startDownloadNow: true);
         status.Dock = DockStyle.Fill;
         status.Font = new Font("Malgun Gothic", 8f);
         status.ForeColor = ModernTheme.Muted;
         status.TextAlign = ContentAlignment.MiddleLeft;
         status.Padding = new Padding(7, 0, 0, 0);
         bottom.Controls.Add(status);
+        bottom.Controls.Add(updateNotice);
         body.Controls.Add(bottom);
         cards.SizeChanged += (_, _) => ResizeModernCards();
         body.Controls.Add(cards);
@@ -441,13 +460,14 @@ internal sealed partial class MainForm
 
         tray = new NotifyIcon
         {
-            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.84",
+            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.85",
             Visible = true, ContextMenuStrip = new ContextMenuStrip()
         };
-        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.84 열기", null, (_, _) => ShowWindow());
+        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.85 열기", null, (_, _) => ShowWindow());
         tray.ContextMenuStrip.Items.Add("모두 연결", null, async (_, _) => await ConnectAll(true));
         tray.ContextMenuStrip.Items.Add("프로그램 종료", null, async (_, _) => await ExitSafely());
-        tray.BalloonTipClicked += async (_, _) => await CheckForPcUpdateAsync();
+        tray.BalloonTipClicked += async (_, _) =>
+            await CheckForPcUpdateAsync(preferCached: true, startDownloadNow: true);
         tray.DoubleClick += (_, _) => ShowWindow();
         FormClosed += (_, _) => tray.Dispose();
         FormClosing += (_, e) =>
@@ -473,6 +493,9 @@ internal sealed partial class MainForm
         {
             if (Environment.GetEnvironmentVariable("NASMOUNT_UI_SMOKE") == "1") return;
             if (minimized) { Hide(); ShowInTaskbar = false; }
+            // Start the GitHub PC version check immediately; slow NAS mounts
+            // must not delay the bottom-right update notification.
+            _ = CheckStartupPcUpdateAsync();
             // On the first real startup, offer the bundled signed WinFsp MSI
             // if an auto-connected NAS needs it. Never install silently.
             if (!RemoteMount.HasWinFsp && cfg.Profiles.Any(p =>
@@ -496,7 +519,6 @@ internal sealed partial class MainForm
                 if (!shutdownRequested && !IsDisposed)
                     timer.Start();
             }
-            _ = CheckStartupPcUpdateAsync();
         };
     }
 
@@ -911,6 +933,16 @@ internal sealed partial class MainForm
         }
         Item("드라이브 열기", OpenDrive);
         Item("연결 설정", Edit);
+        if (SynologySharing.IsNas(p))
+            Item("Synology 공유 링크 생성 / 관리", () => {
+                // Open after the card menu closes to avoid WinForms reentry
+                // into ContextMenuStrip keyboard processing.
+                BeginInvoke((Action)(() => {
+                    if (IsDisposed || Disposing) return;
+                    using var form = new SynologyShareForm(cfg, preferredProfileId: p.Id);
+                    form.ShowDialog(this);
+                }));
+            });
         if (p.Protocol == "WebDAV")
         {
             Item("파일잠금 상태 확인", () => _ = ShowWebDavLockStatus());

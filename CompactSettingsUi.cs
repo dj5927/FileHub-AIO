@@ -15,7 +15,7 @@ internal sealed partial class MainForm
         var window = new Form
         {
             Text = "FileHub AIO · 환경 설정",
-            ClientSize = new Size(565, 400),
+            ClientSize = new Size(565, 438),
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false,
@@ -103,7 +103,7 @@ internal sealed partial class MainForm
                         "빨간 X가 그대로라면 이 파일을 보내 주세요.\n" +
                         "실제 볼륨이 남아 있는 경우 다른 연결 보호를 위해" +
                         " WinFsp 전체 재시작은 자동 실행하지 않습니다.",
-                        "FileHub AIO v1.3.84 · 네트워크 위치 정밀 진단",
+                        "FileHub AIO v1.3.85 · 네트워크 위치 정밀 진단",
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
                 catch (Exception ex)
@@ -136,22 +136,32 @@ internal sealed partial class MainForm
                 using var detail = new ComponentInventoryDialog();
                 detail.ShowDialog(this); // MainForm is the top-level owner.
             }, height: 34);
-        components.SetBounds(28, 344, 243, 33);
+        components.SetBounds(28, 385, 243, 33);
         components.AccessibleName = "사용 엔진, 라이브러리 및 확장 백엔드 버전 README";
         window.Controls.Add(components);
 
         var close = ModernTheme.Button("닫기", 109,
             () => { window.DialogResult = DialogResult.OK; window.Close(); },
             accent: true, height: 34);
-        close.SetBounds(417, 344, 109, 33);
+        close.SetBounds(417, 385, 109, 33);
         window.Controls.Add(close);
+        var share = ModernTheme.Button("Synology 공유 링크 생성 / 관리", 498,
+            OpenSynologyShare, height: 34);
+        share.SetBounds(28, 303, 498, 33);
+        window.Controls.Add(share);
         var checkPcUpdate = ModernTheme.Button("PC 업데이트 확인", 498,
             () => _ = CheckForPcUpdateAsync(window), height: 34);
-        checkPcUpdate.SetBounds(28, 303, 498, 33);
+        checkPcUpdate.SetBounds(28, 344, 498, 33);
         checkPcUpdate.AccessibleName =
             "Windows 전용 GitHub pc-v 릴리즈 업데이트 확인";
         window.Controls.Add(checkPcUpdate);
         window.AcceptButton = close;
         return window;
+    }
+
+    private void OpenSynologyShare()
+    {
+        using var form = new SynologyShareForm(cfg);
+        form.ShowDialog(this);
     }
 }

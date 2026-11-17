@@ -7,6 +7,29 @@ internal sealed partial class MainForm
 {
     private bool checkingPcUpdate;
     private PcUpdateService.Candidate? pendingPcRelease;
+    private LinkLabel updateNotice = null!;
+
+    private void DisplayUpdateNotice(Version? version)
+    {
+        if (updateNotice is null || updateNotice.IsDisposed) return;
+        updateNotice.Visible = version is not null;
+        updateNotice.Text = version is null ? "" :
+            $"● PC 업데이트 있음 v{version}  클릭하여 설치";
+        updateNotice.Width = version is null ? 0 : 254;
+        if (version is not null) updateNotice.BringToFront();
+    }
+
+    internal void VerifyUpdateNoticeForUiTest()
+    {
+        DisplayUpdateNotice(new Version(1, 3, 86));
+        if (!updateNotice.Visible || !updateNotice.Text.Contains("v1.3.86") ||
+            updateNotice.Right != updateNotice.Parent?.ClientSize.Width ||
+            updateNotice.Dock != DockStyle.Right || updateNotice.Width < 200)
+            throw new InvalidOperationException("Bottom-right update notification missing");
+        DisplayUpdateNotice(null);
+        if (updateNotice.Visible || updateNotice.Width != 0)
+            throw new InvalidOperationException("Up-to-date version must not show a notice");
+    }
 
     // Non-blocking startup notification. Only the Windows pc-v* releases
     // appear; an Android APK can never trigger a desktop update offer.
@@ -18,7 +41,9 @@ internal sealed partial class MainForm
         try
         {
             pendingPcRelease = await PcUpdateService.FindUpdateAsync();
-            if (pendingPcRelease is null || shutdownRequested || IsDisposed) return;
+            if (shutdownRequested || IsDisposed) return;
+            DisplayUpdateNotice(pendingPcRelease?.Version);
+            if (pendingPcRelease is null) return;
             tray.BalloonTipTitle = "FileHub AIO PC 새 업데이트";
             tray.BalloonTipText =
                 $"Windows {pendingPcRelease.Version} 버전이 나왔습니다. 클릭하여 확인하세요.";
@@ -35,17 +60,22 @@ internal sealed partial class MainForm
         finally { checkingPcUpdate = false; }
     }
 
-    private async Task CheckForPcUpdateAsync(Form? owner = null)
+    private async Task CheckForPcUpdateAsync(Form? owner = null,
+        bool preferCached = false, bool startDownloadNow = false)
     {
         if (checkingPcUpdate || shutdownRequested) return;
         checkingPcUpdate = true;
         PcUpdateService.Staged? staged = null;
         try
         {
-            status.Text = "GitHub PC 릴리즈 확인 중...";
-            var candidate = await PcUpdateService.FindUpdateAsync();
+            if (!preferCached || pendingPcRelease is null)
+                status.Text = "GitHub PC 릴리즈 확인 중...";
+            var candidate = preferCached && pendingPcRelease is not null
+                ? pendingPcRelease : await PcUpdateService.FindUpdateAsync();
             if (candidate is null)
             {
+                pendingPcRelease = null;
+                DisplayUpdateNotice(null);
                 MessageBox.Show(owner ?? this,
                     $"현재 Windows 버전 {PcUpdateService.InstalledVersion}이 최신이거나 " +
                     "별도 PC 릴리즈가 아직 등록되지 않았습니다.",
@@ -54,9 +84,10 @@ internal sealed partial class MainForm
                 return;
             }
             pendingPcRelease = candidate;
+            DisplayUpdateNotice(candidate.Version);
             string notes = candidate.Notes.Trim();
             if (notes.Length > 720) notes = notes[..720] + "...";
-            if (MessageBox.Show(owner ?? this,
+            if (!startDownloadNow && MessageBox.Show(owner ?? this,
                 "PC 업데이트가 있습니다.\n\n" +
                 $"현재: {PcUpdateService.InstalledVersion}\n" +
                 $"새 버전: {candidate.Version}\n" +
@@ -67,6 +98,7 @@ internal sealed partial class MainForm
                 "FileHub AIO PC 업데이트", MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question) != DialogResult.Yes) return;
 
+            status.Text = "PC 업데이트 파일 다운로드 중...";
             using var progress = new PcUpdateDownloadForm(candidate.Version);
             progress.Show(owner ?? this);
             try
