@@ -1202,30 +1202,39 @@ internal static class Program
                         importButton.Bottom > settings.ClientSize.Height)
                         throw new InvalidOperationException(
                             "FileHub AIO backup/restore buttons clipped or missing");
-                    var googleDiagnosticToggle = settings.Controls.OfType<CheckBox>()
-                        .SingleOrDefault(x => x.Text.StartsWith(
-                            "Google 연결 초기화 진단", StringComparison.Ordinal));
                     var startupToggle = settings.Controls.OfType<CheckBox>()
                         .SingleOrDefault(x => x.Text.StartsWith(
                             "Windows 로그인 시", StringComparison.Ordinal));
-                    var nativeProbeLink = settings.Controls.OfType<LinkLabel>()
+                    var nativeProbeButton = settings.Controls.OfType<Button>()
                         .SingleOrDefault(x => x.Text == "WebDAV 서버 LOCK 지원 검사");
-                    if (nativeProbeLink is null || !nativeProbeLink.Visible ||
-                        nativeProbeLink.Right > settings.ClientSize.Width ||
-                        nativeProbeLink.Bottom > settings.ClientSize.Height)
+                    if (nativeProbeButton is null || !nativeProbeButton.Visible ||
+                        nativeProbeButton.Right > settings.ClientSize.Width ||
+                        nativeProbeButton.Bottom > settings.ClientSize.Height)
                         throw new InvalidOperationException(
-                            "WebDAV native lock capability test link missing or clipped");
+                            "WebDAV native lock capability test button missing or clipped");
                     if (inventoryButton is null || closeButton is null ||
                         inventoryButton.Bounds.IntersectsWith(closeButton.Bounds) ||
                         inventoryButton.Bottom > settings.ClientSize.Height ||
                         !inventoryButton.Visible)
                         throw new InvalidOperationException(
                             "Component inventory README button missing or overlaps settings");
-                    if (googleDiagnosticToggle is null || startupToggle is null ||
-                        !googleDiagnosticToggle.Visible ||
-                        googleDiagnosticToggle.Bounds.IntersectsWith(startupToggle.Bounds))
+                    if (startupToggle is null || !startupToggle.Visible ||
+                        settings.Controls.OfType<CheckBox>().Count() != 1 ||
+                        settings.Controls.OfType<LinkLabel>().Any() ||
+                        settings.Controls.OfType<Button>().Any(b =>
+                            b.Text.Contains("끊어진 연결 기록 정리") ||
+                            b.Text.Contains("탐색기만 다시 시작")))
                         throw new InvalidOperationException(
-                            "Google startup diagnostic toggle missing or overlaps settings");
+                            "Retired settings controls visible or Windows autostart missing");
+                    var settingsButtons = settings.Controls.OfType<Button>().ToArray();
+                    if (settingsButtons.Any(b => b.Left < 0 || b.Top < 0 ||
+                            b.Right > settings.ClientSize.Width ||
+                            b.Bottom > settings.ClientSize.Height) ||
+                        settingsButtons.SelectMany((b, i) =>
+                            settingsButtons.Skip(i + 1).Select(other =>
+                                b.Bounds.IntersectsWith(other.Bounds))).Any(overlap => overlap))
+                        throw new InvalidOperationException(
+                            "Compact settings button overlaps or clips at 100% DPI");
                     ComponentInventory.ManifestSelfTest();
                     var updateButton = settings.Controls.OfType<Button>()
                         .SingleOrDefault(x => x.Text == "PC 업데이트 확인");
@@ -1235,7 +1244,7 @@ internal static class Program
                         updateButton.Bounds.IntersectsWith(closeButton.Bounds))
                         throw new InvalidOperationException(
                             "PC update button missing or overlapping compact settings");
-                    if (settings.AutoScroll || settings.ClientSize.Height > 460)
+                    if (settings.AutoScroll || settings.ClientSize.Height > 400)
                         throw new InvalidOperationException("Global settings layout too tall");
                     using var bitmap = new Bitmap(settings.Width, settings.Height);
                     settings.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));

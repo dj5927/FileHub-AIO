@@ -34,7 +34,9 @@ internal sealed partial class MainForm : Form
     public MainForm(bool minimized, AppConfig? previewConfig = null)
     {
         cfg = previewConfig ?? AppStore.Load();
-        GoogleStartupTrace.Enabled = cfg.GoogleStartupDiagnostics;
+        // Old configuration files may retain this retired opt-in flag.
+        cfg.GoogleStartupDiagnostics = false;
+        GoogleStartupTrace.Enabled = false;
         shellRefresh = new ExplorerRefreshCoalescer(cause =>
         {
             if (shutdownRequested || exiting || IsDisposed || Disposing) return;
@@ -74,7 +76,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.83 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.84 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }

@@ -120,8 +120,9 @@ internal sealed partial class MainForm
                 cfg.Profiles.Clear();
                 cfg.Profiles.AddRange(snapshot.Config.Profiles);
                 cfg.StartWithWindows = snapshot.Config.StartWithWindows;
-                cfg.GoogleStartupDiagnostics = snapshot.Config.GoogleStartupDiagnostics;
-                GoogleStartupTrace.Enabled = cfg.GoogleStartupDiagnostics;
+                // Importing old backups must not re-enable retired diagnostics.
+                cfg.GoogleStartupDiagnostics = false;
+                GoogleStartupTrace.Enabled = false;
                 selectedId = null;
                 RefreshList();
                 // Prevent old timer from auto-connecting immediately after
