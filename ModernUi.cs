@@ -350,7 +350,7 @@ internal sealed partial class MainForm
 
     private void InitializeModernUi(bool minimized)
     {
-        Text = "FileHub AIO v1.3.89  |  PC 드라이브";
+        Text = "FileHub AIO v1.3.90  |  PC 드라이브";
         FormBorderStyle = FormBorderStyle.None;
         ControlBox = false;
         MaximizeBox = false;
@@ -390,7 +390,7 @@ internal sealed partial class MainForm
             headerIcon.Image = badge.ToBitmap();
         } catch { /* A missing icon must never block connection controls. */ }
         header.Controls.Add(headerIcon);
-        var brand = ModernTheme.Label("FileHub AIO  v1.3.89", 9.3f, true);
+        var brand = ModernTheme.Label("FileHub AIO  v1.3.90", 9.3f, true);
         brand.SetBounds(35, 1, 215, 31);
         header.Controls.Add(brand);
         var actions = new FlowLayoutPanel
@@ -425,12 +425,36 @@ internal sealed partial class MainForm
         var body = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4, 2, 4, 0),
             BackColor = ModernTheme.Background };
         root.Controls.Add(body, 0, 1);
-        var bottom = new Panel { Dock = DockStyle.Bottom, Height = 22,
+        // Two independent updates, two lines: WinFsp driver and PC OTA.
+        var bottom = new Panel { Dock = DockStyle.Bottom, Height = 44,
             BackColor = ModernTheme.Background };
+        footerNotices = new Panel {
+            Dock = DockStyle.Right, Width = 0, Height = 44,
+            BackColor = ModernTheme.Background, Visible = false
+        };
+        winFspNotice = new LinkLabel {
+            Text = "", Dock = DockStyle.Top, Height = 21,
+            AutoSize = false, Visible = false,
+            TextAlign = ContentAlignment.MiddleRight,
+            Padding = new Padding(2, 0, 10, 0),
+            LinkColor = Color.FromArgb(255, 159, 98),
+            ActiveLinkColor = Color.White,
+            VisitedLinkColor = Color.FromArgb(255, 159, 98),
+            BackColor = ModernTheme.Background,
+            Font = new Font("Malgun Gothic", 8f, FontStyle.Bold),
+            LinkBehavior = LinkBehavior.HoverUnderline,
+            Cursor = Cursors.Hand
+        };
+        winFspNotice.LinkClicked += (_, _) => ShowSettings();
+        var driverTip = new ToolTip();
+        driverTip.SetToolTip(winFspNotice,
+            "PC 앱 OTA는 WinFsp 드라이버를 자동 교체하지 않습니다.\n" +
+            "열린 파일 저장 → NAS 드라이브 해제 후\n" +
+            "환경 설정 → WinFsp 확인 / 설치를 눌러 수동 설치하세요.");
         updateNotice = new LinkLabel {
             Text = "",
-            Dock = DockStyle.Right,
-            Width = 0,
+            Dock = DockStyle.Bottom,
+            Height = 23,
             AutoSize = false,
             Visible = false,
             TextAlign = ContentAlignment.MiddleRight,
@@ -451,7 +475,9 @@ internal sealed partial class MainForm
         status.TextAlign = ContentAlignment.MiddleLeft;
         status.Padding = new Padding(7, 0, 0, 0);
         bottom.Controls.Add(status);
-        bottom.Controls.Add(updateNotice);
+        footerNotices.Controls.Add(updateNotice);
+        footerNotices.Controls.Add(winFspNotice);
+        bottom.Controls.Add(footerNotices);
         body.Controls.Add(bottom);
         cards.SizeChanged += (_, _) => ResizeModernCards();
         body.Controls.Add(cards);
@@ -460,10 +486,10 @@ internal sealed partial class MainForm
 
         tray = new NotifyIcon
         {
-            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.89",
+            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.90",
             Visible = true, ContextMenuStrip = new ContextMenuStrip()
         };
-        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.89 열기", null, (_, _) => ShowWindow());
+        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.90 열기", null, (_, _) => ShowWindow());
         tray.ContextMenuStrip.Items.Add("모두 연결", null, async (_, _) => await ConnectAll(true));
         tray.ContextMenuStrip.Items.Add("프로그램 종료", null, async (_, _) => await ExitSafely());
         tray.BalloonTipClicked += async (_, _) =>
@@ -496,6 +522,8 @@ internal sealed partial class MainForm
                 await UpdateTransferIndicator();
         };
         RefreshList();
+        RefreshWinFspNotice();
+        Activated += (_, _) => RefreshWinFspNotice();
         Shown += async (_, _) =>
         {
             if (Environment.GetEnvironmentVariable("NASMOUNT_UI_SMOKE") == "1") return;

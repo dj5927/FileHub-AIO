@@ -83,7 +83,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.89 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.90 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -549,7 +549,7 @@ internal sealed partial class MainForm : Form
                 MessageBoxButtons.OK,result.Success?MessageBoxIcon.Information:MessageBoxIcon.Warning);
         }
         catch(Exception ex) { MessageBox.Show("진단 오류: "+ex.Message); }
-        finally {RefreshList();}
+        finally {RefreshList(); RefreshWinFspNotice();}
     }
     async Task CompareExcelRead()
     {

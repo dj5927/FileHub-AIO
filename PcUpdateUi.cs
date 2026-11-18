@@ -8,6 +8,31 @@ internal sealed partial class MainForm
     private bool checkingPcUpdate;
     private PcUpdateService.Candidate? pendingPcRelease;
     private LinkLabel updateNotice = null!;
+    private LinkLabel winFspNotice = null!;
+    private Panel footerNotices = null!;
+
+    private void ResizeFooterNotices()
+    {
+        if (footerNotices is null || footerNotices.IsDisposed) return;
+        // Text tracks the requested visibility even if the form is hidden.
+        bool hasDriver = winFspNotice is not null && winFspNotice.Text.Length > 0;
+        bool hasUpdate = updateNotice is not null && updateNotice.Text.Length > 0;
+        footerNotices.Width = hasDriver ? 470 : hasUpdate ? 280 : 0;
+        footerNotices.Visible = hasDriver || hasUpdate;
+    }
+
+    private void DisplayWinFspNotice(bool installed, Version? installedVersion)
+    {
+        if (winFspNotice is null || winFspNotice.IsDisposed) return;
+        string text = WinFspUpgradePolicy.FooterNotice(installed, installedVersion);
+        winFspNotice.Text = text;
+        winFspNotice.Visible = text.Length > 0;
+        ResizeFooterNotices();
+    }
+
+    private void RefreshWinFspNotice() =>
+        DisplayWinFspNotice(RemoteMount.HasWinFsp,
+            WinFspUpgradePolicy.InstalledVersion());
 
     private void DisplayUpdateNotice(Version? version)
     {
@@ -15,20 +40,42 @@ internal sealed partial class MainForm
         updateNotice.Visible = version is not null;
         updateNotice.Text = version is null ? "" :
             $"● PC 업데이트 있음 v{version}  클릭하여 설치";
-        updateNotice.Width = version is null ? 0 : 254;
-        if (version is not null) updateNotice.BringToFront();
+        ResizeFooterNotices();
     }
 
     internal void VerifyUpdateNoticeForUiTest()
     {
         DisplayUpdateNotice(new Version(1, 3, 86));
         if (!updateNotice.Visible || !updateNotice.Text.Contains("v1.3.86") ||
-            updateNotice.Right != updateNotice.Parent?.ClientSize.Width ||
-            updateNotice.Dock != DockStyle.Right || updateNotice.Width < 200)
+            updateNotice.Right != footerNotices.ClientSize.Width ||
+            footerNotices.Dock != DockStyle.Right ||
+            updateNotice.Dock != DockStyle.Bottom || footerNotices.Width < 250)
             throw new InvalidOperationException("Bottom-right update notification missing");
         DisplayUpdateNotice(null);
-        if (updateNotice.Visible || updateNotice.Width != 0)
+        if (updateNotice.Visible)
             throw new InvalidOperationException("Up-to-date version must not show a notice");
+        DisplayWinFspNotice(true, new Version(2, 2, 26215));
+        if (!winFspNotice.Visible || !winFspNotice.Text.Contains("2.2.26215") ||
+            !winFspNotice.Text.Contains("수동 업데이트 필수") ||
+            TextRenderer.MeasureText(winFspNotice.Text, winFspNotice.Font).Width >
+                footerNotices.ClientSize.Width - 12 ||
+            footerNotices.Width < 400)
+            throw new InvalidOperationException("Outdated WinFsp footer missing");
+        DisplayUpdateNotice(new Version(1, 3, 90));
+        if (!winFspNotice.Visible || !updateNotice.Visible ||
+            updateNotice.Bottom != footerNotices.ClientSize.Height)
+            throw new InvalidOperationException("PC and WinFsp notices must coexist");
+        DisplayWinFspNotice(true, new Version(2, 2, 26286));
+        if (winFspNotice.Visible || !updateNotice.Visible)
+            throw new InvalidOperationException("Current WinFsp must hide only driver notice");
+        DisplayWinFspNotice(true, null);
+        if (!winFspNotice.Visible || !winFspNotice.Text.Contains("11/18"))
+            throw new InvalidOperationException("Unknown WinFsp must show date fallback");
+        if (TextRenderer.MeasureText(winFspNotice.Text, winFspNotice.Font).Width >
+            footerNotices.ClientSize.Width - 12)
+            throw new InvalidOperationException("WinFsp fallback notice text clipped");
+        DisplayUpdateNotice(null);
+        RefreshWinFspNotice();
     }
 
     // Non-blocking startup notification. Only the Windows pc-v* releases

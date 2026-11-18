@@ -48,6 +48,19 @@ internal static class WinFspUpgradePolicy
     internal static bool UpgradeAvailable(Version? installed) =>
         installed is null || installed < PackageVersion;
 
+    // Compare the actual installed DLL build. A calendar date is only a
+    // fallback for machines where the version cannot be read.
+    internal static string FooterNotice(bool installed, Version? installedVersion)
+    {
+        if (!installed)
+            return "● WinFsp 미설치 · 설정에서 WinFsp 확인/설치";
+        if (installedVersion is null)
+            return "● WinFsp 버전 확인 불가 · 11/18 이전 설치자는 수동 업데이트 필수";
+        if (!UpgradeAvailable(installedVersion))
+            return string.Empty;
+        return $"● WinFsp {installedVersion} · 설정에서 WinFsp 확인/설치 수동 업데이트 필수";
+    }
+
     internal static void PolicyTest()
     {
         if (!UpgradeAvailable(null) ||
@@ -58,6 +71,13 @@ internal static class WinFspUpgradePolicy
             InstallerSha256.Length != 64 ||
             !InstallerSha256.All(Uri.IsHexDigit))
             throw new InvalidOperationException("WINFSP_DRIVER_UPGRADE_POLICY_FAILED");
+        if (!FooterNotice(true, new Version(2, 2, 26215)).Contains("수동 업데이트 필수") ||
+            !FooterNotice(true, new Version(2, 2, 26215)).Contains("2.2.26215") ||
+            FooterNotice(true, new Version(2, 2, 26286)) != string.Empty ||
+            FooterNotice(true, new Version(2, 3, 0)) != string.Empty ||
+            !FooterNotice(true, null).Contains("11/18 이전 설치자") ||
+            !FooterNotice(false, null).Contains("미설치"))
+            throw new InvalidOperationException("WINFSP_FOOTER_NOTICE_POLICY_FAILED");
         Console.WriteLine("WINFSP_DRIVER_UPGRADE_POLICY_PASS");
     }
 }
