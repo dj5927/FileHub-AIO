@@ -101,14 +101,55 @@ jobs:
           (Get-FileHash publish/tools/rclone.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content publish/tools/rclone.sha256 -Encoding ascii
           (Get-FileHash publish/tools/rclone-terabox.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content publish/tools/rclone-terabox.sha256 -Encoding ascii
 
+      - name: Check out pinned rclone sources for Google-only engine
+        uses: actions/checkout@v7
+        with:
+          repository: rclone/rclone
+          ref: v1.76.0
+          path: vendor/rclone-source
+          persist-credentials: false
+
+      - name: Install pinned Go toolchain for Google-only engine
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.11'
+          cache: true
+          cache-dependency-path: vendor/rclone-source/go.sum
+
+      - name: Build patched Google async quota engine
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = $env:GITHUB_WORKSPACE
+          $patch = Join-Path $root 'third_party/rclone-1.76.0-filehub-async-quota.patch'
+          Push-Location vendor/rclone-source
+          try {
+            git -c core.autocrlf=false apply --check $patch
+            if ($LASTEXITCODE -ne 0) { throw 'Google quota patch does not apply to rclone v1.76.0' }
+            git -c core.autocrlf=false apply $patch
+            if ($LASTEXITCODE -ne 0) { throw 'Google quota patch application failed' }
+            $env:CGO_ENABLED = '0'
+            go build -tags cmount -trimpath -ldflags '-s -w' -buildvcs=false -o (Join-Path $root 'publish/tools/rclone-filehub-google.exe') .
+            if ($LASTEXITCODE -ne 0) { throw 'Google quota rclone build failed' }
+          }
+          finally { Pop-Location }
+          $googleExe = 'publish/tools/rclone-filehub-google.exe'
+          $expected = 'C6B2742C62E6DE240AE8ECF6DE4384103CD49D9A013B792493C00AB743CBBE21'
+          if ((Get-FileHash $googleExe -Algorithm SHA256).Hash -ne $expected) {
+            throw 'Google quota engine checksum mismatch: refusing unverified binary'
+          }
+          & $googleExe mount --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Google quota engine lacks Windows mount command' }
+
       - name: Build Windows full ZIP
         shell: pwsh
         run: |
           $asset = '${{ steps.version.outputs.asset }}'
-          foreach ($required in @('FileHubAIO.exe','tools/NASMountLockBridge.exe','tools/rclone.exe','tools/rclone-terabox.exe','tools/winfsp-2.1.25156.msi')) {
+          foreach ($required in @('FileHubAIO.exe','tools/NASMountLockBridge.exe','tools/rclone.exe','tools/rclone-filehub-google.exe','tools/rclone-terabox.exe','tools/winfsp-2.1.25156.msi')) {
             if (-not (Test-Path ("publish/" + $required))) { throw "Missing $required" }
           }
           Copy-Item README.md publish/README.md -Force
+          Copy-Item third_party publish/third_party -Recurse -Force
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
           Compress-Archive -Path publish/* -DestinationPath ("release-assets/" + $asset) -CompressionLevel Optimal
           $hash = (Get-FileHash ("release-assets/" + $asset) -Algorithm SHA256).Hash
@@ -117,6 +158,7 @@ jobs:
           ## FileHub AIO PC ${{ steps.version.outputs.tag }}
           - Windows PC 전용 릴리즈 / GitHub OTA 기능 포함
           - SHA-256 검증 후 NAS 드라이브 안전 해제 및 프로그램 업데이트
+          - Google 전용 비동기 실제 용량 캐시 (rclone v1.76.0 FileHub 패치)
           - Android APK와 별도 버전, 별도 릴리즈 태그
           - 실제 사용자 NAS의 다중 PC Office 편집은 시험 검증 후 사용하세요.
           "@ | Set-Content release-assets/RELEASE_NOTES.md -Encoding utf8

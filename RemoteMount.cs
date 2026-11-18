@@ -331,7 +331,9 @@ internal static class RemoteMount
         profile.Protocol == "TeraBox"
             ? (File.Exists(Path.Combine(AppContext.BaseDirectory, "tools", "rclone-terabox.exe"))
                 ? Path.Combine(AppContext.BaseDirectory, "tools", "rclone-terabox.exe") : null)
-            : RclonePath;
+            : profile.Protocol == "GoogleDrive" && GoogleAsyncQuotaEngine.IsAvailable
+                ? GoogleAsyncQuotaEngine.ExecutablePath
+                : RclonePath;
 
     internal static bool HasWinFsp => new[]
     {
@@ -1269,7 +1271,10 @@ internal static class RemoteMount
             foreach (string argument in googlePacerArgs)
                 args.Add(argument);
             var googleExplorerArgs = new List<string>();
-            GoogleExplorerStabilityPolicy.AppendArgs(googleExplorerArgs, p);
+            bool asynchronousQuota = p.Protocol == "GoogleDrive" &&
+                GoogleAsyncQuotaEngine.IsAvailable;
+            GoogleExplorerStabilityPolicy.AppendArgs(
+                googleExplorerArgs, p, asynchronousQuota);
             foreach (string argument in googleExplorerArgs)
                 args.Add(argument);
             if (p.Protocol == "GoogleDrive")
@@ -1388,6 +1393,12 @@ internal static class RemoteMount
             if (p.Protocol == "GoogleDrive")
                 AppStore.Log("GOOGLE_STORED_ACCESS_TOKEN_BEFORE_START expired=" +
                     (GoogleDriveAuth.IsStoredAccessTokenExpired(p)?.ToString() ?? "unknown"));
+            if (asynchronousQuota)
+                psi.Environment["FILEHUB_ASYNC_ABOUT"] = "1";
+            if (p.Protocol == "GoogleDrive")
+                AppStore.Log("GOOGLE_QUOTA_MODE=" +
+                    (asynchronousQuota ? "nonblocking_real_cached" :
+                        "virtual_safe_fallback"));
             process = new Process { StartInfo = psi, EnableRaisingEvents = true };
             var logId = p.Id;
             var startupErrors = new ConcurrentQueue<string>();

@@ -1,11 +1,12 @@
-# FileHub AIO PC v1.3.103 — 현재 포함 엔진·라이브러리 (2026-11-19)
+# FileHub AIO PC v1.3.104 — 현재 포함 엔진·라이브러리 (2026-11-19)
 
-이 표가 현재 v1.3.103 배포본 기준입니다. 아래의 NAS Mount v1.3.78
+이 표가 현재 v1.3.104 배포본 기준입니다. 아래의 NAS Mount v1.3.78
 및 후속 기록은 변경 이력을 보존한 것이며 최신 배포 구성 표가 아닙니다.
 
 | 종류 | 배포/빌드 버전 | 상태 |
 |---|---|---|
 | 일반 rclone | v1.76.0 | 공식 릴리즈 ZIP·EXE SHA-256 고정, 최신 유지 |
+| Google 전용 비동기 용량 rclone | v1.76.0 FileHub 패치 | 공식 rclone을 소스 빌드, WinFsp 포함, EXE SHA-256 고정. 네트워크 용량 요청에서 Google API 동기 호출 제거 |
 | TeraBox rclone-extra | v1.76.0-extra | 확장 ZIP·EXE SHA-256 고정, 최신 유지 |
 | WinFsp MSI | **2.1.25156 (2025 정식판)** | 공식 서명 MSI, SHA-256 고정, RaiDrive와 공유하는 시스템 드라이버 |
 | WinFsp .NET 바인딩 | **2.1.25156** | 포함된 정식 드라이버와 버전 일치 |

@@ -1,0 +1,105 @@
+diff --git a/vfs/vfs.go b/vfs/vfs.go
+index 6c0cb7d..209c451 100644
+--- a/vfs/vfs.go
++++ b/vfs/vfs.go
+@@ -178,19 +178,21 @@ var (
+ 
+ // VFS represents the top level filing system
+ type VFS struct {
+-	f           fs.Fs
+-	ctx         context.Context
+-	root        *Dir
+-	Opt         vfscommon.Options
+-	cache       *vfscache.Cache
+-	cancel      context.CancelFunc
+-	cancelCache context.CancelFunc
+-	usageMu     sync.Mutex
+-	usageTime   time.Time
+-	usage       *fs.Usage
+-	pollMu      sync.Mutex
+-	pollChan    chan time.Duration
+-	inUse       atomic.Int32 // count of number of opens
++	f                 fs.Fs
++	ctx               context.Context
++	root              *Dir
++	Opt               vfscommon.Options
++	cache             *vfscache.Cache
++	cancel            context.CancelFunc
++	cancelCache       context.CancelFunc
++	usageMu           sync.Mutex
++	usageTime         time.Time
++	usage             *fs.Usage
++	usageRefreshing   bool
++	usageRefreshAfter time.Time
++	pollMu            sync.Mutex
++	pollChan          chan time.Duration
++	inUse             atomic.Int32 // count of number of opens
+ }
+ 
+ // Keep track of active VFS keyed on fs.ConfigString(f)
+@@ -701,6 +703,11 @@ const unknownFreeBytes = 1 << 50
+ // This information is cached for the DirCacheTime interval
+ func (vfs *VFS) Statfs() (total, used, free int64) {
+ 	// defer log.Trace("/", "")("total=%d, used=%d, free=%d", &total, &used, &free)
++	if os.Getenv("FILEHUB_ASYNC_ABOUT") == "1" && !vfs.Opt.UsedIsSize {
++		if about := vfs.f.Features().About; about != nil {
++			return vfs.statfsAsyncAbout(about)
++		}
++	}
+ 	vfs.usageMu.Lock()
+ 	defer vfs.usageMu.Unlock()
+ 	total, used, free = -1, -1, -1
+@@ -755,6 +762,53 @@ func (vfs *VFS) Statfs() (total, used, free int64) {
+ 	return
+ }
+ 
++// statfsAsyncAbout returns the last known quota without waiting for the
++// remote API. Explorer frequently calls volume info while traversing files;
++// an uncached synchronous About call can stall every Explorer window.
++// The FileHub launcher opts into this path for its Google-specific engine.
++func (vfs *VFS) statfsAsyncAbout(about func(context.Context) (*fs.Usage, error)) (total, used, free int64) {
++	vfs.usageMu.Lock()
++	if !vfs.usageRefreshing && !time.Now().Before(vfs.usageRefreshAfter) {
++		vfs.usageRefreshing = true
++		vfs.usageRefreshAfter = time.Now().Add(30 * time.Second)
++		go func() {
++			ctx, cancel := context.WithTimeout(vfs.ctx, 12*time.Second)
++			defer cancel()
++			quota, err := about(ctx)
++			vfs.usageMu.Lock()
++			defer vfs.usageMu.Unlock()
++			vfs.usageRefreshing = false
++			if err != nil || quota == nil || quota.Total == nil || quota.Free == nil || quota.Used == nil {
++				vfs.usageRefreshAfter = time.Now().Add(30 * time.Second)
++				fs.Debugf(vfs.f, "Nonblocking quota refresh deferred (previous quota retained)")
++				return
++			}
++			vfs.usage = quota
++			vfs.usageTime = time.Now()
++			vfs.usageRefreshAfter = time.Now().Add(30 * time.Minute)
++			fs.Infof(vfs.f, "FILEHUB_QUOTA_CACHED total=%d used=%d free=%d",
++				*quota.Total, *quota.Used, *quota.Free)
++		}()
++	}
++	total, used, free = -1, -1, -1
++	if quota := vfs.usage; quota != nil {
++		if quota.Total != nil {
++			total = *quota.Total
++		}
++		if quota.Used != nil {
++			used = *quota.Used
++		}
++		if quota.Free != nil {
++			free = *quota.Free
++		}
++	}
++	vfs.usageMu.Unlock()
++	if int64(vfs.Opt.DiskSpaceTotalSize) >= 0 {
++		total = int64(vfs.Opt.DiskSpaceTotalSize)
++	}
++	return fillInMissingSizes(total, used, free, unknownFreeBytes)
++}
++
+ // Remove removes the named file or (empty) directory.
+ func (vfs *VFS) Remove(name string) error {
+ 	node, err := vfs.Stat(name)

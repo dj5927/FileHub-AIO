@@ -4,8 +4,8 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 버전과 업데이트
 
-- PC 버전: v1.3.103, 이후 v1.3.104 / v1.3.105...
-- PC 전용 GitHub 릴리즈 태그: pc-v1.3.103 / pc-v1.3.104 ...
+- PC 버전: v1.3.104, 이후 v1.3.105 / v1.3.106...
+- PC 전용 GitHub 릴리즈 태그: pc-v1.3.104 / pc-v1.3.105 ...
 - Android 버전: v0.1.x — Windows 업데이트와 별개로 운영
 - 프로그램 실행 시 트레이 업데이트 알림 / 환경 설정 → PC 업데이트 확인
 - 새 PC 버전을 받으면 GitHub 릴리즈 ZIP SHA-256 검증 → 사용자의 설치 승인 → 원격 드라이브 안전 해제 → 프로그램 업데이트 후 재실행
@@ -13,7 +13,7 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 설치
 
-GitHub Releases에서 FileHub-AIO-PC-1.3.103-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.103을 설치할 수 있습니다.
+GitHub Releases에서 FileHub-AIO-PC-1.3.104-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.104를 설치할 수 있습니다.
 
 업데이트 설치 전에는 Excel/Word 등 열린 문서를 모두 저장하고 닫아야 합니다. 안전하게 해제하지 못한 NAS 드라이브가 있으면 프로그램 교체를 중단합니다. 이전 버전은 사용자 백업 폴더에 보관합니다.
 
@@ -21,6 +21,7 @@ GitHub Releases에서 FileHub-AIO-PC-1.3.103-win-x64.zip 같은 Windows 전용 Z
 
 - .NET 10 (Windows x64 자체 포함 빌드)
 - rclone v1.76.0: https://github.com/rclone/rclone
+- Google 전용 rclone v1.76.0 FileHub 패치: `third_party/rclone-1.76.0-filehub-async-quota.patch`, MIT 원문 `third_party/RCLONE_LICENSE.txt`
 - rclone-extra v1.76.0-extra (TeraBox): https://github.com/gulp79/rclone-extra
 - WinFsp v2.1.25156 (2025 정식판, 공식 서명 MSI): https://github.com/winfsp/winfsp/releases/tag/v2.1
 
@@ -35,6 +36,47 @@ PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj 
 ## 검증 범위
 
 업데이트 무결성, 버전 필터링, 로컬 WinFsp 저장, 백업/롤백에 대한 자동 검사를 포함합니다. 실제 사용자 NAS의 다중 PC Excel 동시 편집 및 서버별 잠금 호환성은 별도 시험이 필요합니다.
+
+## v1.3.104 Google Drive 실제 용량 표시 (비동기)
+
+- v1.3.103은 Google 원격 About API를 비활성화하므로 Windows
+  탐색기에 실제 용량 대신 1PiB 가상 용량이 나타났습니다.
+- 직접 읽기 전용 Google About 조회로 현재 FileHub W: 계정의
+  **전체 16,106,127,360바이트(15GiB)**, 사용자 파일 등의
+  사용량 및 남은 용량을 확인했습니다. RaiDrive Y:의 5TiB
+  표시값은 별도 계정/요금제/연결 대상의 정보일 수 있으며
+  FileHub W:의 용량으로 복사하지 않습니다.
+- 새 `tools/rclone-filehub-google.exe`는 rclone **v1.76.0의
+  VFS Statfs()만 한정 수정**한 별도 바이너리입니다.
+  `FILEHUB_ASYNC_ABOUT=1` 환경변수에서만 실제 About을
+  별도 고루틴으로 갱신하며, 탐색기의 용량 조회는 네트워크
+  응답을 기다리지 않고 최근 성공한 Total/Used/Free를 즉시
+  반환합니다. 성공 시 약 30분 후, 실패 시 약 30초 후
+  재조회합니다. 실패하면 이전 성공값을 유지합니다.
+- Google 최초 연결 직후에는 일시적으로 가상 용량이 표시될
+  수 있으며, 실제 할당량이 수신되면 Windows 탐색기 알림을
+  한 번 보내 표시를 갱신합니다. 탐색기 F5 시 반복적인
+  Google API 호출을 발생시키지 않습니다.
+- 시작할 때 별도 Google 바이너리의 SHA-256을 검증합니다.
+  손상/누락이면 **기존 공식 rclone으로 자동 폴백**하고
+  `--disable About` 가상 용량 모드로 작동합니다.
+  검증되지 않은 바이너리에서는 동기 Google About을
+  다시 활성화하지 않습니다.
+- **TeraBox·WebDAV 등에는 수정된 엔진을 절대 적용하지
+  않습니다.** 정식 rclone.exe, 테라 확장 엔진,
+  Google VFS 읽기/쓰기 캐시, 정상 종료/업로드 보호는 유지합니다.
+- 공식 Go 1.26.11 Windows/amd64, CGO_ENABLED=0,
+  `go build -tags cmount -trimpath -ldflags "-s -w" -buildvcs=false`
+  방식으로 제작했습니다. 수정 소스 패치와 MIT 고지를
+  `third_party` 폴더에 보존했습니다.
+- 검증: 원본 수정 패치 재적용, SHA-256 검증, Windows 실제
+  **Q: 임시 읽기 전용 마운트**에서 첫 용량 조회 1ms,
+  약 2초 뒤 실제 15GiB/약 14.99GiB 반환 0ms,
+  Q: 정상 제거를 확인했습니다.
+- 기존 프로그램 v1.3.103을 정상 종료한 뒤 새 ZIP을
+  별도 폴더에 풀어서 연결해야 합니다. 기존 Google 인증
+  및 파일은 건드리지 않습니다. 실제 W: 사용 환경에서의
+  장시간 운용은 별도 최종 확인이 필요합니다.
 
 ## v1.3.103 실제 Google W: 네트워크명 및 최초 파일 읽기 지연
 

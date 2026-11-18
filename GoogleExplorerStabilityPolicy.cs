@@ -14,9 +14,13 @@ namespace NASMount;
 /// </summary>
 internal static class GoogleExplorerStabilityPolicy
 {
-    internal static void AppendArgs(ICollection<string> args, NasProfile profile)
+    internal static void AppendArgs(ICollection<string> args, NasProfile profile,
+        bool asynchronousQuota = false)
     {
         if (profile.Protocol != "GoogleDrive") return;
+        // A verified FileHub-owned rclone moves About off Explorer's
+        // synchronous Statfs callback and caches actual Total/Used/Free.
+        if (asynchronousQuota) return;
         args.Add("--disable");
         args.Add("About");
     }
@@ -27,6 +31,12 @@ internal static class GoogleExplorerStabilityPolicy
         AppendArgs(google, new NasProfile { Protocol = "GoogleDrive" });
         if (!google.SequenceEqual(["--disable", "About"]))
             throw new InvalidOperationException("Google About suppression not configured");
+        var realQuota = new List<string>();
+        AppendArgs(realQuota, new NasProfile { Protocol = "GoogleDrive" },
+            asynchronousQuota: true);
+        if (realQuota.Count != 0)
+            throw new InvalidOperationException(
+                "Verified nonblocking quota engine must retain About support");
         foreach (string protocol in new[]
                  { "WebDAV", "SFTP", "FTP", "TeraBox", "MyBox", "OneDrive", "SMB" })
         {
@@ -37,5 +47,6 @@ internal static class GoogleExplorerStabilityPolicy
                     "Google volume workaround leaked into " + protocol);
         }
         Console.WriteLine("GOOGLE_EXPLORER_NO_REMOTE_ABOUT_QUOTA_POLICY_PASS");
+        Console.WriteLine("GOOGLE_CACHED_REAL_ABOUT_QUOTA_POLICY_PASS");
     }
 }

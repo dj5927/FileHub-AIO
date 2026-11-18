@@ -128,6 +128,7 @@ internal static class Program
                 GoogleDriveAuth.ValidationPolicyTest();
                 RemoteMount.GoogleUiTransferPolicyTest();
                 GoogleVfsReadPolicy.SelfTest();
+                GoogleAsyncQuotaEngine.SelfTest();
             }
             catch (Exception ex)
             {

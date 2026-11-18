@@ -63,6 +63,9 @@ internal sealed partial class MainForm : Form
                 foreach (var p in profiles.Where(RemoteMount.UsesNetworkDriveMode))
                     ExplorerDriveIcon.ScheduleNetworkLabelRepair(p);
                 int count = ExplorerDriveIcon.NotifyMountedBatch(profiles);
+                foreach (var google in profiles.Where(p =>
+                    p.Protocol == "GoogleDrive"))
+                    GoogleQuotaPresentation.Schedule(google);
                 AppStore.Log("SHELL_BATCH_PRESENTATION_FINISHED count=" +
                     count + " reason=" + reason);
             }
@@ -84,7 +87,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.103 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.104 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -1250,6 +1253,7 @@ internal sealed partial class MainForm : Form
                     // MountPoints2 registration appears later, retry once
                     // below rather than running synchronous Shell COM twice.
                     ExplorerDriveIcon.NotifyMounted(p, deferGlobalNotify: true);
+                    GoogleQuotaPresentation.Schedule(p);
                 }
                 else
                 {
