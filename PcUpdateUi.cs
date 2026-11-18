@@ -55,8 +55,8 @@ internal sealed partial class MainForm
         if (updateNotice.Visible)
             throw new InvalidOperationException("Up-to-date version must not show a notice");
         DisplayWinFspNotice(true, new Version(2, 2, 26215));
-        if (!winFspNotice.Visible || !winFspNotice.Text.Contains("2.2.26215") ||
-            !winFspNotice.Text.Contains("수동 업데이트 필수") ||
+        if (!winFspNotice.Visible || !winFspNotice.Text.Contains("베타 2.2") ||
+            !winFspNotice.Text.Contains("수동 복구 필요") ||
             TextRenderer.MeasureText(winFspNotice.Text, winFspNotice.Font).Width >
                 footerNotices.ClientSize.Width - 12 ||
             footerNotices.Width < 400)
@@ -65,11 +65,11 @@ internal sealed partial class MainForm
         if (!winFspNotice.Visible || !updateNotice.Visible ||
             updateNotice.Bottom != footerNotices.ClientSize.Height)
             throw new InvalidOperationException("PC and WinFsp notices must coexist");
-        DisplayWinFspNotice(true, new Version(2, 2, 26286));
+        DisplayWinFspNotice(true, new Version(2, 1, 25156));
         if (winFspNotice.Visible || !updateNotice.Visible)
-            throw new InvalidOperationException("Current WinFsp must hide only driver notice");
+            throw new InvalidOperationException("Stable WinFsp must hide only driver notice");
         DisplayWinFspNotice(true, null);
-        if (!winFspNotice.Visible || !winFspNotice.Text.Contains("11/18"))
+        if (!winFspNotice.Visible || !winFspNotice.Text.Contains("버전 확인 불가"))
             throw new InvalidOperationException("Unknown WinFsp must show date fallback");
         if (TextRenderer.MeasureText(winFspNotice.Text, winFspNotice.Font).Width >
             footerNotices.ClientSize.Width - 12)

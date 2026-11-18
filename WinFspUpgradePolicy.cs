@@ -9,10 +9,12 @@ namespace NASMount;
 /// </summary>
 internal static class WinFspUpgradePolicy
 {
-    internal static readonly Version PackageVersion = new(2, 2, 26286);
-    internal const string InstallerFileName = "winfsp-2.2.26286.msi";
+    // Last official non-beta WinFsp release. Do not float to a prerelease:
+    // RaiDrive also uses this system-wide file-system driver.
+    internal static readonly Version PackageVersion = new(2, 1, 25156);
+    internal const string InstallerFileName = "winfsp-2.1.25156.msi";
     internal const string InstallerSha256 =
-        "293FFB9BCC0B625C85079FE85FA77F8FE98170ABA51A02AC9C83D58F6C3B0E2F";
+        "073A70E00F77423E34BED98B86E600DEF93393BA5822204FAC57A29324DB9F7A";
 
     internal static string? InstalledDllPath()
     {
@@ -45,6 +47,9 @@ internal static class WinFspUpgradePolicy
         }
     }
 
+    internal static bool IsKnownBeta(Version? installed) =>
+        installed is not null && installed.Major == 2 && installed.Minor == 2;
+
     internal static bool UpgradeAvailable(Version? installed) =>
         installed is null || installed < PackageVersion;
 
@@ -55,27 +60,34 @@ internal static class WinFspUpgradePolicy
         if (!installed)
             return "● WinFsp 미설치 · 설정에서 WinFsp 확인/설치";
         if (installedVersion is null)
-            return "● WinFsp 버전 확인 불가 · 11/18 이전 설치자는 수동 업데이트 필수";
+            return "● WinFsp 버전 확인 불가 · 설정에서 정식판 설치 상태 확인";
+        if (IsKnownBeta(installedVersion))
+            return "● WinFsp 베타 2.2 감지 · RaiDrive 보호: 수동 복구 필요";
         if (!UpgradeAvailable(installedVersion))
             return string.Empty;
-        return $"● WinFsp {installedVersion} · 설정에서 WinFsp 확인/설치 수동 업데이트 필수";
+        return $"● WinFsp {installedVersion} · 설정에서 정식판 설치 권장";
     }
 
     internal static void PolicyTest()
     {
         if (!UpgradeAvailable(null) ||
-            !UpgradeAvailable(new Version(2, 2, 26215)) ||
+            !UpgradeAvailable(new Version(2, 1, 24255)) ||
+            UpgradeAvailable(new Version(2, 1, 25156)) ||
             UpgradeAvailable(new Version(2, 2, 26286)) ||
             UpgradeAvailable(new Version(2, 3, 0)) ||
             InstallerFileName != $"winfsp-{PackageVersion}.msi" ||
             InstallerSha256.Length != 64 ||
             !InstallerSha256.All(Uri.IsHexDigit))
             throw new InvalidOperationException("WINFSP_DRIVER_UPGRADE_POLICY_FAILED");
-        if (!FooterNotice(true, new Version(2, 2, 26215)).Contains("수동 업데이트 필수") ||
-            !FooterNotice(true, new Version(2, 2, 26215)).Contains("2.2.26215") ||
-            FooterNotice(true, new Version(2, 2, 26286)) != string.Empty ||
+        if (!IsKnownBeta(new Version(2, 2, 26215)) ||
+            !IsKnownBeta(new Version(2, 2, 26286)) ||
+            IsKnownBeta(new Version(2, 1, 25156)) ||
+            !FooterNotice(true, new Version(2, 2, 26215)).Contains("수동 복구 필요") ||
+            !FooterNotice(true, new Version(2, 2, 26286)).Contains("RaiDrive") ||
+            FooterNotice(true, new Version(2, 1, 25156)) != string.Empty ||
             FooterNotice(true, new Version(2, 3, 0)) != string.Empty ||
-            !FooterNotice(true, null).Contains("11/18 이전 설치자") ||
+            !FooterNotice(true, new Version(2, 1, 24255)).Contains("정식판 설치 권장") ||
+            !FooterNotice(true, null).Contains("버전 확인 불가") ||
             !FooterNotice(false, null).Contains("미설치"))
             throw new InvalidOperationException("WINFSP_FOOTER_NOTICE_POLICY_FAILED");
         Console.WriteLine("WINFSP_DRIVER_UPGRADE_POLICY_PASS");

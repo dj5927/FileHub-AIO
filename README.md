@@ -4,8 +4,8 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 버전과 업데이트
 
-- PC 버전: v1.3.90, 이후 v1.3.91 / v1.3.92...
-- PC 전용 GitHub 릴리즈 태그: pc-v1.3.90 / pc-v1.3.91 ...
+- PC 버전: v1.3.91, 이후 v1.3.92 / v1.3.93...
+- PC 전용 GitHub 릴리즈 태그: pc-v1.3.91 / pc-v1.3.92 ...
 - Android 버전: v0.1.x — Windows 업데이트와 별개로 운영
 - 프로그램 실행 시 트레이 업데이트 알림 / 환경 설정 → PC 업데이트 확인
 - 새 PC 버전을 받으면 GitHub 릴리즈 ZIP SHA-256 검증 → 사용자의 설치 승인 → 원격 드라이브 안전 해제 → 프로그램 업데이트 후 재실행
@@ -13,7 +13,7 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 설치
 
-GitHub Releases에서 FileHub-AIO-PC-1.3.90-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 v1.3.83~v1.3.89에서는 PC 업데이트 확인으로 v1.3.90을 설치할 수 있습니다.
+GitHub Releases에서 FileHub-AIO-PC-1.3.91-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 v1.3.83~v1.3.90에서는 PC 업데이트 확인으로 v1.3.91을 설치할 수 있습니다.
 
 업데이트 설치 전에는 Excel/Word 등 열린 문서를 모두 저장하고 닫아야 합니다. 안전하게 해제하지 못한 NAS 드라이브가 있으면 프로그램 교체를 중단합니다. 이전 버전은 사용자 백업 폴더에 보관합니다.
 
@@ -22,7 +22,7 @@ GitHub Releases에서 FileHub-AIO-PC-1.3.90-win-x64.zip 같은 Windows 전용 ZI
 - .NET 10 (Windows x64 자체 포함 빌드)
 - rclone v1.76.0: https://github.com/rclone/rclone
 - rclone-extra v1.76.0-extra (TeraBox): https://github.com/gulp79/rclone-extra
-- WinFsp v2.2.26286 (2026 Beta5, 공식 서명 MSI): https://github.com/winfsp/winfsp/releases/tag/v2.2B5
+- WinFsp v2.1.25156 (2025 정식판, 공식 서명 MSI): https://github.com/winfsp/winfsp/releases/tag/v2.1
 
 GitHub Actions는 공식 릴리즈 파일과 컴파일된 실행 파일의 SHA-256을 검사한 후 Windows 전체 패키지를 작성합니다. 제3자 엔진의 저작권/라이선스는 각 원본 프로젝트에 따르며, WinFsp에서 파생된 예제의 원 저작권 고지를 유지합니다.
 
@@ -63,6 +63,27 @@ PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj 
 - 드라이버가 없으면 설치 안내, 2.2.26286 이상이면 경고를 숨깁니다.
 - 둘째 줄의 기존 노란색 "PC 업데이트 있음" OTA 알림은 그대로 유지합니다. PC 앱 OTA는 Windows 시스템 드라이버를 자동 교체하지 않습니다.
 - 앱 시작, 창 재활성화, WinFsp 설치 종료 후 알림을 새로 읽습니다. 수동 설치 전 Office 파일을 저장하고 NAS 드라이브와 다른 WinFsp 프로그램을 안전하게 해제해야 합니다.
+
+## v1.3.91 WinFsp 정식판 복귀 · RaiDrive 보호 (v1.3.90 안내 대체)
+
+- RaiDrive에서 2026년 WinFsp Beta5 적용 후 동작 오류가 보고되어,
+  FileHub 포함 드라이버를 WinFsp 2025 정식 2.1.25156으로 복귀했습니다.
+  동일 버전의 winfsp.net 2.1.25156을 사용합니다.
+- GitHub 빌드는 공식 서명 MSI의 SHA-256을 검증하며 PC OTA는
+  Windows 시스템 드라이버를 자동 교체하지 않습니다.
+- WinFsp 2.2 Beta가 설치됐다면 FileHub에서 정식판 MSI를 강제
+  덮어쓰지 않습니다. 열린 파일 저장 → FileHub 및 RaiDrive 드라이브
+  안전 해제 → 두 프로그램 및 다른 WinFsp 이용 앱 종료 →
+  Windows 설정의 설치된 앱에서 WinFsp 2026 Beta 수동 제거 →
+  재부팅 → RaiDrive 설치 프로그램으로 복구/재설치 →
+  WinFsp가 없는 경우 FileHub 설정에서 2025 정식판 설치 순서입니다.
+- 주황색 하단 메시지는 2.2 Beta 감지 시
+  "WinFsp 베타 2.2 감지 · RaiDrive 보호: 수동 복구 필요"로 표시됩니다.
+  WinFsp 2.1.25156 정식판에서는 알림을 숨깁니다.
+- WinFsp 2025 정식판에는 2026 베타에서 수정된 CVE-2026-3006 및
+  CVE-2026-7162 보안 패치가 포함되지 않았을 수 있습니다.
+  안정성과 RaiDrive 호환성 우선의 복귀이므로 보안 위험을 인지하고 사용하세요.
+- 실제 RaiDrive 동작과 파일 잠금은 사용자 PC 실기기에서 최종 확인해야 합니다.
 
 ## v1.3.86 Synology 공유 폴더 다중 선택
 

@@ -122,10 +122,12 @@ internal static class ComponentInventory
             (WinFspUpgradePolicy.InstalledVersion()?.ToString() ?? "확인 불가") + "\r\n" +
             "포함된 WinFsp 설치 파일 버전: " +
             WinFspUpgradePolicy.PackageVersion + "\r\n" +
-            "WinFsp 교체 가능 여부: " +
-            (WinFspUpgradePolicy.UpgradeAvailable(WinFspUpgradePolicy.InstalledVersion())
-                ? "새 배포본 있음 (드라이브 해제 후 수동 업그레이드)"
-                : "현재 포함 버전 이상 설치됨") + "\r\n";
+            "WinFsp 설치 안내: " +
+            (WinFspUpgradePolicy.IsKnownBeta(WinFspUpgradePolicy.InstalledVersion())
+                ? "2026 베타 설치됨 - RaiDrive 보호를 위해 수동 제거/재부팅/복구 필요"
+                : WinFspUpgradePolicy.UpgradeAvailable(WinFspUpgradePolicy.InstalledVersion())
+                    ? "WinFsp 2025 정식판 설치 가능 (모든 WinFsp 드라이브 해제 후 사용자 승인)"
+                    : "현재 안정판 이상 설치됨 - 드라이버 변경 안 함") + "\r\n";
     }
 
     internal static void ManifestSelfTest()
@@ -135,7 +137,7 @@ internal static class ComponentInventory
             // Historical embedded upstream inventory retains its original
             // title for integrity checks; this is not the current UI brand.
             "NAS Mount v1.3.78", "rclone-extra", "v1.76.0-extra",
-            StandardVersion, "WinFsp", "2.2.26286",
+            StandardVersion, "WinFsp", "2.1.25156",
             "FluentFTP", "55.1.0", "SSH.NET", "2026.0.1",
             "WebView2", "1.0.4314.35", "MYBOX", "SMB",
             "https://github.com/gulp79/rclone-extra",

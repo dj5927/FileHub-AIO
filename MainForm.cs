@@ -83,7 +83,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.90 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.91 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -833,10 +833,29 @@ internal sealed partial class MainForm : Form
     async Task InstallWinFsp()
     {
         var installed = WinFspUpgradePolicy.InstalledVersion();
+        // MSI is NOT a safe downgrade mechanism for a shared kernel driver.
+        // RaiDrive and other WinFsp consumers may have active mount handles.
+        if (RemoteMount.HasWinFsp && WinFspUpgradePolicy.IsKnownBeta(installed))
+        {
+            MessageBox.Show(this,
+                "현재 WinFsp " + installed + " (2026 Beta)가 설치돼 있습니다.\n" +
+                "RaiDrive도 이 시스템 드라이버를 사용하므로 FileHub에서 " +
+                "정식판 MSI를 덮어 설치하지 않습니다.\n\n" +
+                "1. RaiDrive와 FileHub의 열린 파일을 저장하고 모든 드라이브 연결을 해제\n" +
+                "2. 두 프로그램과 다른 WinFsp 사용 프로그램을 완전히 종료\n" +
+                "3. Windows 설정 → 앱 → 설치된 앱에서 WinFsp 2026 Beta 제거\n" +
+                "4. Windows 재시작 후 RaiDrive 설치 프로그램으로 복구/재설치\n" +
+                "5. WinFsp가 없거나 정식판이 필요하면 FileHub 설정에서 다시 설치\n\n" +
+                "시스템 드라이버 제거·재부팅은 자동으로 실행하지 않습니다.",
+                "RaiDrive 보호 · WinFsp 베타 수동 복구 안내",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
         if(RemoteMount.HasWinFsp && !WinFspUpgradePolicy.UpgradeAvailable(installed))
         {
             MessageBox.Show("WinFsp " + installed + "이(가) 설치되어 있으며 " +
-                "현재 패키지 버전과 같거나 더 최신입니다.", "FileHub AIO");
+                "FileHub 포함 안정판(2025)과 같거나 더 최신입니다.\n" +
+                "다른 앱의 드라이버를 임의로 교체하지 않았습니다.", "FileHub AIO");
             return;
         }
         if(RemoteMount.HasWinFsp)
@@ -852,8 +871,8 @@ internal sealed partial class MainForm : Form
             }
             if(MessageBox.Show(this,
                 "기존 WinFsp: " + (installed?.ToString() ?? "버전 확인 불가") + "\n" +
-                "포함된 WinFsp: " + WinFspUpgradePolicy.PackageVersion + " (Beta5)\n\n" +
-                "새 버전에는 파일 잠금·캐시 관련 수정이 포함되어 있습니다.\n" +
+                "포함된 WinFsp: " + WinFspUpgradePolicy.PackageVersion + " (2025 정식판)\n\n" +
+                "RaiDrive 등 다른 WinFsp 사용 프로그램도 설치에 영향을 받습니다.\n" +
                 "진행 전 다른 WinFsp 프로그램의 마운트도 해제하세요.\n" +
                 "드라이버 업데이트 후 재부팅이 필요할 수 있습니다.\n\n" +
                 "공식 서명 MSI를 설치할까요?",

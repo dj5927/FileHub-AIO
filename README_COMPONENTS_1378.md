@@ -1,14 +1,14 @@
-# FileHub AIO PC v1.3.90 — 현재 포함 엔진·라이브러리 (2026-11-18)
+# FileHub AIO PC v1.3.91 — 현재 포함 엔진·라이브러리 (2026-11-18)
 
-이 표가 현재 v1.3.90 배포본 기준입니다. 아래의 NAS Mount v1.3.78
+이 표가 현재 v1.3.91 배포본 기준입니다. 아래의 NAS Mount v1.3.78
 및 후속 기록은 변경 이력을 보존한 것이며 최신 배포 구성 표가 아닙니다.
 
 | 종류 | 배포/빌드 버전 | 상태 |
 |---|---|---|
 | 일반 rclone | v1.76.0 | 공식 릴리즈 ZIP·EXE SHA-256 고정, 최신 유지 |
 | TeraBox rclone-extra | v1.76.0-extra | 확장 ZIP·EXE SHA-256 고정, 최신 유지 |
-| WinFsp MSI | **2.2.26286 (2026 Beta5)** | 공식 서명 MSI, SHA-256 고정, 업그레이드는 사용자 승인·드라이브 해제 후 실행 |
-| WinFsp .NET 바인딩 | **2.2.26286** | WinFsp 드라이버와 버전 계열 일치 |
+| WinFsp MSI | **2.1.25156 (2025 정식판)** | 공식 서명 MSI, SHA-256 고정, RaiDrive와 공유하는 시스템 드라이버 |
+| WinFsp .NET 바인딩 | **2.1.25156** | 포함된 정식 드라이버와 버전 일치 |
 | SSH.NET | **2026.0.1** | 메인 및 LockBridge 동일 |
 | Microsoft Edge WebView2 SDK | **1.0.4314.35** | TeraBox 계정 로그인 창 |
 | FluentFTP | 55.1.0 | 공식 최신 유지 |
@@ -19,6 +19,11 @@ NuGet 버전은 루트의 Directory.Packages.props로 중앙 관리합니다.
 Dependabot은 매주 PC 전용 의존성 업데이트 PR/커밋을 자동으로 생성합니다.
 WinFsp .NET과 설치 MSI는 반드시 함께 검증해야 하므로 자동 병합 대상에서
 제외했습니다. rclone·확장 엔진 역시 해시 검증 없는 자동 교체를 허용하지 않습니다.
+WinFsp 2.2 Beta가 이미 설치된 경우 FileHub에서 강제 다운그레이드하지 않습니다.
+RaiDrive를 포함한 모든 WinFsp 드라이브를 안전하게 해제하고 두 앱을 종료한 후,
+Windows 앱 관리에서 Beta를 수동 제거/재부팅하고 RaiDrive를 복구해야 합니다.
+WinFsp 2025 정식판에는 Beta에서 수정된 보안 문제(CVE-2026-3006 및
+CVE-2026-7162)가 남아 있을 수 있으니 신뢰할 수 없는 환경에서는 주의하세요.
 GitHub Dependabot 설정은 기본 브랜치 main의 .github/dependabot.yml에
 등록해야 PC용 pc/windows 브랜치 PR이 실제로 생성됩니다.
 
