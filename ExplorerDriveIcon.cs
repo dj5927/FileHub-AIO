@@ -383,6 +383,7 @@ internal static class ExplorerDriveIcon
             Registry.CurrentUser.DeleteSubKeyTree(qaRoot,
                 throwOnMissingSubKey: false);
         }
+        Console.WriteLine("WEBDAV_LOCKBRIDGE_OWNED_UNC_LABEL_POLICY_PASS");
         Console.WriteLine("EXPLORER_CLOUD_LABEL_MYBOX_ONEDRIVE_POLICY_PASS");
     }
 

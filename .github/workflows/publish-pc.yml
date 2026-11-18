@@ -155,6 +155,16 @@ jobs:
             throw 'Packaged Google engine integrity preflight failed: ' + $output
           }
 
+      - name: Verify WinFsp WebDAV LockBridge labels and existing cloud names
+        shell: pwsh
+        run: |
+          $output = & ./publish/FileHubAIO.exe --explorer-label-policy-test 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or
+              $output -notmatch 'WEBDAV_LOCKBRIDGE_OWNED_UNC_LABEL_POLICY_PASS' -or
+              $output -notmatch 'EXPLORER_CLOUD_LABEL_MYBOX_ONEDRIVE_POLICY_PASS') {
+            throw 'WinFsp network-label regression: ' + $output
+          }
+
       - name: Build Windows full ZIP
         shell: pwsh
         run: |
