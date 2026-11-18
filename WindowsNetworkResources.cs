@@ -19,7 +19,7 @@ internal static class WindowsNetworkResources
     private const int MoreData = 234;
 
     private static readonly Regex Ours = new(
-        @"^\\\\NASMount-([a-f0-9]{8})\\",
+        @"^\\\\NASMount-([a-f0-9]{8})(?:-[a-f0-9]{8})?\\",
         RegexOptions.IgnoreCase | RegexOptions.Compiled |
         RegexOptions.CultureInvariant);
 
@@ -131,9 +131,13 @@ internal static class WindowsNetworkResources
     {
         var allowed = new Entry(Remembered, "", @"\\NASMount-af7212e7\OldCloud",
             "WinFsp");
+        var session = new Entry(Remembered, "",
+            @"\\NASMount-af7212e7-937c6f96\OldCloud", "WinFsp");
         var other = new Entry(Remembered, "", @"\\OtherProduct\OldCloud",
             "Other");
-        if (allowed.NasMountId != "af7212e7" || other.NasMountId is not null)
+        if (allowed.NasMountId != "af7212e7" ||
+            session.NasMountId != "af7212e7" ||
+            other.NasMountId is not null)
             throw new InvalidOperationException(
                 "RESOURCE_REMEMBERED must match exactly our NASMount UNC");
         foreach (int scope in new[] { Connected, Remembered })

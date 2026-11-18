@@ -584,6 +584,8 @@ internal static class Program
         {
             try
             {
+                LegacyNetworkGhostCleaner.SessionNamePolicyTest();
+                OrphanRcloneRecovery.OwnershipPolicyTest();
                 NetworkDriveResidueCleaner.PolicySelfTest();
                 NetworkDriveResidueCleaner.RegistryIsolationSelfTest();
             }

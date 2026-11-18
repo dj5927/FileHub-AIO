@@ -84,7 +84,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.97 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.98 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -1153,7 +1153,25 @@ internal sealed partial class MainForm : Form
                 {
                     ExplorerDriveIcon.Restore(p);
                     if (p.Protocol != "SMB")
+                    {
+                        try
+                        {
+                            var ghosts = await CleanupDisconnectedShellGhostsAsync(
+                                p.Id.ToString("N")[..8])
+                                .WaitAsync(TimeSpan.FromSeconds(20));
+                            AppStore.Log("DISCONNECT_SHELL_GHOST_SWEEP id=" + p.Id +
+                                " removed=" + ghosts.RemovedRecords +
+                                " cancelled=" + ghosts.CancelledMappings +
+                                " preserved=" + ghosts.Preserved +
+                                " still=" + ghosts.StillShown);
+                        }
+                        catch (Exception ex)
+                        {
+                            AppStore.Log("DISCONNECT_SHELL_GHOST_SWEEP_DEFERRED id=" +
+                                p.Id + " type=" + ex.GetType().Name);
+                        }
                         PostExplorerUpdate(p, mounted: false);
+                    }
                     else
                         ExplorerDriveIcon.NotifyComputerChanged();
                 }
@@ -1380,6 +1398,33 @@ internal sealed partial class MainForm : Form
         finally { shutdownRequested = prior; }
     }
 
+    // Use a dedicated Shell STA: Explorer's network namespace is COM-based.
+    // The worker never terminates a backend; the cleaner preserves active
+    // WinFsp, MPR, rclone, and other vendors' drive-letter mappings.
+    private Task<LegacyNetworkGhostCleaner.Summary> CleanupDisconnectedShellGhostsAsync(
+        string? onlyGuid8 = null)
+    {
+        var completion = new TaskCompletionSource<LegacyNetworkGhostCleaner.Summary>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var profiles = cfg.Profiles.ToArray();
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                completion.TrySetResult(LegacyNetworkGhostCleaner.Cleanup(
+                    profiles, onlyGuid8, includeHistorical: false));
+            }
+            catch (Exception ex) { completion.TrySetException(ex); }
+        })
+        {
+            IsBackground = true,
+            Name = "FileHub.DisconnectedShellGhostCleanup"
+        };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        return completion.Task;
+    }
+
     async Task CheckStartupRemnants()
     {
         var startupCleanupTimer = Stopwatch.StartNew();
@@ -1395,6 +1440,21 @@ internal sealed partial class MainForm : Form
         foreach (var p in cfg.Profiles)
         {
             if (p.Protocol == "SMB" || RemoteMount.HasManagedRecord(p)) continue;
+            if (p.Protocol == "GoogleDrive" &&
+                RemoteMount.DriveLetterExists(p.Letter) &&
+                !RemoteMount.HasVerifiedOtherVendorMapping(p))
+            {
+                var orphan = await OrphanRcloneRecovery.TryRecoverAsync(p);
+                if (orphan is { } recovery)
+                {
+                    AppStore.Log("STARTUP_OLD_GOOGLE_SAFE_RECOVERY id=" + p.Id +
+                        " success=" + recovery.Success +
+                        " letter=" + p.Letter);
+                    if (recovery.Success) changedShell = true;
+                    // An unverified or busy process stays mounted and will
+                    // be shown as a collision below. Never kill it.
+                }
+            }
             // A red-X persistent map still appears in GetLogicalDrives().
             // Earlier versions treated mere letter existence as an active
             // drive and skipped cleanup forever. Verify disconnected state,
@@ -1448,6 +1508,25 @@ internal sealed partial class MainForm : Form
                 NetworkDriveResidueCleaner.CleanupDisconnectedStartupHistory(p);
                 changedShell = true;
             }
+        }
+        // A session-named WinFsp network place may remain visible as a red-X
+        // tile even after its old HKCU MountPoints2 key was deleted. Inspect
+        // CURRENT Shell/provider evidence, not 30 days of historical logs.
+        try
+        {
+            var ghosts = await CleanupDisconnectedShellGhostsAsync()
+                .WaitAsync(TimeSpan.FromSeconds(25));
+            AppStore.Log("STARTUP_DISCONNECTED_SHELL_GHOST_SWEEP found=" +
+                ghosts.Found + " removed=" + ghosts.RemovedRecords +
+                " cancelled=" + ghosts.CancelledMappings +
+                " preserved=" + ghosts.Preserved + " still=" + ghosts.StillShown);
+            changedShell |= ghosts.RemovedRecords > 0 ||
+                ghosts.CancelledMappings > 0;
+        }
+        catch (Exception ex)
+        {
+            AppStore.Log("STARTUP_DISCONNECTED_SHELL_GHOST_SWEEP_DEFERRED " +
+                ex.GetType().Name);
         }
         // A normal clean launch has no stale mapped drive to remove.
         // Avoid flashing the entire Explorer desktop before any mount exists.
@@ -1646,75 +1725,14 @@ internal sealed partial class MainForm : Form
         Process.Start(new ProcessStartInfo("explorer.exe",folder){UseShellExecute=true});
     }
 
-    // This deliberately does NOT wait for Perform's profile gate: a hung
-    // WinFsp/native WebDAV connection can own that semaphore indefinitely.
-    // Only the explicit emergency menu may stop owned child processes.
-    // A user pressing Exit is not asking to keep the GUI open until every
-    // broken WinFsp call recovers. Failed NEVER-mounted connections are
-    // forcibly stopped, without an upload warning. A previously mounted
-    // session gets a short graceful disconnect; if it does not respond,
-    // leave its child + cache intact and always exit the GUI.
+    // The tray's normal Exit MUST NOT abandon an rclone backend after an
+    // arbitrary 8-second overall deadline. Google root enumeration can take
+    // longer than that; abandoning its child leaves W: mounted without a GUI
+    // and causes a collision on the next launch. Use the existing verified
+    // shutdown path, which refuses to exit when a mount is unsafe to release.
     private async Task ExitProgramFast()
     {
-        if (shutdownRequested || exiting) return;
-        shutdownRequested = true;
-        timer.Stop();
-        uploadStatusTimer.Stop();
-        status.Text = "프로그램 종료 중...";
-        var profiles = cfg.Profiles.Where(p => p.Protocol != "SMB").ToArray();
-        foreach (var p in profiles)
-            if (preparingConnections.Contains(p.Id) &&
-                !RemoteMount.IsMounted(p))
-                RemoteMount.RequestEmergency(p.Id);
-        try
-        {
-            var stops = profiles.Select(async p =>
-            {
-                if (RemoteMount.FailedBeforeFirstMount(p))
-                {
-                    var force = await Task.Run(() =>
-                        RemoteMount.StopFailedBeforeFirstMountAsync(p));
-                    AppStore.Log("EXIT_FAILED_CONNECT_FORCE_STOP id=" + p.Id +
-                        " success=" + force.Success);
-                    return;
-                }
-                if (!RemoteMount.HasManagedRecord(p)) return;
-                var gate = GateFor(p);
-                if (!await gate.WaitAsync(TimeSpan.FromMilliseconds(350)))
-                {
-                    AppStore.Log("EXIT_BUSY_MOUNT_PRESERVED id=" + p.Id);
-                    return;
-                }
-                try
-                {
-                    var outcome = await Task.Run(() => RemoteMount.Disconnect(p));
-                    AppStore.Log("EXIT_HEALTHY_MOUNT_SAFE_STOP id=" + p.Id +
-                        " success=" + outcome.Success);
-                    // Avoid a potentially blocking Explorer Shell COM call
-                    // on the UI thread during the guaranteed Exit path.
-                }
-                catch (Exception ex)
-                {
-                    AppStore.Log("EXIT_MOUNT_RECOVERY_DEFERRED id=" + p.Id +
-                        " error=" + ex.GetType().Name);
-                }
-                finally { gate.Release(); }
-            }).ToArray();
-            // Whole program budget, not one 8-second wait per drive.
-            await Task.WhenAll(stops).WaitAsync(TimeSpan.FromSeconds(8));
-        }
-        catch (Exception ex)
-        {
-            AppStore.Log("EXIT_FAST_UNCERTAIN_BACKENDS_PRESERVED type=" +
-                ex.GetType().Name);
-        }
-        finally
-        {
-            AppStore.Log("EXIT_FAST_GUI_TERMINATE reason=user_exit");
-            exiting = true;
-            tray.Visible = false;
-            Environment.Exit(0);
-        }
+        await ExitSafely();
     }
 
     async Task ExitSafely(PcUpdateService.Staged? installUpdate = null)
@@ -1812,6 +1830,29 @@ internal sealed partial class MainForm : Form
                     "FileHub AIO 종료 보류", MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
                 return;
+            }
+            // All owned backends are now safely stopped. Remove their
+            // session-suffixed disconnected Shell entries BEFORE closing
+            // the UI, so the user does not inherit red-X network tiles.
+            try
+            {
+                var ghosts = await CleanupDisconnectedShellGhostsAsync()
+                    .WaitAsync(TimeSpan.FromSeconds(20));
+                AppStore.Log("SAFE_EXIT_SHELL_GHOST_SWEEP found=" + ghosts.Found +
+                    " removed=" + ghosts.RemovedRecords +
+                    " cancelled=" + ghosts.CancelledMappings +
+                    " preserved=" + ghosts.Preserved +
+                    " still=" + ghosts.StillShown);
+                if (ghosts.RemovedRecords > 0 || ghosts.CancelledMappings > 0)
+                {
+                    ExplorerDriveIcon.NotifyComputerChanged();
+                    ExplorerLiveViewRefresh.RefreshThisPc("SAFE_EXIT_GHOST_CLEAN");
+                }
+            }
+            catch (Exception ex)
+            {
+                AppStore.Log("SAFE_EXIT_SHELL_GHOST_SWEEP_DEFERRED type=" +
+                    ex.GetType().Name);
             }
             // We do not silently kill older rclone/WinFsp processes from
             // another FileHub AIO instance. They may contain dirty VFS data.

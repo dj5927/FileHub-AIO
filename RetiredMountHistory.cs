@@ -16,7 +16,7 @@ internal static class RetiredMountHistory
     private static readonly Regex OwnedId = new(
         // Only server IDs from a real UNC name: never infer ownership from
         // "OLD_GHOST_GUID_CLEANUP_FINISHED" or synthetic policy-test IDs.
-        @"(?i)\\{2}NASMount-([a-f0-9]{8})\\",
+        @"(?i)\\{2}NASMount-([a-f0-9]{8})(?:-[a-f0-9]{8})?\\",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     // Only own servers, no arbitrary UNC names or drive letters.
@@ -73,7 +73,7 @@ internal static class RetiredMountHistory
 
     internal static void PolicyTest()
     {
-        const string sample = "old \\\\NASMount-af7212e7\\Drive " +
+        const string sample = "old \\\\NASMount-af7212e7-937c6f96\\Drive " +
             "live \\\\NASMount-e10ab8ec\\Another " +
             "OLD_GHOST_GUID_CLEANUP_FINISHED 1350aaaa " +
             "also \\\\RaiDrive-12345678\\Share " +

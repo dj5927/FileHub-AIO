@@ -20,13 +20,13 @@ internal static class LegacyNetworkGhostCleaner
     private const uint ConnectUpdateProfile = 1;
     private const int ErrorNotConnected = 2250;
     private static readonly Regex OwnedUnc = new(
-        @"^\\\\NASMount-([0-9a-fA-F]{8})\\",
+        @"^\\\\NASMount-([0-9a-fA-F]{8})(?:-[0-9a-fA-F]{8})?\\",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private static readonly Regex OwnedMountPoint = new(
-        @"^##NASMount-([0-9a-fA-F]{8})#",
+        @"^##NASMount-([0-9a-fA-F]{8})(?:-[0-9a-fA-F]{8})?#",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private static readonly Regex VisibleName = new(
-        @"(?:\\\\|\\)NASMount-([0-9a-fA-F]{8})(?:\\|\))",
+        @"(?:\\\\|\\)NASMount-([0-9a-fA-F]{8})(?:-[0-9a-fA-F]{8})?(?:\\|\))",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     [DllImport("mpr.dll", EntryPoint = "WNetGetConnectionW", CharSet = CharSet.Unicode)]
@@ -186,8 +186,23 @@ internal static class LegacyNetworkGhostCleaner
         }
     }
 
+    internal static void SessionNamePolicyTest()
+    {
+        const string guid8 = "a89b80a7";
+        if (Prefix(@"\\NASMount-a89b80a7-937c6f96\TeraBox") != guid8 ||
+            Prefix(@"\\NASMount-a89b80a7\TeraBox") != guid8 ||
+            !OwnedMountPoint.IsMatch("##NASMount-a89b80a7-937c6f96#TeraBox") ||
+            !OwnedMountPoint.IsMatch("##NASMount-a89b80a7#TeraBox") ||
+            !VisibleName.IsMatch(@"Ter(\\NASMount-a89b80a7-937c6f96)(V:)") ||
+            Prefix(@"\\Other-12345678\TeraBox") is not null ||
+            OwnedMountPoint.IsMatch("##NASMount-a89b80a7-unsafe#TeraBox"))
+            throw new InvalidOperationException(
+                "Session-suffixed owned network ghosts must be recognized precisely");
+        Console.WriteLine("NETWORK_SESSION_GHOST_PATTERN_PASS");
+    }
+
     internal static Summary Cleanup(IReadOnlyCollection<NasProfile> profiles,
-        string? onlyGuid8 = null)
+        string? onlyGuid8 = null, bool includeHistorical = true)
     {
         var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         using (var points = Registry.CurrentUser.OpenSubKey(MountPoints))
@@ -213,7 +228,9 @@ internal static class LegacyNetworkGhostCleaner
         // Recover our OWN old server IDs from bounded local NASMount logs.
         // This is discovery, never proof of disconnection: preserve all
         // active-process, network-provider and WinFsp safety gates below.
-        var historical = RetiredMountHistory.ScanRecentLocalLogs();
+        var historical = includeHistorical
+            ? RetiredMountHistory.ScanRecentLocalLogs()
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         found.UnionWith(historical);
         AppStore.Log("OLD_GHOST_HISTORICAL_ID_SCAN count=" + historical.Count +
             " totalCandidates=" + found.Count);
@@ -408,17 +425,17 @@ internal static class LegacyNetworkGhostCleaner
             var oldUncs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (string key in HistoryKeysFor(id))
             {
-                string prefix = "##NASMount-" + id + "#";
-                if (!key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                if (!OwnedMountPoint.IsMatch(key))
                     continue;
-                string suffix = key[prefix.Length..];
+                // Preserve the complete session-suffixed WinFsp server name.
+                // Red-X history uses NASMount-GUID8-SESSION8, not just GUID8.
+                string suffix = key[2..];
                 if (suffix.Length == 0 || suffix.Length > 200 ||
                     suffix.Contains("..", StringComparison.Ordinal) ||
                     suffix.Contains(':') || suffix.Contains('/') ||
                     suffix.Contains('\r') || suffix.Contains('\n'))
                     continue;
-                string unc = @"\\NASMount-" + id + "\\" +
-                    suffix.Replace('#', '\\');
+                string unc = @"\\" + suffix.Replace('#', '\\');
                 oldUncs.Add(unc);
             }
             // Explorer can remember a full UNC PIDL even after the
