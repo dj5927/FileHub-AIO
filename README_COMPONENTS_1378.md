@@ -1,3 +1,29 @@
+# FileHub AIO PC v1.3.89 — 현재 포함 엔진·라이브러리 (2026-11-18)
+
+이 표가 현재 v1.3.89 배포본 기준입니다. 아래의 NAS Mount v1.3.78
+및 후속 기록은 변경 이력을 보존한 것이며 최신 배포 구성 표가 아닙니다.
+
+| 종류 | 배포/빌드 버전 | 상태 |
+|---|---|---|
+| 일반 rclone | v1.76.0 | 공식 릴리즈 ZIP·EXE SHA-256 고정, 최신 유지 |
+| TeraBox rclone-extra | v1.76.0-extra | 확장 ZIP·EXE SHA-256 고정, 최신 유지 |
+| WinFsp MSI | **2.2.26286 (2026 Beta5)** | 공식 서명 MSI, SHA-256 고정, 업그레이드는 사용자 승인·드라이브 해제 후 실행 |
+| WinFsp .NET 바인딩 | **2.2.26286** | WinFsp 드라이버와 버전 계열 일치 |
+| SSH.NET | **2026.0.1** | 메인 및 LockBridge 동일 |
+| Microsoft Edge WebView2 SDK | **1.0.4314.35** | TeraBox 계정 로그인 창 |
+| FluentFTP | 55.1.0 | 공식 최신 유지 |
+| Microsoft .NET | net10.0-windows | 자체 포함 최신 .NET 10 패치 SDK 빌드 |
+| GitHub Actions | checkout v7 / setup-dotnet v6 | 새 빌드 Action 버전 |
+
+NuGet 버전은 루트의 Directory.Packages.props로 중앙 관리합니다.
+Dependabot은 매주 PC 전용 의존성 업데이트 PR/커밋을 자동으로 생성합니다.
+WinFsp .NET과 설치 MSI는 반드시 함께 검증해야 하므로 자동 병합 대상에서
+제외했습니다. rclone·확장 엔진 역시 해시 검증 없는 자동 교체를 허용하지 않습니다.
+GitHub Dependabot 설정은 기본 브랜치 main의 .github/dependabot.yml에
+등록해야 PC용 pc/windows 브랜치 PR이 실제로 생성됩니다.
+
+## 이전 변경 이력 (당시 배포 기준)
+
 # NAS Mount v1.3.78 — 사용 엔진 / 라이브러리 / 확장 백엔드
 
 기준일: 2026-11-11
@@ -76,10 +102,10 @@
 
 ## v1.3.73 Office filename case preservation
 
-- Local Excel Save() reproduction with WinFsp lock bridge: LabActual.xlsx changed to LABACTUAL.XLSX on remote server prior to fix, while direct rclone mount retained LabActual.xlsx. This is an ACTUAL server filename case mutation, not only Explorer display. 
-- On existing workbook backup-rename, the bridge captures the real on-disk filename spelling before the temporary rename; on the atomic temp-to-final step, it uses the saved original exact spelling. No extra remote writer or forced rename after upload is introduced. 
-- For brand-new Excel temp-to-document saves without a previous name, Office extensions are written in lowercase; unrelated file types are untouched. Intentionally uppercase extensions on existing workbooks are retained. 
-- Auto-refresh notification mapping is unchanged. 
+- Local Excel Save() reproduction with WinFsp lock bridge: LabActual.xlsx changed to LABACTUAL.XLSX on remote server prior to fix, while direct rclone mount retained LabActual.xlsx. This is an ACTUAL server filename case mutation, not only Explorer display.
+- On existing workbook backup-rename, the bridge captures the real on-disk filename spelling before the temporary rename; on the atomic temp-to-final step, it uses the saved original exact spelling. No extra remote writer or forced rename after upload is introduced.
+- For brand-new Excel temp-to-document saves without a previous name, Office extensions are written in lowercase; unrelated file types are untouched. Intentionally uppercase extensions on existing workbooks are retained.
+- Auto-refresh notification mapping is unchanged.
 - Verified isolated loopback NAS with real Excel COM: prior failed (server LABACTUAL.XLSX); fixed Save() server LabActual.xlsx, SaveAs() NewCase.xlsx, legacy XLS LabActual.xls; workbook bytes confirmed; bridge safety tests 5/5. Actual two-PC concurrent Office editing requires separate field verification.
 
 ## v1.3.74 - Startup performance and Explorer flicker analysis

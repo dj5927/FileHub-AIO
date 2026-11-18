@@ -118,7 +118,14 @@ internal static class ComponentInventory
             "현재 .NET 런타임: " + Environment.Version + "\r\n" +
             "WinFsp 드라이버 상태: " +
             (RemoteMount.HasWinFsp ? "설치 감지" : "설치 미감지") + "\r\n" +
-            "※ 실제 설치된 WinFsp 버전은 드라이버 관리 화면에서 별도 확인.\r\n";
+            "실제 설치된 WinFsp 파일 버전: " +
+            (WinFspUpgradePolicy.InstalledVersion()?.ToString() ?? "확인 불가") + "\r\n" +
+            "포함된 WinFsp 설치 파일 버전: " +
+            WinFspUpgradePolicy.PackageVersion + "\r\n" +
+            "WinFsp 교체 가능 여부: " +
+            (WinFspUpgradePolicy.UpgradeAvailable(WinFspUpgradePolicy.InstalledVersion())
+                ? "새 배포본 있음 (드라이브 해제 후 수동 업그레이드)"
+                : "현재 포함 버전 이상 설치됨") + "\r\n";
     }
 
     internal static void ManifestSelfTest()
@@ -128,9 +135,9 @@ internal static class ComponentInventory
             // Historical embedded upstream inventory retains its original
             // title for integrity checks; this is not the current UI brand.
             "NAS Mount v1.3.78", "rclone-extra", "v1.76.0-extra",
-            StandardVersion, "WinFsp", "2.2.26215",
-            "FluentFTP", "55.1.0", "SSH.NET", "2026.0.0",
-            "WebView2", "1.0.3800.47", "MYBOX", "SMB",
+            StandardVersion, "WinFsp", "2.2.26286",
+            "FluentFTP", "55.1.0", "SSH.NET", "2026.0.1",
+            "WebView2", "1.0.4314.35", "MYBOX", "SMB",
             "https://github.com/gulp79/rclone-extra",
             "https://github.com/rclone/rclone/releases/tag/v1.76.0",
             StandardSha256, StandardReleaseZipSha256,

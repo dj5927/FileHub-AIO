@@ -18,10 +18,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Check out Windows PC sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install .NET 10
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
@@ -87,7 +87,7 @@ jobs:
           }
           $regular = FetchVerified 'https://github.com/rclone/rclone/releases/download/v1.76.0/rclone-v1.76.0-windows-amd64.zip' 'rclone.zip' '8B4FD2737ADE4E70C057EF4A49DEB7CFFE94B0FB9D7587C189D149823F21A1DC'
           $extra = FetchVerified 'https://github.com/gulp79/rclone-extra/releases/download/v1.76.0-extra/rclone-windows-amd64.zip' 'rclone-extra.zip' 'A9BB4C6F30E7C6F73ABA05D9EA3355C0C540E7ADD2E10480A7C976516DCD2D37'
-          $msi = FetchVerified 'https://github.com/winfsp/winfsp/releases/download/v2.2B4/winfsp-2.2.26215.msi' 'winfsp-2.2.26215.msi' '2ECB5C89405488A95BBD8A01875E02C48534FD37BBDFD84488F7590464D65944'
+          $msi = FetchVerified 'https://github.com/winfsp/winfsp/releases/download/v2.2B5/winfsp-2.2.26286.msi' 'winfsp-2.2.26286.msi' '293FFB9BCC0B625C85079FE85FA77F8FE98170ABA51A02AC9C83D58F6C3B0E2F'
           Expand-Archive $regular -DestinationPath vendor/rclone -Force
           Expand-Archive $extra -DestinationPath vendor/rclone-extra -Force
           $normalExe = Get-ChildItem vendor/rclone -Filter rclone.exe -Recurse -File | Select-Object -First 1 -ExpandProperty FullName
@@ -97,7 +97,7 @@ jobs:
           if ((Get-FileHash $extraExe -Algorithm SHA256).Hash -ne 'A72B8D123517696C4CC996FD17BD7509DDD7850B5E13893EE970F8C8A2B8390C') { throw 'TeraBox engine changed' }
           Copy-Item $normalExe publish/tools/rclone.exe -Force
           Copy-Item $extraExe publish/tools/rclone-terabox.exe -Force
-          Copy-Item $msi publish/tools/winfsp-2.2.26215.msi -Force
+          Copy-Item $msi publish/tools/winfsp-2.2.26286.msi -Force
           (Get-FileHash publish/tools/rclone.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content publish/tools/rclone.sha256 -Encoding ascii
           (Get-FileHash publish/tools/rclone-terabox.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content publish/tools/rclone-terabox.sha256 -Encoding ascii
 
@@ -105,7 +105,7 @@ jobs:
         shell: pwsh
         run: |
           $asset = '${{ steps.version.outputs.asset }}'
-          foreach ($required in @('FileHubAIO.exe','tools/NASMountLockBridge.exe','tools/rclone.exe','tools/rclone-terabox.exe','tools/winfsp-2.2.26215.msi')) {
+          foreach ($required in @('FileHubAIO.exe','tools/NASMountLockBridge.exe','tools/rclone.exe','tools/rclone-terabox.exe','tools/winfsp-2.2.26286.msi')) {
             if (-not (Test-Path ("publish/" + $required))) { throw "Missing $required" }
           }
           Copy-Item README.md publish/README.md -Force

@@ -350,7 +350,7 @@ internal sealed partial class MainForm
 
     private void InitializeModernUi(bool minimized)
     {
-        Text = "FileHub AIO v1.3.88  |  PC 드라이브";
+        Text = "FileHub AIO v1.3.89  |  PC 드라이브";
         FormBorderStyle = FormBorderStyle.None;
         ControlBox = false;
         MaximizeBox = false;
@@ -390,7 +390,7 @@ internal sealed partial class MainForm
             headerIcon.Image = badge.ToBitmap();
         } catch { /* A missing icon must never block connection controls. */ }
         header.Controls.Add(headerIcon);
-        var brand = ModernTheme.Label("FileHub AIO  v1.3.88", 9.3f, true);
+        var brand = ModernTheme.Label("FileHub AIO  v1.3.89", 9.3f, true);
         brand.SetBounds(35, 1, 215, 31);
         header.Controls.Add(brand);
         var actions = new FlowLayoutPanel
@@ -460,10 +460,10 @@ internal sealed partial class MainForm
 
         tray = new NotifyIcon
         {
-            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.88",
+            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.89",
             Visible = true, ContextMenuStrip = new ContextMenuStrip()
         };
-        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.88 열기", null, (_, _) => ShowWindow());
+        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.89 열기", null, (_, _) => ShowWindow());
         tray.ContextMenuStrip.Items.Add("모두 연결", null, async (_, _) => await ConnectAll(true));
         tray.ContextMenuStrip.Items.Add("프로그램 종료", null, async (_, _) => await ExitSafely());
         tray.BalloonTipClicked += async (_, _) =>

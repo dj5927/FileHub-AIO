@@ -214,7 +214,8 @@ internal static class RemoteMount
         Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
         Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles)
     }.Any(folder => File.Exists(Path.Combine(folder, "WinFsp", "bin", "winfsp-x64.dll")));
-    internal static string InstallerPath => Path.Combine(AppContext.BaseDirectory, "tools", "winfsp-2.2.26215.msi");
+    internal static string InstallerPath => Path.Combine(AppContext.BaseDirectory, "tools",
+        WinFspUpgradePolicy.InstallerFileName);
 
     public static bool IsMounted(NasProfile p)
     {

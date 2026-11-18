@@ -4,8 +4,8 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 버전과 업데이트
 
-- PC 버전: v1.3.88, 이후 v1.3.89 / v1.3.90...
-- PC 전용 GitHub 릴리즈 태그: pc-v1.3.88 / pc-v1.3.89 ...
+- PC 버전: v1.3.89, 이후 v1.3.90 / v1.3.91...
+- PC 전용 GitHub 릴리즈 태그: pc-v1.3.89 / pc-v1.3.90 ...
 - Android 버전: v0.1.x — Windows 업데이트와 별개로 운영
 - 프로그램 실행 시 트레이 업데이트 알림 / 환경 설정 → PC 업데이트 확인
 - 새 PC 버전을 받으면 GitHub 릴리즈 ZIP SHA-256 검증 → 사용자의 설치 승인 → 원격 드라이브 안전 해제 → 프로그램 업데이트 후 재실행
@@ -13,7 +13,7 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 설치
 
-GitHub Releases에서 FileHub-AIO-PC-1.3.88-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 v1.3.83~v1.3.87에서는 PC 업데이트 확인으로 v1.3.88을 설치할 수 있습니다.
+GitHub Releases에서 FileHub-AIO-PC-1.3.89-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 v1.3.83~v1.3.88에서는 PC 업데이트 확인으로 v1.3.89를 설치할 수 있습니다.
 
 업데이트 설치 전에는 Excel/Word 등 열린 문서를 모두 저장하고 닫아야 합니다. 안전하게 해제하지 못한 NAS 드라이브가 있으면 프로그램 교체를 중단합니다. 이전 버전은 사용자 백업 폴더에 보관합니다.
 
@@ -22,7 +22,7 @@ GitHub Releases에서 FileHub-AIO-PC-1.3.88-win-x64.zip 같은 Windows 전용 ZI
 - .NET 10 (Windows x64 자체 포함 빌드)
 - rclone v1.76.0: https://github.com/rclone/rclone
 - rclone-extra v1.76.0-extra (TeraBox): https://github.com/gulp79/rclone-extra
-- WinFsp v2.2.26215: https://github.com/winfsp/winfsp
+- WinFsp v2.2.26286 (2026 Beta5, 공식 서명 MSI): https://github.com/winfsp/winfsp/releases/tag/v2.2B5
 
 GitHub Actions는 공식 릴리즈 파일과 컴파일된 실행 파일의 SHA-256을 검사한 후 Windows 전체 패키지를 작성합니다. 제3자 엔진의 저작권/라이선스는 각 원본 프로젝트에 따르며, WinFsp에서 파생된 예제의 원 저작권 고지를 유지합니다.
 
@@ -99,3 +99,21 @@ PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj 
 - 다른 NAS 선택 중 이전 NAS의 비동기 응답이 늦게 도착하면 그 결과를 버리고 선택된 NAS 상태를 다시 확인합니다. 한 번의 로컬 rclone RC 상태 조회가 오래 걸리는 경우 타이머 요청을 중첩하지 않습니다.
 - PC 업데이트 다운로드/연결 진단 등 별도 상태 문구는 업로드 완료 이벤트가 강제로 덮어쓰지 않습니다.
 - UI smoke test는 대기 1 → 0 전환, 선택 변경, 다른 상태 문구 보존, 타이머 주기를 검사합니다. 실제 사용자 PC에서 새 릴리즈 설치 후 확인이 필요합니다.
+
+## v1.3.89 Windows 외부 라이브러리 전수 업데이트
+
+- winfsp.net 패키지 2.1.24255에서 **2.2.26286**으로 교체했습니다.
+- 포함 WinFsp MSI를 공식 **2026 Beta5 / 2.2.26286**으로 갱신하고, 릴리즈 SHA-256과 NAVIMATICS LLC의 코드 서명을 확인했습니다. 이전 Beta4의 관련 취약점 및 파일시스템/캐시 수정이 포함된 신규 베타입니다.
+- SSH.NET을 **2026.0.1**로, Microsoft.Web.WebView2 SDK를 **1.0.4314.35**로 갱신했습니다. FluentFTP 55.1.0, 일반 rclone 1.76.0, TeraBox rclone-extra 1.76.0-extra는 공식 최신 확인 결과 그대로 유지했습니다.
+- GitHub Actions checkout v7 및 setup-dotnet v6를 적용했습니다. .NET 런타임 타깃은 net10.0-windows로 유지하며 각 CI에서 .NET 10 최신 패치를 사용합니다.
+- WinFsp 드라이버는 프로그램의 ZIP 파일로 자동 교체되지 않습니다. 사용자가 환경 설정에서 WinFsp 확인/설치를 클릭한 경우에만 버전·SHA-256을 확인하고, 연결된 FileHub NAS가 있으면 우선 안전하게 해제하도록 안내합니다. 다른 WinFsp 앱 역시 종료 후 업그레이드해야 합니다. 이전 WinFsp를 자동으로 제거하지 않습니다.
+- 작업 PC에는 기존 Beta4와 기존 NAS 연결이 활성화되어 있어 새 MSI를 실제 시스템에 강제로 설치하지 않았습니다. 새 .NET 바인딩 + 기존 Beta4 조합에서 격리된 Excel 연속 저장 검증을 진행했습니다. **Beta5 MSI와 새 바인딩을 함께 설치한 실기기 검증은 배포 후 별도로 필요합니다.**
+
+## 앞으로의 PC 소스 자동 갱신
+
+- NuGet 라이브러리 버전은 루트의 **Directory.Packages.props**에서 중앙 관리합니다. Windows 본체와 LockBridge의 SSH.NET, FluentFTP 버전이 한 파일에서 결정됩니다.
+- Dependabot이 매주 월요일(한국 시간) GitHub의 새 버전을 확인하고 PC 전용 pc/windows를 대상으로 **의존성 수정 커밋이 포함된 PR**을 생성합니다.
+- PC 의존성 PR에는 별도의 Windows 빌드·정책 테스트 워크플로가 실행됩니다. 테스트 실패 시 기존 버전을 유지하며, 메이저 변경·런타임/드라이버 업데이트도 검토 후 병합합니다.
+- winfsp.net은 대응 WinFsp MSI와 같은 버전/해시를 함께 검증해야 하므로 Dependabot 단독 업데이트 대상에서 제외했습니다. rclone과 TeraBox 확장도 공식 SHA-256 고정 상태를 유지합니다.
+- **빌드 때마다 무조건 최신 버전을 받아 교체하거나 자동으로 정식 릴리즈를 게시하지 않습니다.** 검증된 PR을 병합한 다음 PC 앱 버전 태그를 증가시켜 전체 테스트를 통과하면 그때 새로운 Windows OTA 릴리즈로 반영합니다.
+- GitHub Dependabot 설정은 GitHub가 기본 브랜치 main에서만 읽으므로, .github/dependabot.yml은 Android 소스 변경 없이 main에도 함께 설치해야 PC 자동 PR이 활성화됩니다.

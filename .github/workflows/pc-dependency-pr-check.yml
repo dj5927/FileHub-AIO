@@ -1,0 +1,58 @@
+name: Validate PC dependency update PR
+
+on:
+  pull_request:
+    branches:
+      - pc/windows
+    paths:
+      - '**/*.csproj'
+      - '**/Directory.Packages.props'
+      - '.github/workflows/**'
+      - '.github/dependabot.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout PR source (read-only)
+        uses: actions/checkout@v7
+
+      - name: Install latest .NET 10 patch
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore all centrally versioned packages
+        shell: pwsh
+        run: |
+          dotnet restore NASMount.csproj --force
+          if ($LASTEXITCODE -ne 0) { throw 'PC restore failed' }
+          dotnet restore LockBridge/LockBridge.csproj --force
+          if ($LASTEXITCODE -ne 0) { throw 'Bridge restore failed' }
+
+      - name: Build PC and lock bridge
+        shell: pwsh
+        run: |
+          dotnet build NASMount.csproj -c Release --no-restore
+          if ($LASTEXITCODE -ne 0) { throw 'PC build failed' }
+          dotnet build LockBridge/LockBridge.csproj -c Release --no-restore
+          if ($LASTEXITCODE -ne 0) { throw 'Bridge build failed' }
+
+      - name: Offline safety and update policy tests
+        shell: pwsh
+        run: |
+          dotnet run --project NASMount.csproj -c Release --no-build -- --pc-updater-policy-test
+          if ($LASTEXITCODE -ne 0) { throw 'PC updater/WinFsp policy test failed' }
+          dotnet run --project NASMount.csproj -c Release --no-build -- --synology-share-policy-test
+          if ($LASTEXITCODE -ne 0) { throw 'Synology sharing policy test failed' }
+          dotnet run --project LockBridge/LockBridge.csproj -c Release --no-build -- --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'LockBridge self-test failed' }
+
+# PRs are never auto-merged here: merges to pc/windows would trigger a release,
+# and the version tag must be bumped and verified as one controlled batch.
+# Dependabot creates and updates commits automatically; reviewed PR changes
+# become input to the next release after approval.

@@ -1,0 +1,45 @@
+# IMPORTANT: GitHub reads this file from the repository DEFAULT branch (main).
+# It lives in pc/windows as a reference, but the identical file must also be
+# placed on main to enable automatic PRs against the PC branch.
+# This config does NOT scan or modify Android libraries.
+version: 2
+updates:
+  - package-ecosystem: "nuget"
+    directories:
+      - "/"
+      - "/LockBridge"
+    target-branch: "pc/windows"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "Asia/Seoul"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "deps(pc)"
+    groups:
+      pc-nuget-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+    ignore:
+      # Always update WinFsp driver MSI + .NET binding together. A standalone
+      # NuGet bump can break mounts and skip MSI signature/hash verification.
+      - dependency-name: "winfsp.net"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "pc/windows"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:20"
+      timezone: "Asia/Seoul"
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "ci(pc)"

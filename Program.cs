@@ -45,6 +45,7 @@ internal static class Program
         {
             try
             {
+                WinFspUpgradePolicy.PolicyTest();
                 PcUpdateService.FeedPolicyTest();
                 PcUpdateApply.LocalPolicyTest();
             }

@@ -83,7 +83,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.88 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.89 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -832,10 +832,33 @@ internal sealed partial class MainForm : Form
 
     async Task InstallWinFsp()
     {
+        var installed = WinFspUpgradePolicy.InstalledVersion();
+        if(RemoteMount.HasWinFsp && !WinFspUpgradePolicy.UpgradeAvailable(installed))
+        {
+            MessageBox.Show("WinFsp " + installed + "이(가) 설치되어 있으며 " +
+                "현재 패키지 버전과 같거나 더 최신입니다.", "FileHub AIO");
+            return;
+        }
         if(RemoteMount.HasWinFsp)
         {
-            MessageBox.Show("WinFsp가 이미 설치되어 있습니다.","FileHub AIO");
-            return;
+            if(cfg.Profiles.Any(p => p.Protocol != "SMB" && RemoteMount.IsRunning(p)))
+            {
+                MessageBox.Show(this,
+                    "연결 중인 NAS 드라이브가 있어 WinFsp 드라이버를 교체할 수 없습니다.\n\n" +
+                    "열린 Excel/Word 문서를 저장하고 모든 FileHub 드라이브를 안전하게 " +
+                    "해제한 뒤 다시 시도하세요. 다른 WinFsp 프로그램도 종료하세요.",
+                    "WinFsp 업그레이드 보류", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            if(MessageBox.Show(this,
+                "기존 WinFsp: " + (installed?.ToString() ?? "버전 확인 불가") + "\n" +
+                "포함된 WinFsp: " + WinFspUpgradePolicy.PackageVersion + " (Beta5)\n\n" +
+                "새 버전에는 파일 잠금·캐시 관련 수정이 포함되어 있습니다.\n" +
+                "진행 전 다른 WinFsp 프로그램의 마운트도 해제하세요.\n" +
+                "드라이버 업데이트 후 재부팅이 필요할 수 있습니다.\n\n" +
+                "공식 서명 MSI를 설치할까요?",
+                "WinFsp 드라이버 업그레이드", MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question) != DialogResult.Yes) return;
         }
         string installer=RemoteMount.InstallerPath;
         if(!File.Exists(installer))
@@ -846,7 +869,7 @@ internal sealed partial class MainForm : Form
         }
         try
         {
-            const string expected="2ECB5C89405488A95BBD8A01875E02C48534FD37BBDFD84488F7590464D65944";
+            const string expected=WinFspUpgradePolicy.InstallerSha256;
             using var stream=File.OpenRead(installer);
             string actual=Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(stream));
             if(!string.Equals(actual,expected,StringComparison.OrdinalIgnoreCase))
@@ -860,11 +883,32 @@ internal sealed partial class MainForm : Form
                 Verb="runas"
             }) ?? throw new InvalidOperationException("드라이버 설치 프로그램을 실행하지 못했습니다.");
             await process.WaitForExitAsync();
-            if(!RemoteMount.HasWinFsp)
+            if(process.ExitCode is 3010 or 1641)
+            {
+                MessageBox.Show("WinFsp 설치가 완료됐지만 드라이버 적용을 위해 " +
+                    "Windows 재시작이 필요합니다. 열려 있는 작업을 저장하고 " +
+                    "수동으로 재부팅하세요.", "WinFsp 재부팅 필요");
+            }
+            else if(process.ExitCode != 0)
+            {
+                MessageBox.Show("WinFsp MSI 설치가 성공하지 못했습니다.\n" +
+                    "종료 코드: " + process.ExitCode + "\n" +
+                    "기존 WinFsp 드라이버를 임의로 제거하지 않았습니다.",
+                    "WinFsp 설치 실패");
+            }
+            else if(WinFspUpgradePolicy.UpgradeAvailable(
+                WinFspUpgradePolicy.InstalledVersion()))
+            {
+                MessageBox.Show("MSI가 종료됐지만 WinFsp 새 버전이 확인되지 않습니다.\n" +
+                    "PC를 재부팅한 뒤 환경 설정에서 다시 확인하세요.",
+                    "WinFsp 버전 확인");
+            }
+            else if(!RemoteMount.HasWinFsp)
                 MessageBox.Show("WinFsp 설치가 아직 확인되지 않았습니다. 설치 결과 코드: "+
                     process.ExitCode+"\n필요하면 재부팅 후 다시 연결하세요.", "WinFsp 설치");
             else
-                MessageBox.Show("WinFsp 설치 확인 완료! NAS 드라이브 연결을 시도할 수 있습니다.","FileHub AIO");
+                MessageBox.Show("WinFsp " + WinFspUpgradePolicy.InstalledVersion() +
+                    " 설치 확인 완료. NAS 드라이브 연결을 시도할 수 있습니다.","FileHub AIO");
         }
         catch(Exception ex)
         {
