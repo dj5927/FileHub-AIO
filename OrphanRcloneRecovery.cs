@@ -34,6 +34,18 @@ internal static class OrphanRcloneRecovery
                 StringComparison.OrdinalIgnoreCase);
     }
 
+    private static string? OwnedMountedLetter(string command, NasProfile p)
+    {
+        var found = MountCommand.Match(command);
+        if (!found.Success || !found.Groups[1].Value.Equals(p.Id.ToString("N"),
+                StringComparison.OrdinalIgnoreCase))
+            return null;
+        string letter = found.Groups[2].Value.ToUpperInvariant();
+        var previous = p.Clone();
+        previous.Letter = letter;
+        return IsExactOwnedMountCommand(command, previous) ? letter : null;
+    }
+
     internal static void OwnershipPolicyTest()
     {
         var p = new NasProfile
@@ -47,6 +59,7 @@ internal static class OrphanRcloneRecovery
             " --rc-addr 127.0.0.1:11216 --rc-user nm123456 --rc-pass abc";
         if (!IsExactOwnedMountCommand(command, p) ||
             IsExactOwnedMountCommand(command.Replace(" W:", " X:"), p) ||
+            OwnedMountedLetter(command.Replace(" W:", " V:"), p) != "V" ||
             IsExactOwnedMountCommand(command.Replace(
                 p.Id.ToString("N"), Guid.NewGuid().ToString("N")), p) ||
             IsExactOwnedMountCommand("rclone.exe mount remote: W:", p))
@@ -108,10 +121,8 @@ internal static class OrphanRcloneRecovery
 
     internal static async Task<OperationResult?> TryRecoverAsync(NasProfile p)
     {
-        if (p.Protocol != "GoogleDrive" || p.Letter.Length != 1 ||
-            RemoteMount.HasManagedRecord(p) ||
-            !RemoteMount.DriveLetterExists(p.Letter) ||
-            RemoteMount.HasVerifiedOtherVendorMapping(p))
+        if (p.Protocol is not ("GoogleDrive" or "TeraBox") ||
+            RemoteMount.HasManagedRecord(p))
             return null;
         try
         {
@@ -124,17 +135,30 @@ internal static class OrphanRcloneRecovery
                     e.Pid != Environment.ProcessId))
                 return OperationResult.Fail("다른 FileHub AIO가 실행 중이므로 이전 연결을 유지합니다.");
             var matches = entries.Where(e =>
-                e.Name.Equals("rclone.exe", StringComparison.OrdinalIgnoreCase) &&
-                IsExactOwnedMountCommand(e.CommandLine, p)).ToArray();
+                e.Name.Equals(p.Protocol == "TeraBox"
+                        ? "rclone-terabox.exe" : "rclone.exe",
+                    StringComparison.OrdinalIgnoreCase) &&
+                OwnedMountedLetter(e.CommandLine, p) is not null).ToArray();
             if (matches.Length == 0) return null;
             if (matches.Length != 1)
                 return OperationResult.Fail("동일 프로필 백엔드가 여러 개 실행 중입니다.");
             Entry owner = matches[0];
+            string formerLetter = OwnedMountedLetter(owner.CommandLine, p)!;
+            var previous = p.Clone();
+            previous.Letter = formerLetter;
+            if (!RemoteMount.DriveLetterExists(formerLetter) ||
+                RemoteMount.HasVerifiedOtherVendorMapping(previous))
+                return OperationResult.Fail(
+                    "이전 마운트 문자에 다른 연결이 존재하거나 연결 상태가 불명확합니다.");
             if (!Regex.IsMatch(owner.Path,
-                    @"(?i)\\tools\\rclone\.exe\z") ||
+                    p.Protocol == "TeraBox"
+                        ? @"(?i)\\tools\\rclone-terabox\.exe\z"
+                        : @"(?i)\\tools\\rclone\.exe\z") ||
                 !owner.CommandLine.Contains(
-                    Path.Combine(AppStore.DirectoryPath, "google-auth",
-                        p.Id.ToString("N") + ".conf"),
+                    p.Protocol == "TeraBox"
+                        ? Path.Combine(AppStore.DirectoryPath, "no-global-rclone.conf")
+                        : Path.Combine(AppStore.DirectoryPath, "google-auth",
+                            p.Id.ToString("N") + ".conf"),
                     StringComparison.OrdinalIgnoreCase))
                 return OperationResult.Fail("백엔드 실행 경로 또는 인증 설정 소유권이 다릅니다.");
             string? portText = Option(owner.CommandLine, "rc-addr",
@@ -162,29 +186,32 @@ internal static class OrphanRcloneRecovery
             string json = await statsResponse.Content.ReadAsStringAsync();
             var upload = RemoteMount.ParseUploadStatus(json);
             using var document = JsonDocument.Parse(json);
+            // An otherwise idle WinFsp mount commonly holds one VFS root
+            // reference; a clean graceful quit can release this reference.
             if (!document.RootElement.TryGetProperty("inUse", out var inUse) ||
-                !inUse.TryGetInt32(out int open) || open != 0 ||
+                !inUse.TryGetInt32(out int open) || open > 1 ||
                 !upload.IsSafeToDisconnect)
             {
                 AppStore.Log("ORPHAN_RCLONE_UPLOAD_OR_HANDLE_PRESERVED id=" + p.Id);
                 return OperationResult.Fail(
-                    "이전 Google Drive에 열린 핸들 또는 미완료 업로드가 있어 유지합니다.");
+                    "이전 마운트에 열린 핸들 또는 미완료 업로드가 있어 유지합니다.");
             }
             AppStore.Log("ORPHAN_RCLONE_SAFE_RC_QUIT_BEGIN id=" + p.Id +
-                " pid=" + owner.Pid + " letter=" + p.Letter);
+                " pid=" + owner.Pid + " letter=" + formerLetter +
+                " vfsInUse=" + open);
             using var process = Process.GetProcessById(owner.Pid);
             using var quit = await http.PostAsync(url + "/core/quit",
                 new StringContent("{}"));
             quit.EnsureSuccessStatusCode();
             using var wait = new CancellationTokenSource(TimeSpan.FromSeconds(13));
             await process.WaitForExitAsync(wait.Token);
-            var cleanup = NetworkDriveResidueCleaner.AfterSafeStop(p);
+            var cleanup = NetworkDriveResidueCleaner.AfterSafeStop(previous);
             AppStore.Log("ORPHAN_RCLONE_SAFE_RC_QUIT_FINISHED id=" + p.Id +
                 " cleanup=" + cleanup.Success);
             if (!cleanup.Success) return cleanup;
             for (int n = 0; n < 40; n++)
             {
-                if (!RemoteMount.DriveLetterExists(p.Letter))
+                if (!RemoteMount.DriveLetterExists(formerLetter))
                     return cleanup;
                 await Task.Delay(200);
             }

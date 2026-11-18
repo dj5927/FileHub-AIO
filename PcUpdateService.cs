@@ -225,15 +225,10 @@ internal static class PcUpdateService
         string exe = Path.Combine(staged.Directory, "FileHubAIO.exe");
         if (!File.Exists(exe)) throw new IOException("Update helper exe not found");
         string plan = CreateApplyPlan(staged);
-        var psi = new ProcessStartInfo(exe)
-        {
-            UseShellExecute = false, CreateNoWindow = true,
-            WorkingDirectory = staged.Directory
-        };
-        psi.ArgumentList.Add("--apply-pc-update");
-        psi.ArgumentList.Add(plan);
-        using var process = Process.Start(psi) ??
-            throw new IOException("Cannot start updater helper");
+        // The mount job must die with the old GUI, but the updater helper
+        // must remain alive long enough to replace it and launch the new exe.
+        MountProcessLifetime.StartUpdaterOutsideMountJob(
+            exe, staged.Directory, plan);
         AppStore.Log("PC_UPDATE_HELPER_STARTED " + staged.Release.Tag);
     }
 

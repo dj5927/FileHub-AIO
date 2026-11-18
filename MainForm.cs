@@ -84,7 +84,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.98 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.99 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -1440,8 +1440,7 @@ internal sealed partial class MainForm : Form
         foreach (var p in cfg.Profiles)
         {
             if (p.Protocol == "SMB" || RemoteMount.HasManagedRecord(p)) continue;
-            if (p.Protocol == "GoogleDrive" &&
-                RemoteMount.DriveLetterExists(p.Letter) &&
+            if (p.Protocol is "GoogleDrive" or "TeraBox" &&
                 !RemoteMount.HasVerifiedOtherVendorMapping(p))
             {
                 var orphan = await OrphanRcloneRecovery.TryRecoverAsync(p);

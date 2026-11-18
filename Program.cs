@@ -17,6 +17,32 @@ internal static class Program
             Thread.Sleep(TimeSpan.FromSeconds(25));
             return;
         }
+        if (args.Contains("--mount-lifetime-policy-test",
+                StringComparer.OrdinalIgnoreCase))
+        {
+            try { MountProcessLifetime.PolicyTest(); }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("MOUNT_LIFETIME_POLICY_FAILED " + ex);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
+        if (args.Contains("--mount-lifetime-attach-test",
+                StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                MountProcessLifetime.AttachGuiBeforeMounts();
+                Console.WriteLine("MOUNT_GUI_JOB_ATTACHED_PASS");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("MOUNT_GUI_JOB_ATTACH_FAILED " + ex);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
@@ -1619,6 +1645,19 @@ internal static class Program
             return;
         }
 
+        // This must happen BEFORE any rclone/LockBridge is created. A Windows
+        // Job Object now owns the GUI and every child mount: even a crash or
+        // Task Manager forced exit terminates owned mount processes.
+        try { MountProcessLifetime.AttachGuiBeforeMounts(); }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                "FileHub 연결을 Windows 종료 수명에 묶을 수 없어 마운트를 시작하지 않습니다.\n\n" +
+                ex.Message + "\n\n기존 드라이브는 변경하지 않았습니다.",
+                "FileHub AIO · 마운트 종료 보호", MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+            return;
+        }
         Application.Run(new MainForm(args.Contains("--minimized", StringComparer.OrdinalIgnoreCase)));
     }
 }
