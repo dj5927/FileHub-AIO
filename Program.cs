@@ -127,6 +127,7 @@ internal static class Program
                 GoogleExplorerStabilityPolicy.SelfTest();
                 GoogleDriveAuth.ValidationPolicyTest();
                 RemoteMount.GoogleUiTransferPolicyTest();
+                GoogleVfsReadPolicy.SelfTest();
             }
             catch (Exception ex)
             {

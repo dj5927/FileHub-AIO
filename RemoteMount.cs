@@ -1346,6 +1346,10 @@ internal static class RemoteMount
                 args.Add("--vfs-cache-max-age");
                 args.Add("6h");
             }
+            // Google full-cache initial reads do not need the default
+            // 128Mi remote chunk to open a tiny document. Preserve the
+            // existing write-back and VFS safety semantics.
+            GoogleVfsReadPolicy.AppendArgs(args, p, fastRead);
             args.Add("--rc");
             args.Add("--rc-addr");
             args.Add("127.0.0.1:" + port);

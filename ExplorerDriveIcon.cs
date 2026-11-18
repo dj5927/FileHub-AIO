@@ -77,6 +77,60 @@ internal static class ExplorerDriveIcon
     internal static string MountPointRegistryPath(NasProfile p) =>
         MountPointsKey + "\\" + MountPointName(p);
 
+    // WinFsp's provider can register a THREE-letter network share in
+    // MountPoints2 even when --volname specifies a full name (real example:
+    // ##NASMount-f15d6c50-d9016a70#Goo for "Google Drive"). Looking for
+    // ##NASMount-...#Google Drive never finds it, so the raw UNC leaks into
+    // Explorer. Only consider the exact live random-session server and a
+    // prefix of the configured share label. Never CREATE a Shell ghost.
+    internal static bool IsCurrentMountPointKey(
+        string key, string serverName, string configuredLabel)
+    {
+        string prefix = "##" + serverName + "#";
+        if (!key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+        string share = key[prefix.Length..];
+        return share.Length >= 3 &&
+            share.Length <= configuredLabel.Length &&
+            configuredLabel.StartsWith(share, StringComparison.OrdinalIgnoreCase) &&
+            !share.Contains('#') && !share.Contains('\\');
+    }
+
+    internal static IReadOnlyList<string> LiveOwnedMountPointPaths(NasProfile p)
+    {
+        if (p.Protocol == "SMB" || !RemoteMount.UsesNetworkDriveMode(p))
+            return Array.Empty<string>();
+        string server = MountPresentation.NetworkServerName(p);
+        string label = MountPresentation.SafeLabel(p.DisplayName);
+        using var history = Registry.CurrentUser.OpenSubKey(MountPointsKey);
+        if (history is null) return Array.Empty<string>();
+        return history.GetSubKeyNames()
+            .Where(key => IsCurrentMountPointKey(key, server, label))
+            .Select(key => MountPointsKey + "\\" + key)
+            .ToArray();
+    }
+
+    private static bool WriteCurrentMountPointLabel(NasProfile p,
+        out bool changed)
+    {
+        bool any = false;
+        changed = false;
+        string label = MountPresentation.SafeLabel(p.DisplayName);
+        foreach (string path in LiveOwnedMountPointPaths(p))
+        {
+            using var point = Registry.CurrentUser.OpenSubKey(path, writable: true);
+            if (point is null) continue;
+            string? current = point.GetValue("_LabelFromReg") as string;
+            if (!string.Equals(current, label, StringComparison.Ordinal))
+            {
+                WriteLabelToExistingKey(point, label);
+                changed = true;
+            }
+            any = true;
+        }
+        return any;
+    }
+
     // WinFsp's network drive initially uses a synthetic UNC share. Some
     // providers (MYBOX and OneDrive) create the matching Explorer
     // MountPoints2 entry AFTER the first connected/mounted notification.
@@ -85,7 +139,7 @@ internal static class ExplorerDriveIcon
     // Keep the UNC (and network-mode drive) for routing, but override its
     // PRESENTATION only in the exact owned and verified profile namespace.
     internal static bool ShouldShellRename(NasProfile p) =>
-        p.Protocol != "SMB";
+        p.Protocol is not ("SMB" or "GoogleDrive");
 
     // Windows often creates its MountPoints2 UNC entry AFTER WinFsp reports
     // a working root. Keep retrying the label in a dedicated STA worker
@@ -112,18 +166,18 @@ internal static class ExplorerDriveIcon
                     if (!RemoteMount.IsMounted(profile)) break;
                     if (google)
                     {
-                        bool found;
-                        using (var key = Registry.CurrentUser.OpenSubKey(
-                            MountPointRegistryPath(profile), writable: true))
-                            found = WriteLabelToExistingKey(
-                                key, MountPresentation.SafeLabel(profile.DisplayName));
+                        bool found = WriteCurrentMountPointLabel(
+                            profile, out bool changed);
                         if (!found) continue;
-                        AppStore.Log("GOOGLE_NETWORK_LABEL_REGISTRY_ONLY id=" +
-                            profile.Id + " letter=" + profile.Letter +
-                            " attempt=" + attempt);
-                        // Exactly one notification after the provider created
-                        // its UNC registry key; no COM shell rename or loop.
-                        NotifyComputerChanged();
+                        if (changed)
+                        {
+                            AppStore.Log("GOOGLE_NETWORK_LABEL_REGISTRY_ONLY id=" +
+                                profile.Id + " letter=" + profile.Letter +
+                                " attempt=" + attempt);
+                            // Notify only when a real new/changed label was
+                            // written, not during periodic cheap self-check.
+                            NotifyComputerChanged();
+                        }
                         break;
                     }
                     bool fixedName = EnsureConfiguredDisplayName(profile,
@@ -176,9 +230,7 @@ internal static class ExplorerDriveIcon
             // Reuse ONLY the GUID+share-bound MountPoints2 entry generated by
             // the real provider. Its stale _LabelFromReg from an older release
             // is not foreign: overwrite it with the current saved name.
-            using (var point = Registry.CurrentUser.OpenSubKey(
-                MountPointRegistryPath(p), writable: true))
-                applied = WriteLabelToExistingKey(point, label);
+            applied = WriteCurrentMountPointLabel(p, out _);
             if (ShouldShellRename(p))
             {
                 // Network-mounted drives permit the same Shell rename used
@@ -244,9 +296,27 @@ internal static class ExplorerDriveIcon
         };
         Assert(ShouldShellRename(mybox), "MYBOX shell rename must run");
         Assert(ShouldShellRename(oneDrive), "OneDrive shell rename must run");
-        Assert(ShouldShellRename(new NasProfile { Protocol = "GoogleDrive" }) &&
+        Assert(!ShouldShellRename(new NasProfile { Protocol = "GoogleDrive" }) &&
             ShouldShellRename(new NasProfile { Protocol = "TeraBox" }),
-            "Google and TeraBox must hide raw NASMount UNC suffix");
+            "Google must never block Explorer with synchronous Shell rename");
+        Assert(IsCurrentMountPointKey(
+            "##NASMount-f15d6c50-d9016a70#Goo",
+            "NASMount-f15d6c50-d9016a70", "Google Drive"),
+            "WinFsp abbreviated Google share must be matched");
+        Assert(IsCurrentMountPointKey(
+            "##NASMount-f15d6c50-d9016a70#Google Drive",
+            "NASMount-f15d6c50-d9016a70", "Google Drive"),
+            "full Google share must still match");
+        Assert(!IsCurrentMountPointKey(
+            "##NASMount-f15d6c50-OTHER#Goo",
+            "NASMount-f15d6c50-d9016a70", "Google Drive") &&
+            !IsCurrentMountPointKey(
+            "##RaiDrive-UserK#Google Drive",
+            "NASMount-f15d6c50-d9016a70", "Google Drive") &&
+            !IsCurrentMountPointKey(
+            "##NASMount-f15d6c50-d9016a70#Go",
+            "NASMount-f15d6c50-d9016a70", "Google Drive"),
+            "foreign, stale or too-short shares must not be touched");
         Assert(MountPointName(mybox) == "##NASMount-11112222#네이버",
             "MYBOX exact owned share");
         Assert(MountPointName(oneDrive) ==
@@ -346,15 +416,16 @@ internal static class ExplorerDriveIcon
             // Fixed mode must never register a synthetic
             // ##NASMount-GUID8#Google Drive network location in MountPoints2.
             if (!cloudFixed)
-            using (var point = Registry.CurrentUser.OpenSubKey(
-                MountPointRegistryPath(p), writable: true))
+            foreach (string mountPath in LiveOwnedMountPointPaths(p))
             {
+                using var point = Registry.CurrentUser.OpenSubKey(
+                    mountPath, writable: true);
                 if (point is not null)
                 {
                     string label = MountPresentation.SafeLabel(p.DisplayName);
                     WriteLabelToExistingKey(point, label);
                     applied |= DriveIconLease.Acquire(p, "OwnUncMountPoint",
-                        MountPointRegistryPath(p), "_Icon", IconPath, create: false);
+                        mountPath, "_Icon", IconPath, create: false);
                 }
                 // DO NOT create a synthetic MountPoints2 entry just to set
                 // an icon: it can become a persistent red-X network place.
@@ -389,14 +460,16 @@ internal static class ExplorerDriveIcon
             DriveLabelLease.Restore(p);
             string path = BaseKey + "\\" + p.Letter.ToUpperInvariant() + "\\DefaultIcon";
             DriveIconLease.Release(p, "ExplorerDriveIcons", path, "");
-            using (var point = Registry.CurrentUser.OpenSubKey(MountPointRegistryPath(p), writable: true))
+            foreach (string mountPath in LiveOwnedMountPointPaths(p))
             {
+                using var point = Registry.CurrentUser.OpenSubKey(
+                    mountPath, writable: true);
                 if (string.Equals(point?.GetValue("_LabelFromReg") as string,
                     MountPresentation.SafeLabel(p.DisplayName), StringComparison.Ordinal))
                     point?.DeleteValue("_LabelFromReg", throwOnMissingValue: false);
+                DriveIconLease.Release(p, "OwnUncMountPoint",
+                    mountPath, "_Icon");
             }
-            DriveIconLease.Release(p, "OwnUncMountPoint",
-                MountPointRegistryPath(p), "_Icon");
             DriveIconLease.Release(p, "ExplorerClasses",
                 UserExplorerIcons + "\\" + p.Letter.ToUpperInvariant() + "\\DefaultIcon",
                 "");
