@@ -4,8 +4,8 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 버전과 업데이트
 
-- PC 버전: v1.3.104, 이후 v1.3.105 / v1.3.106...
-- PC 전용 GitHub 릴리즈 태그: pc-v1.3.104 / pc-v1.3.105 ...
+- PC 버전: v1.3.105, 이후 v1.3.106 / v1.3.107...
+- PC 전용 GitHub 릴리즈 태그: pc-v1.3.105 / pc-v1.3.106 ...
 - Android 버전: v0.1.x — Windows 업데이트와 별개로 운영
 - 프로그램 실행 시 트레이 업데이트 알림 / 환경 설정 → PC 업데이트 확인
 - 새 PC 버전을 받으면 GitHub 릴리즈 ZIP SHA-256 검증 → 사용자의 설치 승인 → 원격 드라이브 안전 해제 → 프로그램 업데이트 후 재실행
@@ -13,7 +13,7 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 설치
 
-GitHub Releases에서 FileHub-AIO-PC-1.3.104-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.104를 설치할 수 있습니다.
+GitHub Releases에서 FileHub-AIO-PC-1.3.105-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.105를 설치할 수 있습니다.
 
 업데이트 설치 전에는 Excel/Word 등 열린 문서를 모두 저장하고 닫아야 합니다. 안전하게 해제하지 못한 NAS 드라이브가 있으면 프로그램 교체를 중단합니다. 이전 버전은 사용자 백업 폴더에 보관합니다.
 
@@ -36,6 +36,27 @@ PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj 
 ## 검증 범위
 
 업데이트 무결성, 버전 필터링, 로컬 WinFsp 저장, 백업/롤백에 대한 자동 검사를 포함합니다. 실제 사용자 NAS의 다중 PC Excel 동시 편집 및 서버별 잠금 호환성은 별도 시험이 필요합니다.
+
+## v1.3.105 Google 전용 rclone SHA-256 검사 오연결 수정
+
+- v1.3.104의 `RcloneExecutableInspector`가 모든 일반 엔진 및
+  Google 전용 엔진을 동일한 `rclone.sha256`과 비교하는 오류 수정.
+  사용자 PC에서 Google 엔진 파일은 실제로 정상
+  SHA-256(`C6B2742C...`)으로 설치되어 있었으며,
+  검사 프로그램만 일반 엔진의 해시(`ACD80683...`)를
+  잘못 요구하여 연결을 차단했습니다. 사용자 NAS/Google
+  인증이나 파일 손상이 원인이 아닙니다.
+- 세 개의 엔진마다 **고유 검사 대상**을 지정합니다:
+  `rclone.exe` → `rclone.sha256`,
+  `rclone-terabox.exe` → `rclone-terabox.sha256`,
+  `rclone-filehub-google.exe` →
+  `rclone-filehub-google.sha256`.
+- Google 엔진은 자체 고정 SHA-256과 별도 매니페스트 양쪽으로
+  검증합니다. 빌드된 ZIP에는 새로운 Google SHA 파일을 함께
+  포함하며 GitHub Actions가 이를 자동 생성·검사합니다.
+- Google 전용 엔진·실제 용량 30분 캐시 구현 자체는
+  v1.3.104와 동일하며 연결 실패에 직접 관련된 검사 코드만
+  수정합니다. 사용자 파일·계정·설정은 변경하지 않습니다.
 
 ## v1.3.104 Google Drive 실제 용량 표시 (비동기)
 

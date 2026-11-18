@@ -138,6 +138,10 @@ jobs:
           if ((Get-FileHash $googleExe -Algorithm SHA256).Hash -ne $expected) {
             throw 'Google quota engine checksum mismatch: refusing unverified binary'
           }
+          # A distinct manifest is mandatory: the regular rclone.sha256
+          # belongs to an entirely different, official executable.
+          (Get-FileHash $googleExe -Algorithm SHA256).Hash.ToLowerInvariant() |
+            Set-Content publish/tools/rclone-filehub-google.sha256 -Encoding ascii
           & $googleExe mount --help | Out-Null
           if ($LASTEXITCODE -ne 0) { throw 'Google quota engine lacks Windows mount command' }
 
@@ -145,7 +149,7 @@ jobs:
         shell: pwsh
         run: |
           $asset = '${{ steps.version.outputs.asset }}'
-          foreach ($required in @('FileHubAIO.exe','tools/NASMountLockBridge.exe','tools/rclone.exe','tools/rclone-filehub-google.exe','tools/rclone-terabox.exe','tools/winfsp-2.1.25156.msi')) {
+          foreach ($required in @('FileHubAIO.exe','tools/NASMountLockBridge.exe','tools/rclone.exe','tools/rclone-filehub-google.exe','tools/rclone-filehub-google.sha256','tools/rclone-terabox.exe','tools/winfsp-2.1.25156.msi')) {
             if (-not (Test-Path ("publish/" + $required))) { throw "Missing $required" }
           }
           Copy-Item README.md publish/README.md -Force

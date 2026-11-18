@@ -13,6 +13,36 @@ namespace NASMount;
 /// </summary>
 internal static class RcloneExecutableInspector
 {
+    // Every bundled backend has its own manifest. In particular the Google
+    // nonblocking-About build is deliberately different from upstream rclone.
+    // Never compare rclone-filehub-google.exe against rclone.sha256.
+    internal static string ManifestFileName(string executable)
+    {
+        string name = Path.GetFileName(executable);
+        if (name.Equals("rclone-filehub-google.exe",
+                StringComparison.OrdinalIgnoreCase))
+            return "rclone-filehub-google.sha256";
+        if (name.Equals("rclone-terabox.exe",
+                StringComparison.OrdinalIgnoreCase))
+            return "rclone-terabox.sha256";
+        return "rclone.sha256";
+    }
+
+    internal static void ManifestPolicyTest()
+    {
+        if (ManifestFileName("rclone.exe") != "rclone.sha256" ||
+            ManifestFileName("rclone-terabox.exe") != "rclone-terabox.sha256" ||
+            ManifestFileName("rclone-filehub-google.exe") !=
+                "rclone-filehub-google.sha256" ||
+            ManifestFileName("RCLONE-FILEHUB-GOOGLE.EXE") !=
+                "rclone-filehub-google.sha256" ||
+            ManifestFileName("rclone-filehub-google.exe") ==
+                ManifestFileName("rclone.exe"))
+            throw new InvalidOperationException(
+                "Google patched backend was assigned the upstream rclone manifest");
+        Console.WriteLine("RCLONE_THREE_ENGINE_DISTINCT_MANIFEST_POLICY_PASS");
+    }
+
     internal static async Task<OperationResult> VerifyAsync(string executable)
     {
         if (!File.Exists(executable))
@@ -26,8 +56,7 @@ internal static class RcloneExecutableInspector
         {
             var binary = new FileInfo(executable);
             string manifest = Path.Combine(binary.DirectoryName!,
-                binary.Name.Equals("rclone-terabox.exe", StringComparison.OrdinalIgnoreCase)
-                    ? "rclone-terabox.sha256" : "rclone.sha256");
+                ManifestFileName(executable));
             var signature = new FileInfo(manifest);
             key = Path.GetFullPath(executable).ToUpperInvariant() + "|" +
                 binary.Length + "|" + binary.LastWriteTimeUtc.Ticks + "|" +
@@ -73,14 +102,20 @@ internal static class RcloneExecutableInspector
             await using var input = File.OpenRead(executable);
             hash = Convert.ToHexString(await SHA256.HashDataAsync(input));
             string manifest = Path.Combine(Path.GetDirectoryName(executable)!,
-                Path.GetFileName(executable).Equals("rclone-terabox.exe", StringComparison.OrdinalIgnoreCase)
-                    ? "rclone-terabox.sha256" : "rclone.sha256");
+                ManifestFileName(executable));
+            if (ManifestFileName(executable) == "rclone-filehub-google.sha256" &&
+                !string.Equals(hash, GoogleAsyncQuotaEngine.Sha256,
+                    StringComparison.OrdinalIgnoreCase))
+                return OperationResult.Fail(
+                    "Google 전용 rclone 파일의 고정 SHA-256이 일치하지 않습니다. " +
+                    "정상 엔진으로 자동 복구하거나 새 배포본을 사용하세요.");
             if (File.Exists(manifest))
             {
                 string expected = (await File.ReadAllTextAsync(manifest)).Trim().Split(' ')[0];
                 if (!string.Equals(hash, expected, StringComparison.OrdinalIgnoreCase))
                     return OperationResult.Fail(
-                        "rclone.exe 무결성 검사 실패 (SHA-256 불일치).\n" +
+                        Path.GetFileName(executable) +
+                        " 무결성 검사 실패 (SHA-256 불일치).\n" +
                         $"파일: {executable}\n크기: {info.Length:N0}바이트\n" +
                         $"현재 해시: {hash}\n예상 해시: {expected}\n" +
                         "NAS 계정이나 네트워크 문제가 아닙니다. 배포 ZIP을 다시 복사해 " +

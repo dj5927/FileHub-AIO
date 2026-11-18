@@ -129,6 +129,16 @@ internal static class Program
                 RemoteMount.GoogleUiTransferPolicyTest();
                 GoogleVfsReadPolicy.SelfTest();
                 GoogleAsyncQuotaEngine.SelfTest();
+                RcloneExecutableInspector.ManifestPolicyTest();
+                if (File.Exists(GoogleAsyncQuotaEngine.ExecutablePath))
+                {
+                    var googleBinary = RcloneExecutableInspector.VerifyAsync(
+                        GoogleAsyncQuotaEngine.ExecutablePath).GetAwaiter().GetResult();
+                    if (!googleBinary.Success)
+                        throw new InvalidOperationException(
+                            "Google bundle verification failed: " + googleBinary.Message);
+                    Console.WriteLine("GOOGLE_ASYNC_QUOTA_BUNDLED_BINARY_SHA256_PASS");
+                }
             }
             catch (Exception ex)
             {
