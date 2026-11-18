@@ -77,6 +77,14 @@ internal static class ExplorerDriveIcon
     internal static string MountPointRegistryPath(NasProfile p) =>
         MountPointsKey + "\\" + MountPointName(p);
 
+    // The public WebDAV LockBridge drive is WinFsp.Net even though the
+    // *private* rclone backend is deliberately started without network mode.
+    // Excluding UseLockBridge from the network-label code was the reason
+    // that "새 NAS(\\NASMount-...)" returned in v1.3.105.
+    internal static bool HasOwnedNetworkPresentation(NasProfile p) =>
+        p.Protocol != "SMB" &&
+        (p.UseLockBridge || RemoteMount.UsesNetworkDriveMode(p));
+
     // WinFsp's provider can register a THREE-letter network share in
     // MountPoints2 even when --volname specifies a full name (real example:
     // ##NASMount-f15d6c50-d9016a70#Goo for "Google Drive"). Looking for
@@ -98,7 +106,7 @@ internal static class ExplorerDriveIcon
 
     internal static IReadOnlyList<string> LiveOwnedMountPointPaths(NasProfile p)
     {
-        if (p.Protocol == "SMB" || !RemoteMount.UsesNetworkDriveMode(p))
+        if (!HasOwnedNetworkPresentation(p))
             return Array.Empty<string>();
         string server = MountPresentation.NetworkServerName(p);
         string label = MountPresentation.SafeLabel(p.DisplayName);
@@ -139,7 +147,7 @@ internal static class ExplorerDriveIcon
     // Keep the UNC (and network-mode drive) for routing, but override its
     // PRESENTATION only in the exact owned and verified profile namespace.
     internal static bool ShouldShellRename(NasProfile p) =>
-        p.Protocol is not ("SMB" or "GoogleDrive");
+        p.Protocol is not ("SMB" or "GoogleDrive") && !p.UseLockBridge;
 
     // Windows often creates its MountPoints2 UNC entry AFTER WinFsp reports
     // a working root. Keep retrying the label in a dedicated STA worker
@@ -151,28 +159,31 @@ internal static class ExplorerDriveIcon
         // it can issue synchronous GetVolumeInfo callbacks into a slow
         // rclone mount and stall Explorer. Use only the exact owned,
         // existing MountPoints2 key, without inventing any registry entry.
-        if (!RemoteMount.UsesNetworkDriveMode(profile) ||
+        if (!HasOwnedNetworkPresentation(profile) ||
             !RemoteMount.IsMounted(profile) ||
             !LabelRepairRunning.TryAdd(profile.Id, 1)) return;
         var worker = new Thread(() =>
         {
             try
             {
-                bool google = profile.Protocol == "GoogleDrive";
-                for (int attempt = 0; attempt < (google ? 24 : 12); attempt++)
+                bool registryOnly = profile.Protocol == "GoogleDrive" ||
+                    profile.UseLockBridge;
+                for (int attempt = 0; attempt < (registryOnly ? 24 : 12); attempt++)
                 {
                     if (!RemoteMount.IsMounted(profile)) break;
-                    Thread.Sleep(attempt == 0 ? 450 : (google ? 750 : 1100));
+                    Thread.Sleep(attempt == 0 ? 450 : (registryOnly ? 750 : 1100));
                     if (!RemoteMount.IsMounted(profile)) break;
-                    if (google)
+                    if (registryOnly)
                     {
                         bool found = WriteCurrentMountPointLabel(
                             profile, out bool changed);
                         if (!found) continue;
                         if (changed)
                         {
-                            AppStore.Log("GOOGLE_NETWORK_LABEL_REGISTRY_ONLY id=" +
+                            AppStore.Log("OWNED_NETWORK_LABEL_REGISTRY_ONLY id=" +
                                 profile.Id + " letter=" + profile.Letter +
+                                " protocol=" + profile.Protocol +
+                                " lockBridge=" + profile.UseLockBridge +
                                 " attempt=" + attempt);
                             // Notify only when a real new/changed label was
                             // written, not during periodic cheap self-check.
@@ -216,7 +227,7 @@ internal static class ExplorerDriveIcon
         bool deferGlobalNotify = false)
     {
         if (p.Protocol == "SMB" || p.Letter.Length != 1 ||
-            !RemoteMount.UsesNetworkDriveMode(p) ||
+            !HasOwnedNetworkPresentation(p) ||
             !RemoteMount.HasManagedRecord(p) || !RemoteMount.IsMounted(p) ||
             RemoteMount.HasVerifiedOtherVendorMapping(p))
             return false;
@@ -299,6 +310,31 @@ internal static class ExplorerDriveIcon
         Assert(!ShouldShellRename(new NasProfile { Protocol = "GoogleDrive" }) &&
             ShouldShellRename(new NasProfile { Protocol = "TeraBox" }),
             "Google must never block Explorer with synchronous Shell rename");
+        var webDavBridge = new NasProfile {
+            Id = Guid.Parse("76543210-fedc-4321-8765-112233445566"),
+            Protocol = "WebDAV", UseLockBridge = true,
+            DisplayName = "새 NAS", Letter = "R"
+        };
+        Assert(HasOwnedNetworkPresentation(webDavBridge) &&
+            !RemoteMount.UsesNetworkDriveMode(webDavBridge),
+            "WebDAV LockBridge is a public WinFsp.Net drive, not its private rclone mount");
+        Assert(!ShouldShellRename(webDavBridge),
+            "WebDAV LockBridge must repair its real registry key without Shell COM");
+        Assert(MountPointName(webDavBridge) ==
+            "##NASMount-76543210#새 NAS",
+            "Bridge UNC key must use its stable profile-specific server");
+        Assert(IsCurrentMountPointKey(
+            "##NASMount-76543210#새 NAS", "NASMount-76543210", "새 NAS") &&
+            !IsCurrentMountPointKey(
+                "##NASMount-different#새 NAS", "NASMount-76543210", "새 NAS"),
+            "WebDAV bridge matching must accept exact owned UNC only");
+        Assert(!HasOwnedNetworkPresentation(new NasProfile {
+            Protocol = "WebDAV", UseFixedDriveMode = true
+        }) &&
+            !HasOwnedNetworkPresentation(new NasProfile {
+                Protocol = "SMB", UseLockBridge = true
+            }),
+            "fixed local disks and SMB must never be treated as FileHub WinFsp shares");
         Assert(IsCurrentMountPointKey(
             "##NASMount-f15d6c50-d9016a70#Goo",
             "NASMount-f15d6c50-d9016a70", "Google Drive"),

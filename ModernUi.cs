@@ -350,7 +350,7 @@ internal sealed partial class MainForm
 
     private void InitializeModernUi(bool minimized)
     {
-        Text = "FileHub AIO v1.3.105  |  PC 드라이브";
+        Text = "FileHub AIO v1.3.106  |  PC 드라이브";
         FormBorderStyle = FormBorderStyle.None;
         ControlBox = false;
         MaximizeBox = false;
@@ -390,7 +390,7 @@ internal sealed partial class MainForm
             headerIcon.Image = badge.ToBitmap();
         } catch { /* A missing icon must never block connection controls. */ }
         header.Controls.Add(headerIcon);
-        var brand = ModernTheme.Label("FileHub AIO  v1.3.105", 9.3f, true);
+        var brand = ModernTheme.Label("FileHub AIO  v1.3.106", 9.3f, true);
         brand.SetBounds(35, 1, 215, 31);
         header.Controls.Add(brand);
         var actions = new FlowLayoutPanel
@@ -487,10 +487,10 @@ internal sealed partial class MainForm
 
         tray = new NotifyIcon
         {
-            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.105",
+            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.106",
             Visible = true, ContextMenuStrip = new ContextMenuStrip()
         };
-        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.105 열기", null, (_, _) => ShowWindow());
+        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.106 열기", null, (_, _) => ShowWindow());
         tray.ContextMenuStrip.Items.Add("모두 연결", null, async (_, _) => await ConnectAll(true));
         tray.ContextMenuStrip.Items.Add("프로그램 종료", null, async (_, _) => await ExitProgramFast());
         tray.BalloonTipClicked += async (_, _) =>
@@ -525,10 +525,10 @@ internal sealed partial class MainForm
             // MountPoints2 key may not exist during the first 18 seconds.
             // Retry every 30s, but broadcast only if the actual owned
             // abbreviated share label needs correction.
-            foreach (var google in cfg.Profiles.Where(p =>
-                p.Protocol == "GoogleDrive" &&
+            foreach (var owned in cfg.Profiles.Where(p =>
+                (p.Protocol == "GoogleDrive" || p.UseLockBridge) &&
                 RemoteMount.IsRunning(p) && RemoteMount.IsMounted(p)))
-                ExplorerDriveIcon.ScheduleNetworkLabelRepair(google);
+                ExplorerDriveIcon.ScheduleNetworkLabelRepair(owned);
         };
         // If rclone's local RC call lasts longer than five seconds, skip
         // that timer tick rather than queueing redundant requests forever.

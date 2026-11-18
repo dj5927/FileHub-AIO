@@ -4,8 +4,8 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 버전과 업데이트
 
-- PC 버전: v1.3.105, 이후 v1.3.106 / v1.3.107...
-- PC 전용 GitHub 릴리즈 태그: pc-v1.3.105 / pc-v1.3.106 ...
+- PC 버전: v1.3.106, 이후 v1.3.107 / v1.3.108...
+- PC 전용 GitHub 릴리즈 태그: pc-v1.3.106 / pc-v1.3.107 ...
 - Android 버전: v0.1.x — Windows 업데이트와 별개로 운영
 - 프로그램 실행 시 트레이 업데이트 알림 / 환경 설정 → PC 업데이트 확인
 - 새 PC 버전을 받으면 GitHub 릴리즈 ZIP SHA-256 검증 → 사용자의 설치 승인 → 원격 드라이브 안전 해제 → 프로그램 업데이트 후 재실행
@@ -13,7 +13,7 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 설치
 
-GitHub Releases에서 FileHub-AIO-PC-1.3.105-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.105를 설치할 수 있습니다.
+GitHub Releases에서 FileHub-AIO-PC-1.3.106-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.106을 설치할 수 있습니다.
 
 업데이트 설치 전에는 Excel/Word 등 열린 문서를 모두 저장하고 닫아야 합니다. 안전하게 해제하지 못한 NAS 드라이브가 있으면 프로그램 교체를 중단합니다. 이전 버전은 사용자 백업 폴더에 보관합니다.
 
@@ -36,6 +36,33 @@ PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj 
 ## 검증 범위
 
 업데이트 무결성, 버전 필터링, 로컬 WinFsp 저장, 백업/롤백에 대한 자동 검사를 포함합니다. 실제 사용자 NAS의 다중 PC Excel 동시 편집 및 서버별 잠금 호환성은 별도 시험이 필요합니다.
+
+## v1.3.106 WebDAV LockBridge 네트워크 표시명 누락 수정
+
+- 실제 사용자 PC에서 `새 NAS (R:)`는 **WebDAV LockBridge**
+  연결입니다. rclone 백엔드는 로컬 private-mount로 실행되지만
+  LockBridge의 **공개 R:은 WinFsp.Net 네트워크 드라이브**입니다.
+  기존 표시명 관리 함수는 `UseLockBridge`를 제외하여 Windows의
+  실제 UNC 키에 표시명 `_LabelFromReg`를 설정하지 않았습니다.
+- 사용자 PC HKCU MountPoints2에서 실제로
+  `##NASMount-<프로필 식별자>#새 NAS` 키가 존재하고 표시명은
+  비어 있었습니다. 따라서 Explorer에
+  `새 NAS(\\NASMount-...) (R:)`가 노출됐습니다.
+- LockBridge 공개 드라이브도 `HasOwnedNetworkPresentation`
+  검사에 포함하여 동일한 표시명·아이콘 등록을 수행합니다.
+  세션별 Google/TeraBox 공유 이름과 프로필별 Bridge 이름은
+  각각 자신의 WinFsp 공유만 검색하며 다른 프로그램의 레지스트리는
+  건드리지 않습니다.
+- WebDAV Bridge와 Google은 Shell COM의 동기 이름 변경 호출
+  없이, 실제 존재하는 MountPoints2 키에만 표시명을 적용합니다.
+  Windows 등록이 늦으면 30초 주기 검사에서 표시명만 재확인하며
+  값이 달라진 경우에만 탐색기 갱신을 요청합니다.
+- 테스트: Google/TeraBox 네트워크 공유, WebDAV Bridge 네트워크
+  공유, 일반 고정 디스크·SMB 제외, 외부 네트워크 이름 불변 등
+  회귀 규칙을 확인합니다.
+- 실제 사용자 PC의 실행 중 v1.3.105에는 변경하지 않았으며,
+  v1.3.106을 정상 종료·별도 폴더 실행해 WebDAV 표시명 및
+  Google 실제 용량·TeraBox 기능 유지 여부를 후속 확인해야 합니다.
 
 ## v1.3.105 Google 전용 rclone SHA-256 검사 오연결 수정
 
