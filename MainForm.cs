@@ -84,7 +84,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.96 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.97 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -1251,6 +1251,17 @@ internal sealed partial class MainForm : Form
             }
             else
             {
+                // A live rclone/WinFsp backend must never be treated as a
+                // disconnected profile just because a slow cloud health
+                // check did not finish. Reconnecting here re-enumerates the
+                // same root and makes the apparent connect/disconnect loop.
+                if (p.Protocol != "SMB" && RemoteMount.IsRunning(p))
+                {
+                    if (!RemoteMount.IsMounted(p))
+                        AppStore.Log("AUTO_RECONNECT_SKIPPED_LIVE_BACKEND id=" +
+                            p.Id + " protocol=" + p.Protocol);
+                    continue;
+                }
                 DateTime? retryAfter = retry.TryGetValue(p.Id, out var until)
                     ? until : null;
                 if (!manualReconnectPause.ShouldAttemptAutoConnect(p,

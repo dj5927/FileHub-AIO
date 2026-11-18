@@ -90,7 +90,7 @@ internal static class RemoteMount
         if (!IsRunning(profile))
             return OperationResult.Fail("FileHub가 관리하는 연결 프로세스가 종료됐습니다.");
         Task<OperationResult> probe = ActiveHealthChecks.GetOrAdd(profile.Id,
-            _ => VerifyExplorerAccess(profile));
+            _ => VerifyMountedVolumeHealth(profile));
         try
         {
             // Even if a hung kernel callback outlives this timeout, the
@@ -99,9 +99,9 @@ internal static class RemoteMount
         }
         catch (TimeoutException)
         {
-            lock (Guard) BrowseVerified.Remove(profile.Id);
             AppStore.Log("MOUNT_HEALTH_TIMEOUT id=" + profile.Id +
-                " protocol=" + profile.Protocol + " owned_backend_preserved=true");
+                " protocol=" + profile.Protocol +
+                " owned_backend_preserved=true verification_preserved=true");
             return OperationResult.Fail("탐색기 드라이브가 6초 내 응답하지 않았습니다.");
         }
         finally
@@ -109,6 +109,36 @@ internal static class RemoteMount
             if (probe.IsCompleted)
                 ActiveHealthChecks.TryRemove(
                     new KeyValuePair<Guid, Task<OperationResult>>(profile.Id, probe));
+        }
+    }
+
+    // Regular health checks must not enumerate the cloud root again. A Google
+    // Drive ReadDirectory can legitimately take 15-40 seconds; using it for
+    // every 6-second health check incorrectly reports a working volume as
+    // failed and triggers repeated expensive reads. Full enumeration remains
+    // mandatory for the *initial* mount verification below.
+    private static async Task<OperationResult> VerifyMountedVolumeHealth(
+        NasProfile profile)
+    {
+        string root = profile.Letter.ToUpperInvariant() + @":\";
+        try
+        {
+            long total = await Task.Run(() =>
+            {
+                var drive = new DriveInfo(root);
+                return drive.TotalSize; // WinFsp volume info, no ReadDirectory.
+            });
+            if (total <= 0)
+                return OperationResult.Fail("드라이브 용량 정보가 유효하지 않습니다.");
+            LastHealthy[profile.Id] = DateTime.UtcNow;
+            return OperationResult.Ok("Mounted volume info verified");
+        }
+        catch (Exception ex)
+        {
+            AppStore.Log("MOUNT_VOLUME_HEALTH_FAILED id=" + profile.Id +
+                " protocol=" + profile.Protocol +
+                " type=" + ex.GetType().Name);
+            return OperationResult.Fail("드라이브 용량 조회 실패: " + ex.Message);
         }
     }
 

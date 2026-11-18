@@ -49,17 +49,19 @@ internal static class ExplorerLiveViewRefresh
         int matched = 0, refreshed = 0, failed = 0;
         try
         {
-            Type? shellType = Type.GetTypeFromProgID("Shell.Application");
-            if (shellType is null)
+            // Shell.Application.Windows() intermittently throws a COM
+            // class-factory error on Windows 11 even while Explorer is alive.
+            // Instantiate the registered ShellWindows collection directly.
+            // This also avoids creating an unused Shell.Application wrapper.
+            Type? windowsType = Type.GetTypeFromCLSID(
+                new Guid("9BA05972-F6A8-11CF-A442-00A0C90A8F39"));
+            if (windowsType is null)
                 return new Result(0, 0, 1);
-            dynamic? shell = Activator.CreateInstance(shellType);
-            if (shell is null)
+            dynamic? windows = Activator.CreateInstance(windowsType);
+            if (windows is null)
                 return new Result(0, 0, 1);
             try
             {
-                dynamic? windows = shell.Windows();
-                if (windows is null)
-                    return new Result(0, 0, 1);
                 int count = (int)windows.Count;
                 for (int i = 0; i < count; i++)
                 {
@@ -97,7 +99,7 @@ internal static class ExplorerLiveViewRefresh
             }
             finally
             {
-                if (Marshal.IsComObject(shell)) Marshal.FinalReleaseComObject(shell);
+                if (Marshal.IsComObject(windows)) Marshal.ReleaseComObject(windows);
             }
         }
         catch (Exception ex)
