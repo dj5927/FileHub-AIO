@@ -15,11 +15,11 @@ An open-source file manager and media/reading app designed for NAS, WebDAV, SMB,
 
 Get the latest signed APK from [GitHub Releases](https://github.com/dj5927/FileHub-AIO/releases/latest). On app launch, FileHub checks the latest published stable release, showing only a short notification when an update exists. You can download and install it manually from **⋮ → 업데이트 확인 (Check for updates)**. Installation always requires Android's confirmation and may require permission to install APKs from this app.
 
-The release notes must contain a line `versionCode: 86` (or the next Android version code), and the release must have a signed APK named `FileHub-AIO-v0.1.85.apk` (or the matching tag version). The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.101 the metadata is versionCode: 102 and FileHub-AIO-v0.1.101.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
 
 ## Build
 
-Requirements: JDK 17, Android SDK (compileSdk 36), and network access for Gradle dependency resolution.
+Requirements: JDK 17, Android SDK (compileSdk 37 / Build Tools 36.0.0), Gradle 9.9.1 with verified distribution SHA-256, and network access for dependency resolution. The app continues targeting Android 35 until runtime behavior migrations are explicitly tested.
 
 The checked-in `app/office-assets/*.gz.partXX` files are lossless, split copies
 of the bundled HWP viewer's WebAssembly runtime. Gradle reconstructs the original
@@ -31,6 +31,16 @@ need to download binary assets from an untrusted site.
 ```
 
 Release builds require **your own private signing configuration**, kept outside this source repository (`../signing/signing.properties`). Never commit `.jks`, passwords, API credentials or a user's app settings. A debug-signed APK cannot update a release-signed installation.
+
+## Android v0.1.101 dependency refresh (November 2026)
+
+- Android Gradle Plugin 9.5.0 and Gradle 9.9.1 with pinned SHA-256.
+- AndroidX Core 1.19.1, DocumentFile 1.1.0, OkHttp/MockWebServer 5.5.1, SSHJ 0.41.2, Commons Net 3.13.0 and test-only org.json 20260814.
+- ZXing Core 3.5.4 now uses Maven Central instead of the obsolete local 3.5.3 JAR.
+- Embedded JSZip updated from official npm to 3.10.2. The bundled docx-preview was verified byte-for-byte against official npm 0.4.1. SheetJS 0.20.3 and rhwp 0.9.0 remain at their checked latest releases.
+- Media3 1.11.1 and NextLib FFmpeg 1.11.1-0.18.0 remain paired to avoid codec and ABI regressions.
+- 528 JVM tests ran during the upgrade. MockWebServer 5 changed the default loopback hostname; test-only fixtures now pin 127.0.0.1, preserving strict production upload-host validation.
+- Gradle dependency updates are checked weekly by Dependabot. It creates PRs with automated debug builds/tests, never directly signs or publishes an APK.
 
 ## Licensing
 

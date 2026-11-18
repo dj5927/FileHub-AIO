@@ -67,14 +67,16 @@ if (releaseSigningFile.exists()) {
 
 android {
     namespace 'com.nasmount.mobile'
-    compileSdk 36
+    // AndroidX Core 1.19.1 and OkHttp Android 5.5.1 require API 37
+    // at compile time. Keep targetSdk 35 until behavior-change testing.
+    compileSdk 37
 
     defaultConfig {
         applicationId 'com.nasmount.mobile'
         minSdk 26
         targetSdk 35
-        versionCode 101
-        versionName '0.1.100'
+        versionCode 102
+        versionName '0.1.101'
     }
     signingConfigs {
         release {
@@ -107,8 +109,8 @@ android {
 }
 
 dependencies {
-    // Apache-2.0 QR generation, packaged locally for reproducible offline builds.
-    implementation files('libs/zxing-core-3.5.3.jar')
+    // Official Maven Central ZXing; Dependabot can track the version.
+    implementation 'com.google.zxing:core:3.5.4'
     def media3_version = '1.11.1'
     implementation "androidx.media3:media3-exoplayer:$media3_version"
     implementation "androidx.media3:media3-ui:$media3_version"
@@ -116,18 +118,34 @@ dependencies {
     // renderer + ABI-matched native codecs for AC3/EAC3/DTS/MLP/TrueHD/etc.
     // GPL-3.0: redistribution of this combined build requires compliance.
     implementation "io.github.anilbeesetti:nextlib-media3ext:1.11.1-0.18.0"
-    implementation 'androidx.documentfile:documentfile:1.0.1'
-    implementation 'androidx.core:core:1.16.0'
-    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
-    implementation 'commons-net:commons-net:3.11.1'
+    implementation 'androidx.documentfile:documentfile:1.1.0'
+    implementation 'androidx.core:core:1.19.1'
+    implementation 'com.squareup.okhttp3:okhttp:5.5.1'
+    implementation 'commons-net:commons-net:3.13.0'
     implementation 'eu.agno3.jcifs:jcifs-ng:2.1.10'
-    implementation 'com.hierynomus:sshj:0.39.0'
+    implementation 'com.hierynomus:sshj:0.41.2'
     // ZIP / 7z read-write; RAR extraction only (RAR encoding is proprietary).
     implementation 'org.apache.commons:commons-compress:1.28.0'
     implementation 'org.tukaani:xz:1.12'
     implementation 'com.github.junrar:junrar:8.1.2'
+    // Bring the already-transitive AndroidX/media utility graph onto verified
+    // stable security/bugfix versions. Constraints do not add new modules.
+    constraints {
+        implementation('androidx.lifecycle:lifecycle-runtime:2.11.0') {
+            because 'avoid old 2.10.0 inherited from AndroidX Core'
+        }
+        implementation('androidx.exifinterface:exifinterface:1.4.2') {
+            because 'fix JPEG/EXIF parsing problems in the 1.3.6 dependency'
+        }
+        implementation('org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0') {
+            because 'align the transitive Android coroutines runtime'
+        }
+        implementation('org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0') {
+            because 'align Android and core coroutine variants'
+        }
+    }
     testImplementation 'junit:junit:4.13.2'
-    testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
+    testImplementation 'com.squareup.okhttp3:mockwebserver:5.5.1'
     testImplementation 'net.sf.kxml:kxml2:2.3.0'
-    testImplementation 'org.json:json:20240303'
+    testImplementation 'org.json:json:20260814'
 }

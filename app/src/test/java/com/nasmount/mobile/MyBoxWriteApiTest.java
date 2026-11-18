@@ -38,8 +38,14 @@ public class MyBoxWriteApiTest {
             return Collections.emptyList();
         }
     }
+    // MockWebServer 5 uses localhost rather than 127.0.0.1 by default.
+    // Preserve the production strict upload-host allowlist by explicitly
+    // constructing loopback URLs in TESTS, not weakening live URL validation.
+    private static HttpUrl loopback(MockWebServer s, String path) {
+        return s.url(path).newBuilder().host("127.0.0.1").build();
+    }
     private static MyBoxWriteApi api(MockWebServer s, FakeLookup lookup) {
-        return new MyBoxWriteApi(s.url("/").toString(), lookup);
+        return new MyBoxWriteApi(loopback(s, "/").toString(), lookup);
     }
     private static Models.Entry entry(String name, boolean directory) {
         Models.Entry entry = new Models.Entry(name, "/" + name, directory);
@@ -237,7 +243,7 @@ public class MyBoxWriteApiTest {
             server.enqueue(new MockResponse().setResponseCode(201));
             MyBoxWriteApi api = api(server, new FakeLookup());
             Request post = api.createMultipartUpload(
-                    server.url("/v1/storage/upload?stoken=testing"),
+                    loopback(server, "/v1/storage/upload?stoken=testing"),
                     "video.mkv", new ByteArrayInputStream(payload), payload.length);
             try (Response response = new OkHttpClient().newCall(post).execute()) {
                 assertEquals(201, response.code());
@@ -275,7 +281,7 @@ public class MyBoxWriteApiTest {
             server.enqueue(new MockResponse().setResponseCode(201)
                     .setBody(new JSONObject()
                             .put("offset", 0)
-                            .put("uploadUrl", server.url(
+                            .put("uploadUrl", loopback(server,
                                     "/v1/storage/upload?stoken=test-ticket").toString())
                             .toString()));
             server.enqueue(new MockResponse().setResponseCode(201));
@@ -305,7 +311,7 @@ public class MyBoxWriteApiTest {
             server.enqueue(new MockResponse().setResponseCode(201)
                     .setBody(new JSONObject()
                             .put("offset", 3)
-                            .put("uploadUrl", server.url(
+                            .put("uploadUrl", loopback(server,
                                     "/v1/storage/upload?stoken=test-ticket").toString())
                             .toString()));
             assertThrows(java.io.IOException.class, () ->

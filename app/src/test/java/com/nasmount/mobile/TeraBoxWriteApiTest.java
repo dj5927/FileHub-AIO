@@ -41,7 +41,10 @@ public final class TeraBoxWriteApiTest {
                 RemoteProvider.child(folder, name), false);
     }
     private static TeraBoxWriteApi api(MockWebServer server, List<Models.Entry> existing) {
-        return new TeraBoxWriteApi(server.url("/").toString(),
+        // MockWebServer 5 defaults to "localhost"; use numeric loopback in
+        // fixtures so the live TeraBox upload-host security gate is unchanged.
+        return new TeraBoxWriteApi(
+                server.url("/").newBuilder().host("127.0.0.1").build().toString(),
                 (p, dir) -> existing);
     }
     private static RecordedRequest request(MockWebServer server) throws Exception {

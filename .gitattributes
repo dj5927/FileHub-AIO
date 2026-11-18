@@ -1,0 +1,10 @@
+# Bundled/minified upstream JavaScript is hash-pinned byte-for-byte.
+# Do not rewrite LF/CRLF when checking out on Windows.
+app/src/main/assets/office_hwp/jszip.min.js -text
+app/src/main/assets/office_hwp/docx-preview.min.js -text
+app/src/main/assets/office_hwp/xlsx.full.min.js -text
+app/src/main/assets/office_hwp/pptx-modern.bundle.js -text
+app/office-assets/*.gz.part* -text
+gradle/wrapper/gradle-wrapper.jar -text
+gradlew text eol=lf
+gradlew.bat text eol=crlf

@@ -1,7 +1,6 @@
-# IMPORTANT: GitHub reads this file from the repository DEFAULT branch (main).
-# It lives in pc/windows as a reference, but the identical file must also be
-# placed on main to enable automatic PRs against the PC branch.
-# This config does NOT scan or modify Android libraries.
+# GitHub reads this config from repository default branch main.
+# PC updates target pc/windows and Android updates target main.
+# Neither is automatically merged or published as an app release.
 version: 2
 updates:
   - package-ecosystem: "nuget"
@@ -43,3 +42,28 @@ updates:
       default-days: 3
     commit-message:
       prefix: "ci(pc)"
+
+  - package-ecosystem: "gradle"
+    directory: "/"
+    target-branch: "main"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "Asia/Seoul"
+    open-pull-requests-limit: 6
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "deps(android)"
+    groups:
+      android-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+          - "minor"
+    ignore:
+      # Native FFmpeg binaries must match the exact Media3 API/ABI.
+      - dependency-name: "androidx.media3:*"
+      - dependency-name: "io.github.anilbeesetti:nextlib-media3ext"

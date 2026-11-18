@@ -1,0 +1,66 @@
+name: Android dependency PR validation
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "app/build.gradle"
+      - "build.gradle"
+      - "settings.gradle"
+      - "gradle/**"
+      - "gradle.properties"
+      - ".github/workflows/android-dependencies-pr-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  android-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout source only
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android platform and build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "platforms;android-37" "build-tools;36.0.0"
+
+      - name: Validate Gradle, dependencies and Java unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew --version --console=plain
+          ./gradlew :app:testDebugUnitTest :app:assembleDebug \
+            --no-daemon --stacktrace --console=plain
+
+      - name: Verify bundled Office vendor scripts
+        shell: bash
+        run: node scripts/verify_office_vendor_assets.js
+
+      - name: Publish test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-dependency-test-reports
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+          if-no-files-found: ignore
+
+# Debug builds only. Release signing and OTA publication require approval.
