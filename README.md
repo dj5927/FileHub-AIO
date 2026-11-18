@@ -4,8 +4,8 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 버전과 업데이트
 
-- PC 버전: v1.3.100, 이후 v1.3.101 / v1.3.102...
-- PC 전용 GitHub 릴리즈 태그: pc-v1.3.100 / pc-v1.3.101 ...
+- PC 버전: v1.3.101, 이후 v1.3.102 / v1.3.103...
+- PC 전용 GitHub 릴리즈 태그: pc-v1.3.101 / pc-v1.3.102 ...
 - Android 버전: v0.1.x — Windows 업데이트와 별개로 운영
 - 프로그램 실행 시 트레이 업데이트 알림 / 환경 설정 → PC 업데이트 확인
 - 새 PC 버전을 받으면 GitHub 릴리즈 ZIP SHA-256 검증 → 사용자의 설치 승인 → 원격 드라이브 안전 해제 → 프로그램 업데이트 후 재실행
@@ -13,7 +13,7 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 설치
 
-GitHub Releases에서 FileHub-AIO-PC-1.3.100-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.100을 설치할 수 있습니다.
+GitHub Releases에서 FileHub-AIO-PC-1.3.101-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.101을 설치할 수 있습니다.
 
 업데이트 설치 전에는 Excel/Word 등 열린 문서를 모두 저장하고 닫아야 합니다. 안전하게 해제하지 못한 NAS 드라이브가 있으면 프로그램 교체를 중단합니다. 이전 버전은 사용자 백업 폴더에 보관합니다.
 
@@ -35,6 +35,38 @@ PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj 
 ## 검증 범위
 
 업데이트 무결성, 버전 필터링, 로컬 WinFsp 저장, 백업/롤백에 대한 자동 검사를 포함합니다. 실제 사용자 NAS의 다중 PC Excel 동시 편집 및 서버별 잠금 호환성은 별도 시험이 필요합니다.
+
+## v1.3.101 Google 파일 열기 지연 및 최신 RaiDrive 비교
+
+- 비교 자료: 사용자가 지정한 로컬
+  `D:\GPT\NAS_MOUNT\새 폴더\RaiDrive.Mount_2026.10.0_x64.exe`
+  와 설치 패키지에서 추출된 CAB의 파일 목록.
+- 해당 패키지는 **RaiDrive Mount 2026.10.0**이며,
+  `RaiDrive.Mount.Service.x64.exe`(별도 서비스),
+  `RaiDrive.NotifyHelper.exe`, `RaiDrive.ShellExtension.x64.dll`,
+  `e_sqlite3.dll`, `winfsp.msi`가 포함됩니다.
+  과거 PC에 설치된 2023.9 CBFS 서비스와는 다른 버전입니다.
+- 바이너리 구성 및 공급사 릴리스 노트로 확인 가능한 사실은
+  WinFsp 기반 신규 드라이버 지원, 서비스 프로세스, Windows 셸
+  확장 및 SQLite 사용 구성요소 존재까지입니다. 비공개 RaiDrive의
+  Google API 재시도/파일 블록 알고리즘이나 내부 캐시 유지 시간은
+  바이너리 파일 목록만으로 동일하게 단정할 수 없습니다.
+- FileHub는 rclone v1.76.0 + WinFsp + VFS 구조를 유지하며
+  Google에 한정해 `--dir-cache-time 30m`, `--poll-interval 1m`,
+  `--drive-pacer-min-sleep 100ms`, `--drive-pacer-burst 8`,
+  `--vfs-write-back 5s`를 적용합니다.
+- 이전 설정은 Google 폴더 캐시 20초, 폴링 0초, 페이서
+  250ms/버스트 2, write-back 0초였습니다. 탐색기 재진입/폴더
+  재열거와 불필요한 원격 요청을 줄이는 것이 이번 변경의 목적입니다.
+  다른 기기에서 바꾼 파일은 Google Change API 폴링으로 동기화하며,
+  잠깐의 반영 지연은 발생할 수 있습니다.
+- Google UNC 드라이브명 `Goo(\\NASMount-...)` 표시 문제는
+  WinFsp가 생성한 실제 MountPoints2 키가 생긴 후 **한 번만**
+  `_LabelFromReg`를 기록하는 레지스트리 방식으로 처리합니다.
+  동기 Shell.Application COM 이름 변경은 실행하지 않습니다.
+- 실제 사용자 Google Drive에서 파일 최초 열기/쓰기, 탐색기
+  반복 F5, 계정 토큰 및 API 할당량 문제는 반드시 후속 검증이
+  필요합니다. 정확한 RaiDrive와의 성능 등가는 보장하지 않습니다.
 
 ## v1.3.100 Google Drive 탐색기 새로고침 멈춤 대응
 

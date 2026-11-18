@@ -8,8 +8,11 @@ namespace NASMount;
 /// </summary>
 internal static class GoogleMountPacingPolicy
 {
-    internal const string MinSleep = "250ms";
-    internal const string Burst = "2";
+    // 250 ms and a burst of just TWO serialized independent metadata
+    // requests in Explorer, so opening a folder after cache expiry could
+    // appear stuck. Keep a 100 ms steady pace (10/s) with a modest burst.
+    internal const string MinSleep = "100ms";
+    internal const string Burst = "8";
 
     internal static void AppendArgs(ICollection<string> args, NasProfile profile)
     {
@@ -26,8 +29,8 @@ internal static class GoogleMountPacingPolicy
         AppendArgs(google, new NasProfile { Protocol = "GoogleDrive" });
         if (!google.SequenceEqual(new[]
             {
-                "--drive-pacer-min-sleep", "250ms",
-                "--drive-pacer-burst", "2"
+                "--drive-pacer-min-sleep", "100ms",
+                "--drive-pacer-burst", "8"
             }))
             throw new InvalidOperationException("Google pacer flags changed");
         foreach (string protocol in new[]

@@ -1246,7 +1246,11 @@ internal static class RemoteMount
             // prevents the VFS from uploading an incomplete temp immediately
             // before Office's final rename. Upload completion is still
             // verified before the cooperative lease is released.
-            args.Add(officeWriteSafety ? "15s" : "0s");
+            // Google writes can create/close/rename Office temp files many
+            // times in a second. Defer upload briefly; normal disconnect
+            // still waits for VFS to flush pending transfers.
+            args.Add(officeWriteSafety ? "15s" :
+                p.Protocol == "GoogleDrive" ? "5s" : "0s");
             if (officeWriteSafety)
             {
                 args.Add("--vfs-handle-caching");
@@ -1259,7 +1263,13 @@ internal static class RemoteMount
             args.Add("--dir-cache-time");
             args.Add(directoryCacheTime);
             args.Add("--poll-interval");
-            args.Add("0");
+            // Google Drive supports Changes API notifications; refresh the
+            // long-lived directory cache asynchronously instead of forcing
+            // the Windows file-open callback to re-enumerate after 20 sec.
+            args.Add(p.Protocol == "GoogleDrive" ? "1m" : "0");
+            if (p.Protocol == "GoogleDrive")
+                AppStore.Log("GOOGLE_VFS_METADATA_POLICY dirCache=30m " +
+                    "changePoll=1m writeBack=5s pacer=100ms_burst8");
             args.Add("--cache-dir");
             args.Add(Path.Combine(AppStore.DirectoryPath, "cache", p.Id.ToString("N")));
             if (fastRead)

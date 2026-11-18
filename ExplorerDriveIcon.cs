@@ -93,23 +93,39 @@ internal static class ExplorerDriveIcon
     private static readonly ConcurrentDictionary<Guid, byte> LabelRepairRunning = new();
     internal static void ScheduleNetworkLabelRepair(NasProfile profile)
     {
-        // Google Drive mounts have already been announced once as part of
-        // the mount batch. Three consecutive network label repairs produce
-        // repeated This PC Shell refreshes, which can block when Google
-        // is processing a metadata request. Do not poke Explorer again.
-        if (profile.Protocol == "GoogleDrive" ||
-            !RemoteMount.UsesNetworkDriveMode(profile) ||
+        // For Google, never call Shell.Application.NameSpace().Self.Name:
+        // it can issue synchronous GetVolumeInfo callbacks into a slow
+        // rclone mount and stall Explorer. Use only the exact owned,
+        // existing MountPoints2 key, without inventing any registry entry.
+        if (!RemoteMount.UsesNetworkDriveMode(profile) ||
             !RemoteMount.IsMounted(profile) ||
             !LabelRepairRunning.TryAdd(profile.Id, 1)) return;
         var worker = new Thread(() =>
         {
             try
             {
-                for (int attempt = 0; attempt < 12; attempt++)
+                bool google = profile.Protocol == "GoogleDrive";
+                for (int attempt = 0; attempt < (google ? 24 : 12); attempt++)
                 {
                     if (!RemoteMount.IsMounted(profile)) break;
-                    Thread.Sleep(attempt == 0 ? 450 : 1100);
+                    Thread.Sleep(attempt == 0 ? 450 : (google ? 750 : 1100));
                     if (!RemoteMount.IsMounted(profile)) break;
+                    if (google)
+                    {
+                        bool found;
+                        using (var key = Registry.CurrentUser.OpenSubKey(
+                            MountPointRegistryPath(profile), writable: true))
+                            found = WriteLabelToExistingKey(
+                                key, MountPresentation.SafeLabel(profile.DisplayName));
+                        if (!found) continue;
+                        AppStore.Log("GOOGLE_NETWORK_LABEL_REGISTRY_ONLY id=" +
+                            profile.Id + " letter=" + profile.Letter +
+                            " attempt=" + attempt);
+                        // Exactly one notification after the provider created
+                        // its UNC registry key; no COM shell rename or loop.
+                        NotifyComputerChanged();
+                        break;
+                    }
                     bool fixedName = EnsureConfiguredDisplayName(profile,
                         deferGlobalNotify: true);
                     if (!fixedName) continue;

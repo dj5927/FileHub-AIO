@@ -18,7 +18,10 @@ internal static class MountResponsivenessPolicy
         return protocol switch
         {
             "WebDAV" => "6s",
-            "GoogleDrive" => "20s",
+            // Google supports change notifications. Keeping entries for
+            // 30 minutes avoids refetching the whole folder on each Explorer
+            // F5/file open; changes from elsewhere are picked up by polling.
+            "GoogleDrive" => "30m",
             "OneDrive" => "20s",
             "MyBox" => "15s",
             "TeraBox" => "15s",
@@ -29,7 +32,7 @@ internal static class MountResponsivenessPolicy
     internal static void PolicyTest()
     {
         if (DirectoryCacheTime("WebDAV", false, false) != "6s" ||
-            DirectoryCacheTime("GoogleDrive", false, false) != "20s" ||
+            DirectoryCacheTime("GoogleDrive", false, false) != "30m" ||
             DirectoryCacheTime("OneDrive", false, false) != "20s" ||
             DirectoryCacheTime("TeraBox", false, false) != "15s" ||
             DirectoryCacheTime("SFTP", false, false) != "5s" ||
