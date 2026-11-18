@@ -145,6 +145,16 @@ jobs:
           & $googleExe mount --help | Out-Null
           if ($LASTEXITCODE -ne 0) { throw 'Google quota engine lacks Windows mount command' }
 
+      - name: Regression-check bundled Google engine integrity before release
+        shell: pwsh
+        run: |
+          $output = & ./publish/FileHubAIO.exe --google-cold-start-policy-test 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or
+              $output -notmatch 'RCLONE_THREE_ENGINE_DISTINCT_MANIFEST_POLICY_PASS' -or
+              $output -notmatch 'GOOGLE_ASYNC_QUOTA_BUNDLED_BINARY_SHA256_PASS') {
+            throw 'Packaged Google engine integrity preflight failed: ' + $output
+          }
+
       - name: Build Windows full ZIP
         shell: pwsh
         run: |
