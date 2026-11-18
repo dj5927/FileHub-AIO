@@ -8,6 +8,23 @@ namespace NASMount;
 /// </summary>
 internal static class DriveLetterAllocator
 {
+    internal static bool GoogleLetterMustRemainStable(
+        NasProfile profile, bool reservedByOther, bool occupiedInWindows) =>
+        profile.Protocol == "GoogleDrive" &&
+        (reservedByOther || occupiedInWindows);
+
+    internal static void GoogleLetterPolicyTest()
+    {
+        var google = new NasProfile { Protocol = "GoogleDrive", Letter = "O" };
+        var webdav = new NasProfile { Protocol = "WebDAV", Letter = "T" };
+        if (!GoogleLetterMustRemainStable(google, false, true) ||
+            !GoogleLetterMustRemainStable(google, true, false) ||
+            GoogleLetterMustRemainStable(google, false, false) ||
+            GoogleLetterMustRemainStable(webdav, false, true))
+            throw new InvalidOperationException(
+                "Google letter must not be silently reallocated on mount conflict");
+        Console.WriteLine("GOOGLE_NO_AUTO_LETTER_CHURN_PASS");
+    }
     internal static string? HighestFree(
         IEnumerable<NasProfile> profiles, Guid? excluding = null,
         IEnumerable<string>? occupiedOverride = null)

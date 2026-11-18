@@ -16,8 +16,17 @@ internal static class WebDavTlsPreflight
 {
     internal static async Task<OperationResult> CheckAsync(NasProfile p)
     {
-        if (p.Protocol != "WebDAV" || p.WebDavUseHttp)
-            return OperationResult.Ok("Non-HTTPS WebDAV");
+        if (p.Protocol != "WebDAV")
+            return OperationResult.Ok("Non-WebDAV connection");
+        if (p.WebDavUseHttp)
+        {
+            // Synology WebDAV Server's default TLS port is 5006. HTTP
+            // PROPFIND to a TLS socket returns EOF, not a browsable NAS.
+            // Fail before starting WinFsp; do not silently change the host.
+            if (p.Port == 5006)
+                return OperationResult.Fail(HttpOnSynologyHttpsPortMessage(p.Host));
+            return OperationResult.Ok("HTTP WebDAV; TLS not configured");
+        }
         string host = p.Host.Trim();
         int port = p.Port <= 0 ? 5006 : p.Port;
         string? certificateName = null;
@@ -75,8 +84,26 @@ internal static class WebDavTlsPreflight
             "보안상 WinFsp 드라이브를 생성하지 않았습니다.";
     }
 
+    internal static string HttpOnSynologyHttpsPortMessage(string host) =>
+        "WebDAV 연결 설정에서 HTTP 사용이 켜져 있지만, 포트 5006은 " +
+        "Synology WebDAV의 기본 HTTPS 포트입니다.\n\n" +
+        "현재 설정: http://" + host + ":5006/\n\n" +
+        "연결 설정에서 [HTTP 사용]을 해제해 HTTPS로 연결하세요.\n" +
+        "인증서 도메인이 주소와 다르면 NAS 인증서에 등록된 " +
+        "도메인을 사용하거나 인증서를 수정해야 합니다.\n" +
+        "잘못된 프로토콜로 드라이브를 생성하지 않았습니다.";
+
     internal static void PolicyTest()
     {
+        var wrongScheme = new NasProfile {
+            Protocol = "WebDAV", Host = "ormshop.iptime.org",
+            Port = 5006, WebDavUseHttp = true
+        };
+        var blocked = CheckAsync(wrongScheme).GetAwaiter().GetResult();
+        if (blocked.Success || !blocked.Message.Contains("HTTP 사용") ||
+            !blocked.Message.Contains("HTTPS"))
+            throw new InvalidOperationException(
+                "HTTP on Synology HTTPS port must fail before mount");
         string mismatch = FailureMessage("ormshop.iptime.org",
             "ormshop.synology.me", SslPolicyErrors.RemoteCertificateNameMismatch);
         if (!mismatch.Contains("ormshop.iptime.org") ||

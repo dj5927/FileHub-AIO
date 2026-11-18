@@ -86,7 +86,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.94 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.95 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -1083,6 +1083,10 @@ internal sealed partial class MainForm : Form
             AppStore.Log((connect?"CONNECT ":"DISCONNECT ")+p.RemoteDisplay+" | "+result.Message);
             if(!result.Success)
             {
+                bool winFspNameConflict = connect &&
+                    p.Protocol == "GoogleDrive" &&
+                    (result.Message.Contains("80070050", StringComparison.OrdinalIgnoreCase) ||
+                     result.Message.Contains("Mount failed", StringComparison.OrdinalIgnoreCase));
                 if (connect && p.Protocol != "SMB" &&
                     RemoteMount.FailedBeforeFirstMount(p))
                 {
@@ -1104,10 +1108,28 @@ internal sealed partial class MainForm : Form
                     }
                 }
                 retry[p.Id] = DateTime.UtcNow.AddSeconds(
+                    winFspNameConflict ? 900 :
                     connect && (p.UseNativeWebDavLocks ||
-                        result.Message.Contains("인증서")) ? 600 :
+                        result.Message.Contains("인증서") ||
+                        result.Message.Contains("HTTP 사용")) ? 600 :
                     connect && RemoteMount.IsRunning(p) ? 10 : 60);
-                if(showError)MessageBox.Show(result.Message,"FileHub AIO",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+                if (winFspNameConflict)
+                {
+                    AppStore.Log("GOOGLE_WINFSP_NAME_COLLISION_BACKOFF id=" +
+                        p.Id + " letter=" + p.Letter + " autoRetrySeconds=900");
+                    status.Text = "Google Drive · WinFsp 네트워크 마운트 충돌 (자동 재시도 일시 보류)";
+                }
+                if(showError)MessageBox.Show(
+                    winFspNameConflict
+                        ? "Google Drive 로그인 문제가 아니라 Windows WinFsp " +
+                          "네트워크 마운트 생성 실패입니다 (80070050).\n\n" +
+                          "같은 이름의 이전 FileHub 마운트 또는 Windows 네트워크 " +
+                          "위치가 남아 있을 수 있습니다. 드라이브 문자는 자동 변경하지 " +
+                          "않으며 반복 재연결도 일시 보류합니다.\n" +
+                          "다른 프로그램과 기존 연결은 강제 종료하지 않았습니다.\n\n" +
+                          "원본 오류:\n" + result.Message
+                        : result.Message,
+                    "FileHub AIO",MessageBoxButtons.OK,MessageBoxIcon.Warning);
             }
             else
             {
@@ -1617,122 +1639,6 @@ internal sealed partial class MainForm : Form
     // This deliberately does NOT wait for Perform's profile gate: a hung
     // WinFsp/native WebDAV connection can own that semaphore indefinitely.
     // Only the explicit emergency menu may stop owned child processes.
-    async Task EmergencyDisconnectSelected()
-    {
-        var p = Selected();
-        if (p is null || p.Protocol == "SMB")
-        {
-            MessageBox.Show(this, "FileHub 소유 rclone/WinFsp 연결만 비상 종료할 수 있습니다.\n" +
-                "SMB와 RaiDrive는 이 작업의 대상이 아닙니다.", "비상 연결 종료");
-            return;
-        }
-        if (MessageBox.Show(this,
-            p.DisplayName + " (" + p.Letter + ":) 연결을 강제로 중단할까요?\n\n" +
-            "주의: Excel/Word 파일이나 VFS 업로드가 진행 중이면 저장하지 못한 " +
-            "파일이 손실될 수 있습니다. 캐시 파일과 로그는 삭제하지 않습니다.\n" +
-            "다른 NAS 연결이나 RaiDrive 프로세스는 종료하지 않습니다.\n\n" +
-            "열린 파일 저장과 일반 연결 해제가 불가능할 때만 사용하세요.",
-            "비상 연결 종료 · 데이터 손실 위험",
-            MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
-            MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
-
-        manualReconnectPause.ManualDisconnectRequested(p.Id);
-        RemoteMount.RequestEmergency(p.Id);
-        status.Text = p.DisplayName + " · 소유 프로세스 비상 중단 중...";
-        try
-        {
-            var result = await RemoteMount.EmergencyStopOwnedAsync(p)
-                .WaitAsync(TimeSpan.FromSeconds(12));
-            AppStore.Log("MANUAL_EMERGENCY_DISCONNECT id=" + p.Id +
-                " success=" + result.Success);
-            MessageBox.Show(this, result.Message, result.Success
-                ? "비상 중단 요청 처리" : "비상 중단 미완료",
-                MessageBoxButtons.OK, result.Success
-                    ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
-        }
-        catch (TimeoutException)
-        {
-            AppStore.Log("MANUAL_EMERGENCY_DISCONNECT_TIMEOUT id=" + p.Id);
-            MessageBox.Show(this,
-                "Windows 드라이버 또는 프로세스가 12초 내 응답하지 않았습니다.\n" +
-                "연결 상태가 불확실합니다. 로그와 VFS 캐시는 보존했습니다.\n" +
-                "프로그램 종료는 트레이의 비상 종료 메뉴에서 계속 진행할 수 있습니다.",
-                "비상 중단 시간 초과", MessageBoxButtons.OK,
-                MessageBoxIcon.Warning);
-        }
-        finally
-        {
-            if (!IsDisposed && !Disposing) RefreshList();
-        }
-    }
-
-    // Immediate GUI exit keeps any rclone/bridge child alive to protect
-    // pending uploads. This NEVER calls a blocking WinFsp unmount API.
-    void EmergencyExitGuiOnly()
-    {
-        if (MessageBox.Show(this,
-            "FileHub 창을 즉시 종료할까요?\n\n" +
-            "연결된 rclone/WinFsp 백엔드와 캐시는 그대로 보존합니다.\n" +
-            "드라이브가 탐색기에 남을 수 있고 다음 실행에서는 이전 연결이\n" +
-            "사용 중이라고 표시될 수 있습니다. 저장 작업이 있을 때는\n" +
-            "가능하면 일반 '프로그램 종료'를 이용하세요.",
-            "비상 UI 종료 · 기존 연결 보존",
-            MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
-            MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
-        shutdownRequested = true;
-        timer.Stop();
-        uploadStatusTimer.Stop();
-        AppStore.Log("EMERGENCY_GUI_ONLY_EXIT backend_children_preserved=true");
-        tray.Visible = false;
-        Environment.Exit(2);
-    }
-
-    // This option deliberately trades data safety for the user's explicit
-    // request to leave even if all locks/remote calls are wedged. The GUI
-    // itself MUST exit after the bounded child-stop attempt.
-    async Task EmergencyStopAllAndExit()
-    {
-        if (MessageBox.Show(this,
-            "모든 FileHub 소유 NAS 연결을 강제로 중단하고 종료할까요?\n\n" +
-            "업로드 대기 파일, 편집 중인 Excel/Word 문서의 변경 사항이\n" +
-            "유실될 수 있습니다. 이 앱이 시작한 rclone/잠금 브리지만\n" +
-            "중단하며 RaiDrive·SMB 및 다른 프로그램은 건드리지 않습니다.\n" +
-            "VFS 캐시와 로그는 삭제하지 않습니다.\n\n" +
-            "정말 비상 종료하겠습니까?",
-            "비상 전체 종료 · 저장되지 않은 데이터 손실 위험",
-            MessageBoxButtons.YesNo, MessageBoxIcon.Error,
-            MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
-        shutdownRequested = true;
-        timer.Stop();
-        uploadStatusTimer.Stop();
-        foreach (var p in cfg.Profiles.Where(p => p.Protocol != "SMB"))
-        {
-            manualReconnectPause.ManualDisconnectRequested(p.Id);
-            RemoteMount.RequestEmergency(p.Id);
-        }
-        AppStore.Log("EMERGENCY_FORCE_EXIT_BEGIN cache_preserved=true");
-        try
-        {
-            var owned = cfg.Profiles.Where(p => p.Protocol != "SMB" &&
-                RemoteMount.HasManagedRecord(p)).ToArray();
-            await Task.WhenAll(owned.Select(RemoteMount.EmergencyStopOwnedAsync))
-                .WaitAsync(TimeSpan.FromSeconds(12));
-        }
-        catch (Exception ex)
-        {
-            AppStore.Log("EMERGENCY_FORCE_EXIT_UNCONFIRMED " +
-                ex.GetType().Name);
-        }
-        finally
-        {
-            // Do not block on shell refresh, WinFsp filesystem callbacks,
-            // a profile semaphore, or a broken named-pipe QUIT reply.
-            AppStore.Log("EMERGENCY_FORCE_EXIT_GUI_TERMINATION");
-            tray.Visible = false;
-            Environment.Exit(3);
-        }
-    }
-
     // A user pressing Exit is not asking to keep the GUI open until every
     // broken WinFsp call recovers. Failed NEVER-mounted connections are
     // forcibly stopped, without an upload warning. A previously mounted
@@ -1827,7 +1733,7 @@ internal sealed partial class MainForm : Form
                         "진행 중인 드라이브 연결 작업이 완료되지 않아 종료를 보류했습니다.\n" +
                         "연결 또는 전송이 끝난 뒤 다시 [프로그램 종료]를 선택하세요.\n" +
                         "rclone/WinFsp를 강제로 종료하지 않았습니다.\n\n" +
-                        "종료가 계속 막히면 트레이 메뉴의 [비상 종료]를 선택할 수 있습니다.\n" +
+                        "종료가 지연되면 열린 문서를 저장하고 일반 [프로그램 종료]를 다시 선택하세요.\n" +
                         "미전송 데이터가 있을 경우 손실 위험을 확인한 뒤 진행하세요.",
                         "FileHub AIO 종료 대기", MessageBoxButtons.OK,
                         MessageBoxIcon.Warning);
@@ -1892,7 +1798,7 @@ internal sealed partial class MainForm : Form
                     string.Join("\n\n", failed.Take(5)) +
                     "\n\n다른 정상 드라이브는 안전하게 해제됐습니다.\n" +
                     "미완료 업로드/파일잠금은 그대로 보호합니다.\n" +
-                    "필요하면 트레이의 비상 종료 메뉴를 선택하세요.",
+                    "업로드가 끝난 뒤 다시 업데이트를 진행하세요.",
                     "FileHub AIO 종료 보류", MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
                 return;
@@ -1953,17 +1859,16 @@ internal sealed partial class MainForm : Form
                 label.Contains("화면 종료", StringComparison.Ordinal)))
             throw new InvalidOperationException(
                 "Close must safely disconnect all mounts, not retain a background engine");
-        if (!labels.Contains("비상 종료 · 창만 닫고 연결 보존") ||
-            !labels.Contains("비상 종료 · FileHub 연결 강제 중단"))
-            throw new InvalidOperationException("Emergency exit options absent from tray");
+        if (labels.Any(label => label.Contains("비상 종료")))
+            throw new InvalidOperationException("Only the ordinary Exit action may be presented");
         foreach (var profile in cfg.Profiles)
         {
             using var menu = MakeCardMenu(profile);
             bool hasEmergency = menu.Items.Cast<ToolStripItem>()
                 .Any(item => item.Text.Contains("비상 연결 종료"));
-            if (hasEmergency != (profile.Protocol != "SMB"))
+            if (hasEmergency)
                 throw new InvalidOperationException(
-                    "Emergency disconnect must not target SMB or other apps");
+                    "Extra emergency menus must not be shown");
         }
         Console.WriteLine("SAFE_EXIT_NO_KEEP_CONNECTED_BACKGROUND_ENGINE_PASS");
     }

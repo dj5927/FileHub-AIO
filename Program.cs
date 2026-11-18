@@ -58,6 +58,8 @@ internal static class Program
                 PcUpdateApply.LocalPolicyTest();
                 RemoteMount.EmergencyPolicyTestAsync().GetAwaiter().GetResult();
                 WebDavTlsPreflight.PolicyTest();
+                MountPresentation.GoogleSessionPolicyTest();
+                DriveLetterAllocator.GoogleLetterPolicyTest();
             }
             catch (Exception ex)
             {
@@ -922,6 +924,7 @@ internal static class Program
                 dashboard.VerifyParallelGatesForUiTest();
                 dashboard.VerifyShutdownGuardForUiTest();
                 dashboard.VerifySafeExitNoKeepAliveForUiTest();
+                dashboard.VerifyCloseToTrayPolicyForUiTest();
                 dashboard.VerifyTransferFooterForUiTest();
                 if (dashboard.ClientSize.Width < 755 || dashboard.ClientSize.Width > 785 ||
                     dashboard.ClientSize.Height < 550 || dashboard.ClientSize.Height > 582)

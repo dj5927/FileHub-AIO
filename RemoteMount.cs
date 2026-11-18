@@ -470,9 +470,11 @@ internal static class RemoteMount
     internal static bool IsOurNetworkShare(NasProfile profile, string? remotePath)
     {
         if (profile.Protocol == "SMB" || string.IsNullOrWhiteSpace(remotePath)) return false;
-        return remotePath.StartsWith(
-            @"\\NASMount-" + profile.Id.ToString("N")[..8] + "\\",
-            StringComparison.OrdinalIgnoreCase);
+        return System.Text.RegularExpressions.Regex.IsMatch(remotePath,
+            @"\A\\\\NASMount-" + profile.Id.ToString("N")[..8] +
+            @"(?:-[a-fA-F0-9]{8})?\\",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant |
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 
     internal static bool HasVerifiedOtherVendorMapping(NasProfile profile)
@@ -504,6 +506,9 @@ internal static class RemoteMount
         }
         Require(IsOurNetworkShare(profile, @"\\NASMount-12345678\Wintec"),
             "own GUID prefix");
+        Require(IsOurNetworkShare(profile,
+            @"\\NASMount-12345678-a1b2c3d4\Google Drive"),
+            "Google session GUID prefix");
         Require(!IsOurNetworkShare(profile, @"\\NASMount-87654321\Wintec"),
             "another profile GUID");
         Require(!IsOurNetworkShare(profile, @"\\RaiDrive-UserK\WebDAV"),
@@ -1068,7 +1073,7 @@ internal static class RemoteMount
         // host can present a valid certificate for that EXACT hostname.
         // This prevents the "T:\\ I/O device error" from an otherwise
         // mountable but inaccessible Synology WebDAV HTTPS share.
-        if (p.Protocol == "WebDAV" && !p.WebDavUseHttp)
+        if (p.Protocol == "WebDAV")
         {
             var tls = await WebDavTlsPreflight.CheckAsync(p);
             if (!tls.Success) return tls;
@@ -1121,6 +1126,7 @@ internal static class RemoteMount
                 legacyGateway = await LegacyCharsetGateway.StartAsync(p, password);
             if (p.UseNativeWebDavLocks)
                 nativeGateway = NativeWebDavGateway.Start(p, password);
+            MountPresentation.BeginGoogleNetworkMountAttempt(p);
             var psi = await BuildStartInfo(p, password, exe, myboxGateway?.Url,
                 legacyGateway?.Url, nativeGateway?.Url);
             using var portChooser = new TcpListener(IPAddress.Loopback, 0);

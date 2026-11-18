@@ -154,7 +154,7 @@ internal static class NetworkDriveResidueCleaner
     private static bool TryNasMountGuid(string? remotePath, out string guid8)
     {
         var match = Regex.Match(remotePath ?? "",
-            @"^\\\\NASMount-([0-9a-fA-F]{8})\\",
+            @"^\\\\NASMount-([0-9a-fA-F]{8})(?:-[0-9a-fA-F]{8})?\\",
             RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
         guid8 = match.Success ? match.Groups[1].Value : "";
         return match.Success;

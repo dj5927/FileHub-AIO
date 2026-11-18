@@ -350,7 +350,7 @@ internal sealed partial class MainForm
 
     private void InitializeModernUi(bool minimized)
     {
-        Text = "FileHub AIO v1.3.94  |  PC 드라이브";
+        Text = "FileHub AIO v1.3.95  |  PC 드라이브";
         FormBorderStyle = FormBorderStyle.None;
         ControlBox = false;
         MaximizeBox = false;
@@ -390,7 +390,7 @@ internal sealed partial class MainForm
             headerIcon.Image = badge.ToBitmap();
         } catch { /* A missing icon must never block connection controls. */ }
         header.Controls.Add(headerIcon);
-        var brand = ModernTheme.Label("FileHub AIO  v1.3.94", 9.3f, true);
+        var brand = ModernTheme.Label("FileHub AIO  v1.3.95", 9.3f, true);
         brand.SetBounds(35, 1, 215, 31);
         header.Controls.Add(brand);
         var actions = new FlowLayoutPanel
@@ -487,17 +487,12 @@ internal sealed partial class MainForm
 
         tray = new NotifyIcon
         {
-            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.94",
+            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.95",
             Visible = true, ContextMenuStrip = new ContextMenuStrip()
         };
-        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.94 열기", null, (_, _) => ShowWindow());
+        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.95 열기", null, (_, _) => ShowWindow());
         tray.ContextMenuStrip.Items.Add("모두 연결", null, async (_, _) => await ConnectAll(true));
         tray.ContextMenuStrip.Items.Add("프로그램 종료", null, async (_, _) => await ExitProgramFast());
-        tray.ContextMenuStrip.Items.Add(new ToolStripSeparator());
-        tray.ContextMenuStrip.Items.Add("비상 종료 · 창만 닫고 연결 보존", null,
-            (_, _) => EmergencyExitGuiOnly());
-        tray.ContextMenuStrip.Items.Add("비상 종료 · FileHub 연결 강제 중단", null,
-            async (_, _) => await EmergencyStopAllAndExit());
         tray.BalloonTipClicked += async (_, _) =>
             await CheckForPcUpdateAsync(preferCached: true, startDownloadNow: true);
         tray.DoubleClick += (_, _) => ShowWindow();
@@ -506,10 +501,13 @@ internal sealed partial class MainForm
         {
             if (Environment.GetEnvironmentVariable("NASMOUNT_UI_SMOKE") == "1")
                 return; // The isolated QA form must dispose normally.
-            if (!exiting && e.CloseReason == CloseReason.UserClosing)
+            if (ShouldCloseToTray(e.CloseReason, exiting))
             {
                 e.Cancel = true;
-                _ = ExitProgramFast();
+                // X hides the window to the notification area. Only the
+                // tray's "프로그램 종료" command performs a real shutdown.
+                Hide();
+                ShowInTaskbar = false;
             }
         };
         Resize += (_, _) =>
@@ -1024,8 +1022,6 @@ internal sealed partial class MainForm
             Item("Microsoft 계정 재인증", () => _ = ReauthorizeOneDrive());
         Item("업로드 상태", () => _ = CheckUploadStatus());
         if (p.Protocol != "SMB")
-            Item("비상 연결 종료 · 데이터 손실 위험", () => _ = EmergencyDisconnectSelected());
-        if (p.Protocol != "SMB")
             Item("끊어진 네트워크 위치 정리", () => _ = CleanupOldNetworkLocation());
         Item("로그 폴더", OpenLogs);
         menu.Items.Add(new ToolStripSeparator());
@@ -1062,6 +1058,22 @@ internal sealed partial class MainForm
         }
     }
 
+    internal static bool ShouldCloseToTray(CloseReason reason, bool isExiting) =>
+        !isExiting && reason == CloseReason.UserClosing;
+
+    internal void VerifyCloseToTrayPolicyForUiTest()
+    {
+        if (!ShouldCloseToTray(CloseReason.UserClosing, false) ||
+            ShouldCloseToTray(CloseReason.WindowsShutDown, false) ||
+            ShouldCloseToTray(CloseReason.UserClosing, true) ||
+            tray.ContextMenuStrip is null ||
+            tray.ContextMenuStrip.Items.Cast<ToolStripItem>()
+                .Count(item => item.Text == "프로그램 종료") != 1)
+            throw new InvalidOperationException(
+                "X must hide to tray; only tray Exit may terminate application");
+        Console.WriteLine("CLOSE_BUTTON_TO_TRAY_AND_TRAY_EXIT_SEPARATE_PASS");
+    }
+
     private bool EnsureAutomaticDriveLetter(NasProfile p, bool showErrors)
     {
         // Never reallocate a letter while a live (even unbrowsable) backend
@@ -1077,6 +1089,27 @@ internal sealed partial class MainForm
             d.StartsWith(old + ":", StringComparison.OrdinalIgnoreCase));
         if (old.Length == 1 && old[0] is >= 'D' and <= 'Z' &&
             !reservedByOther && !occupiedInWindows) return true;
+        if (DriveLetterAllocator.GoogleLetterMustRemainStable(
+                p, reservedByOther, occupiedInWindows))
+        {
+            // Auto-moving a Google profile O: -> Z: -> M: changes user
+            // shortcuts and does NOT repair WinFsp error 0x80070050.
+            retry[p.Id] = DateTime.UtcNow.AddMinutes(15);
+            AppStore.Log("GOOGLE_DRIVE_LETTER_COLLISION_NO_REASSIGN id=" +
+                p.Id + " letter=" + old +
+                " occupied=" + occupiedInWindows +
+                " reserved=" + reservedByOther);
+            if (showErrors)
+                MessageBox.Show(this,
+                    "Google Drive의 " + old + ": 드라이브 문자를 Windows 또는 " +
+                    "다른 FileHub 연결이 이미 사용하고 있습니다.\n" +
+                    "드라이브 문자를 임의로 바꾸지 않았습니다.\n\n" +
+                    "열린 탐색기와 이전 FileHub 연결이 남아 있는지 확인하고,\n" +
+                    "필요하면 연결 설정에서 사용 가능한 문자를 직접 지정하세요.",
+                    "Google Drive 문자 충돌", MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            return false;
+        }
         var next = DriveLetterAllocator.HighestFree(cfg.Profiles, p.Id);
         if (next is null)
         {

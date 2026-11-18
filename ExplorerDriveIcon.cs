@@ -382,9 +382,10 @@ internal static class ExplorerDriveIcon
     }
 
     internal static bool IsOwnedHistoryKey(string key, NasProfile profile) =>
-        profile.Protocol != "SMB" && key.StartsWith(
-            "##NASMount-" + profile.Id.ToString("N")[..8] + "#",
-            StringComparison.OrdinalIgnoreCase);
+        profile.Protocol != "SMB" &&
+        Regex.IsMatch(key, @"\A##NASMount-" +
+            profile.Id.ToString("N")[..8] + @"(?:-[a-fA-F0-9]{8})?#",
+            RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     // One-time migration for profiles deleted in old releases: no saved GUID
     // remains, but Explorer still remembers \\NASMount-xxxxxxxx\old-label.
@@ -401,7 +402,7 @@ internal static class ExplorerDriveIcon
             foreach (string key in history.GetSubKeyNames())
             {
                 Match match = Regex.Match(key,
-                    @"^##NASMount-([0-9A-Fa-f]{8})#",
+                    @"^##NASMount-([0-9A-Fa-f]{8})(?:-[0-9A-Fa-f]{8})?#",
                     RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
                 if (!match.Success) continue;
                 if (activeGuids.Contains(match.Groups[1].Value)) continue;
@@ -719,7 +720,7 @@ internal static class ExplorerDriveIcon
         IntPtr unc = Marshal.StringToHGlobalUni(
             "\\" + MountPresentation.WinFspPrefix(profile));
         IntPtr server = Marshal.StringToHGlobalUni(
-            @"\\NASMount-" + profile.Id.ToString("N")[..8]);
+            @"\\" + MountPresentation.NetworkServerName(profile));
         try
         {
             SHChangeNotify(SHCNE_DRIVEREMOVED, SHCNF_PATHW, drive, IntPtr.Zero);
