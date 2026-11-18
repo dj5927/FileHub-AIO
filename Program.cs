@@ -121,7 +121,11 @@ internal static class Program
         if (args.Contains("--google-cold-start-policy-test",
                 StringComparer.OrdinalIgnoreCase))
         {
-            try { GoogleMountPacingPolicy.SelfTest(); }
+            try
+            {
+                GoogleMountPacingPolicy.SelfTest();
+                GoogleExplorerStabilityPolicy.SelfTest();
+            }
             catch (Exception ex)
             {
                 Console.Error.WriteLine("GOOGLE_COLD_START_POLICY_FAILED " + ex);
@@ -1674,6 +1678,7 @@ internal static class SelfTest
             ShellArrivalBatch.PolicyTest();
             GoogleStartupTrace.PolicyTest();
             GoogleMountPacingPolicy.SelfTest();
+            GoogleExplorerStabilityPolicy.SelfTest();
             ProfileDeletionPolicy.SelfTest();
             ExplorerDriveIcon.DisplayNamePolicyTest();
             void Verify(string description, bool condition)

@@ -93,7 +93,12 @@ internal static class ExplorerDriveIcon
     private static readonly ConcurrentDictionary<Guid, byte> LabelRepairRunning = new();
     internal static void ScheduleNetworkLabelRepair(NasProfile profile)
     {
-        if (!RemoteMount.UsesNetworkDriveMode(profile) ||
+        // Google Drive mounts have already been announced once as part of
+        // the mount batch. Three consecutive network label repairs produce
+        // repeated This PC Shell refreshes, which can block when Google
+        // is processing a metadata request. Do not poke Explorer again.
+        if (profile.Protocol == "GoogleDrive" ||
+            !RemoteMount.UsesNetworkDriveMode(profile) ||
             !RemoteMount.IsMounted(profile) ||
             !LabelRepairRunning.TryAdd(profile.Id, 1)) return;
         var worker = new Thread(() =>

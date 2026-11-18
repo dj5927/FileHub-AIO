@@ -350,7 +350,7 @@ internal sealed partial class MainForm
 
     private void InitializeModernUi(bool minimized)
     {
-        Text = "FileHub AIO v1.3.99  |  PC 드라이브";
+        Text = "FileHub AIO v1.3.100  |  PC 드라이브";
         FormBorderStyle = FormBorderStyle.None;
         ControlBox = false;
         MaximizeBox = false;
@@ -390,7 +390,7 @@ internal sealed partial class MainForm
             headerIcon.Image = badge.ToBitmap();
         } catch { /* A missing icon must never block connection controls. */ }
         header.Controls.Add(headerIcon);
-        var brand = ModernTheme.Label("FileHub AIO  v1.3.99", 9.3f, true);
+        var brand = ModernTheme.Label("FileHub AIO  v1.3.100", 9.3f, true);
         brand.SetBounds(35, 1, 215, 31);
         header.Controls.Add(brand);
         var actions = new FlowLayoutPanel
@@ -487,10 +487,10 @@ internal sealed partial class MainForm
 
         tray = new NotifyIcon
         {
-            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.99",
+            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.100",
             Visible = true, ContextMenuStrip = new ContextMenuStrip()
         };
-        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.99 열기", null, (_, _) => ShowWindow());
+        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.100 열기", null, (_, _) => ShowWindow());
         tray.ContextMenuStrip.Items.Add("모두 연결", null, async (_, _) => await ConnectAll(true));
         tray.ContextMenuStrip.Items.Add("프로그램 종료", null, async (_, _) => await ExitProgramFast());
         tray.BalloonTipClicked += async (_, _) =>
@@ -521,7 +521,10 @@ internal sealed partial class MainForm
             // preflight is retried on timer, without touching remote drives.
             if (!startupDependenciesReady) await PrepareStartupEnginesAsync();
             if (startupDependenciesReady) await ConnectAll(false);
-            if (!shutdownRequested) _ = CheckAllGoogleExplorerVisibilityAsync();
+            // Do NOT poll Explorer's virtual "This PC" folder for Google
+            // during every timer tick. Shell COM may ask WinFsp for remote
+            // volume data and stall the entire Explorer refresh. A user can
+            // still run the explicit "Google 탐색기 표시 재확인" action.
         };
         // If rclone's local RC call lasts longer than five seconds, skip
         // that timer tick rather than queueing redundant requests forever.
@@ -1014,7 +1017,7 @@ internal sealed partial class MainForm
         }
         Item("연결 진단", () => _ = DiagnoseSelected());
         if (p.Protocol == "GoogleDrive")
-            Item("Google 탐색기 O: 표시 재확인", () =>
+            Item("Google 탐색기 표시 재확인", () =>
                 _ = CheckGoogleExplorerVisibilityAsync(p, manual: true));
         if (p.Protocol == "GoogleDrive")
             Item("Google 계정 재인증", () => _ = ReauthorizeGoogleDrive());

@@ -90,7 +90,7 @@ internal static class RemoteMount
         if (!IsRunning(profile))
             return OperationResult.Fail("FileHub가 관리하는 연결 프로세스가 종료됐습니다.");
         Task<OperationResult> probe = ActiveHealthChecks.GetOrAdd(profile.Id,
-            _ => VerifyMountedVolumeHealth(profile));
+            _ => VerifyMountedBackendHealth(profile));
         try
         {
             // Even if a hung kernel callback outlives this timeout, the
@@ -112,33 +112,45 @@ internal static class RemoteMount
         }
     }
 
-    // Regular health checks must not enumerate the cloud root again. A Google
-    // Drive ReadDirectory can legitimately take 15-40 seconds; using it for
-    // every 6-second health check incorrectly reports a working volume as
-    // failed and triggers repeated expensive reads. Full enumeration remains
-    // mandatory for the *initial* mount verification below.
-    private static async Task<OperationResult> VerifyMountedVolumeHealth(
+    // Never use DriveInfo.TotalSize for a running Google mount's heartbeat:
+    // WinFsp calls VFS Statfs() => Google About(), which can hang Explorer's
+    // This PC view while the remote API retries. Check rclone's local RC pid
+    // instead. The mount root is verified only on the initial connection.
+    private static async Task<OperationResult> VerifyMountedBackendHealth(
         NasProfile profile)
     {
-        string root = profile.Letter.ToUpperInvariant() + @":\";
+        Instance? instance;
+        lock (Guard) Running.TryGetValue(profile.Id, out instance);
+        if (instance is null || instance.Process.HasExited)
+            return OperationResult.Fail("마운트 프로세스가 종료됐습니다.");
         try
         {
-            long total = await Task.Run(() =>
+            using var client = new HttpClient
             {
-                var drive = new DriveInfo(root);
-                return drive.TotalSize; // WinFsp volume info, no ReadDirectory.
-            });
-            if (total <= 0)
-                return OperationResult.Fail("드라이브 용량 정보가 유효하지 않습니다.");
+                Timeout = TimeSpan.FromSeconds(4)
+            };
+            string credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes(
+                instance.RcUser + ":" + instance.RcPassword));
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue(
+                    "Basic", credentials);
+            using var response = await client.PostAsync(
+                $"http://127.0.0.1:{instance.RcPort}/core/pid",
+                new StringContent("{}"));
+            response.EnsureSuccessStatusCode();
+            if (!MatchingProcessPid(
+                    await response.Content.ReadAsStringAsync(),
+                    instance.Process.Id))
+                return OperationResult.Fail("로컬 rclone 프로세스 식별 정보가 일치하지 않습니다.");
             LastHealthy[profile.Id] = DateTime.UtcNow;
-            return OperationResult.Ok("Mounted volume info verified");
+            return OperationResult.Ok("로컬 rclone 프로세스 상태 정상");
         }
         catch (Exception ex)
         {
-            AppStore.Log("MOUNT_VOLUME_HEALTH_FAILED id=" + profile.Id +
+            AppStore.Log("MOUNT_BACKEND_HEALTH_FAILED id=" + profile.Id +
                 " protocol=" + profile.Protocol +
                 " type=" + ex.GetType().Name);
-            return OperationResult.Fail("드라이브 용량 조회 실패: " + ex.Message);
+            return OperationResult.Fail("로컬 rclone 상태 조회 실패: " + ex.Message);
         }
     }
 
@@ -1206,6 +1218,13 @@ internal static class RemoteMount
             GoogleMountPacingPolicy.AppendArgs(googlePacerArgs, p);
             foreach (string argument in googlePacerArgs)
                 args.Add(argument);
+            var googleExplorerArgs = new List<string>();
+            GoogleExplorerStabilityPolicy.AppendArgs(googleExplorerArgs, p);
+            foreach (string argument in googleExplorerArgs)
+                args.Add(argument);
+            if (p.Protocol == "GoogleDrive")
+                AppStore.Log("GOOGLE_EXPLORER_QUOTA_ABOUT_DISABLED " +
+                    "mode=virtual_unknown_capacity no_google_api_on_statfs=true");
             if (!p.AllowUnprotectedWrites && !p.UseLockBridge)
                 args.Add("--read-only");
             // Read-only fast mode trades cross-client metadata freshness and

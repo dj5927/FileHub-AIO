@@ -84,7 +84,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.99 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.100 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -198,7 +198,8 @@ internal sealed partial class MainForm : Form
                             ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
             }
             else if (manual)
-                MessageBox.Show(this, "탐색기 O: 드라이브 등록을 확인했습니다.",
+                MessageBox.Show(this, "탐색기 " + profile.Letter +
+                    ": 드라이브 등록을 확인했습니다.",
                     "Google Drive 탐색기 표시");
             if (!IsDisposed && !Disposing) RefreshList();
         }

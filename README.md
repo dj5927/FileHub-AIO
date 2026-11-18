@@ -4,8 +4,8 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 버전과 업데이트
 
-- PC 버전: v1.3.99, 이후 v1.3.100 / v1.3.101...
-- PC 전용 GitHub 릴리즈 태그: pc-v1.3.99 / pc-v1.3.100 ...
+- PC 버전: v1.3.100, 이후 v1.3.101 / v1.3.102...
+- PC 전용 GitHub 릴리즈 태그: pc-v1.3.100 / pc-v1.3.101 ...
 - Android 버전: v0.1.x — Windows 업데이트와 별개로 운영
 - 프로그램 실행 시 트레이 업데이트 알림 / 환경 설정 → PC 업데이트 확인
 - 새 PC 버전을 받으면 GitHub 릴리즈 ZIP SHA-256 검증 → 사용자의 설치 승인 → 원격 드라이브 안전 해제 → 프로그램 업데이트 후 재실행
@@ -13,7 +13,7 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 설치
 
-GitHub Releases에서 FileHub-AIO-PC-1.3.99-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.99를 설치할 수 있습니다.
+GitHub Releases에서 FileHub-AIO-PC-1.3.100-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.100을 설치할 수 있습니다.
 
 업데이트 설치 전에는 Excel/Word 등 열린 문서를 모두 저장하고 닫아야 합니다. 안전하게 해제하지 못한 NAS 드라이브가 있으면 프로그램 교체를 중단합니다. 이전 버전은 사용자 백업 폴더에 보관합니다.
 
@@ -35,6 +35,30 @@ PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj 
 ## 검증 범위
 
 업데이트 무결성, 버전 필터링, 로컬 WinFsp 저장, 백업/롤백에 대한 자동 검사를 포함합니다. 실제 사용자 NAS의 다중 PC Excel 동시 편집 및 서버별 잠금 호환성은 별도 시험이 필요합니다.
+
+## v1.3.100 Google Drive 탐색기 새로고침 멈춤 대응
+
+- Google Drive W: 연결 자체는 성공했으나 이후 Windows 탐색기의
+  사용 가능 공간 막대가 사라졌다가 돌아오고, 6초짜리 건강 검사에서
+  MOUNT_HEALTH_TIMEOUT이 반복되는 현상을 조사했습니다.
+- rclone VFS의 Statfs는 Windows 볼륨 용량 조회 시 Google의 About API를
+  호출하며, 기존 `--dir-cache-time 20s` 만료 때마다 갱신을 시도합니다.
+  이 호출이 느리면 탐색기 GetVolumeInfo 작업도 차단될 수 있습니다.
+- **Google 프로세스에만** `--disable About`을 적용하여 탐색기가
+  파일 목록을 표시할 때 원격 용량 API를 기다리지 않도록 변경합니다.
+  따라서 탐색기 용량 막대는 실제 Google 계정의 저장공간 현황이
+  아닌 VFS 가상/미확인 용량일 수 있습니다. 실제 파일 용량이나
+  Google 계정 요금제·할당량 자체를 변경하지 않습니다.
+- 주기적 Google Shell 표시 재검사(탐색기 COM 호출)를 제거하고,
+  Google의 연결 직후 반복 네트워크 라벨 수정/탐색기 갱신도 생략합니다.
+  수동 'Google 탐색기 표시 재확인' 메뉴는 유지합니다.
+- 사용자 메뉴의 상태 점검은 Windows의 `DriveInfo.TotalSize`
+  대신 로컬 rclone `core/pid` 확인으로 변경해 WinFsp 볼륨 용량
+  조회에 다시 진입하지 않도록 했습니다.
+- TeraBox, WebDAV, SMB와 다른 원격 저장소에는 Google 전용 옵션을
+  적용하지 않으며 기존 캐시·계정·파일을 그대로 유지합니다.
+- Windows 실사용 환경에서 탐색기 반복 새로고침, 파일 읽기/쓰기 및
+  30분 이상 연속 마운트는 새 실행 파일로 후속 확인이 필요합니다.
 
 ## v1.3.99 프로그램 프로세스와 마운트의 OS 수명 연동
 
