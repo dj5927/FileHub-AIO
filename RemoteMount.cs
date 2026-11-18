@@ -37,6 +37,80 @@ internal static class RemoteMount
     internal static bool EmergencyPending(Guid id) => EmergencyRequested.ContainsKey(id);
     // A mountpoint's existence alone does not prove Explorer can open it.
     private static readonly HashSet<Guid> BrowseVerified = [];
+    // Never-usable startup processes may be terminated immediately.
+    // Once a mount passed directory/capacity verification it may contain
+    // pending writes even if it later becomes unhealthy.
+    private static readonly HashSet<Guid> EverBrowseVerified = [];
+    internal static bool FailedBeforeFirstMount(NasProfile p)
+    {
+        lock (Guard)
+            return Running.ContainsKey(p.Id) && !EverBrowseVerified.Contains(p.Id);
+    }
+    internal static async Task<OperationResult> StopFailedBeforeFirstMountAsync(NasProfile p)
+    {
+        if (!FailedBeforeFirstMount(p))
+            return OperationResult.Fail("기존 정상 연결은 실패한 신규 연결로 취급하지 않습니다.");
+        bool manualCancel = EmergencyPending(p.Id);
+        AppStore.Log("FAILED_CONNECT_IMMEDIATE_CLEANUP id=" + p.Id +
+            " never_mounted=true");
+        var stopped = await EmergencyStopOwnedAsync(p);
+        if (stopped.Success)
+        {
+            try
+            {
+                var cleaned = await Task.Run(() =>
+                    NetworkDriveResidueCleaner.AfterSafeStop(p))
+                    .WaitAsync(TimeSpan.FromSeconds(3));
+                AppStore.Log("FAILED_CONNECT_SHELL_CLEANUP id=" + p.Id +
+                    " ok=" + cleaned.Success);
+            }
+            catch (Exception ex)
+            {
+                AppStore.Log("FAILED_CONNECT_SHELL_CLEANUP_DEFERRED id=" +
+                    p.Id + " error=" + ex.GetType().Name);
+            }
+            // Automated startup failures may retry after the normal backoff.
+            // A user-initiated Disconnect/Exit keeps its cancellation flag.
+            if (!manualCancel) ClearEmergency(p.Id);
+        }
+        return stopped;
+    }
+    // Live health probes never run inside WinForms paint/card refresh.
+    // Keep exactly one outstanding probe for each mounted connection,
+    // including while an OS filesystem callback is hung.
+    private static readonly ConcurrentDictionary<Guid, Task<OperationResult>>
+        ActiveHealthChecks = new();
+    private static readonly ConcurrentDictionary<Guid, DateTime> LastHealthy = new();
+    internal static DateTime? LastConfirmedHealthy(Guid id) =>
+        LastHealthy.TryGetValue(id, out var at) ? at : null;
+
+    internal static async Task<OperationResult> CheckMountedHealthAsync(
+        NasProfile profile)
+    {
+        if (!IsRunning(profile))
+            return OperationResult.Fail("FileHub가 관리하는 연결 프로세스가 종료됐습니다.");
+        Task<OperationResult> probe = ActiveHealthChecks.GetOrAdd(profile.Id,
+            _ => VerifyExplorerAccess(profile));
+        try
+        {
+            // Even if a hung kernel callback outlives this timeout, the
+            // same task remains registered; do not spawn one every tick.
+            return await probe.WaitAsync(TimeSpan.FromSeconds(6));
+        }
+        catch (TimeoutException)
+        {
+            lock (Guard) BrowseVerified.Remove(profile.Id);
+            AppStore.Log("MOUNT_HEALTH_TIMEOUT id=" + profile.Id +
+                " protocol=" + profile.Protocol + " owned_backend_preserved=true");
+            return OperationResult.Fail("탐색기 드라이브가 6초 내 응답하지 않았습니다.");
+        }
+        finally
+        {
+            if (probe.IsCompleted)
+                ActiveHealthChecks.TryRemove(
+                    new KeyValuePair<Guid, Task<OperationResult>>(profile.Id, probe));
+        }
+    }
 
     private static async Task<OperationResult> VerifyExplorerAccess(NasProfile profile)
     {
@@ -67,6 +141,8 @@ internal static class RemoteMount
                 " totalMs=" + overall.ElapsedMilliseconds +
                 " success=true");
             lock (Guard) BrowseVerified.Add(profile.Id);
+            lock (Guard) EverBrowseVerified.Add(profile.Id);
+            LastHealthy[profile.Id] = DateTime.UtcNow;
             return OperationResult.Ok("Explorer directory and capacity verified");
         }
         catch (Exception ex)
@@ -317,8 +393,17 @@ internal static class RemoteMount
             if (!child.Start())
                 throw new InvalidOperationException("Cannot start isolated test child");
             lock (Guard) Running[childId] = new Instance(child, 0, "", "", null);
+            var fake = new NasProfile { Id = childId, Protocol = "WebDAV" };
+            if (!FailedBeforeFirstMount(fake))
+                throw new InvalidOperationException(
+                    "A never-mounted backend must be eligible for immediate stop");
+            lock (Guard) EverBrowseVerified.Add(childId);
+            if (FailedBeforeFirstMount(fake))
+                throw new InvalidOperationException(
+                    "Previously browsable backend may have unsynced changes");
+            lock (Guard) EverBrowseVerified.Remove(childId);
             var stopped = await EmergencyStopOwnedAsync(
-                new NasProfile { Id = childId, Protocol = "WebDAV" });
+                fake);
             if (!stopped.Success || !child.HasExited)
                 throw new InvalidOperationException("Owned test child did not stop");
         }
@@ -329,6 +414,7 @@ internal static class RemoteMount
                 try { child.Kill(); } catch { }
             }
             lock (Guard) Running.Remove(childId);
+            lock (Guard) EverBrowseVerified.Remove(childId);
             ClearEmergency(childId);
         }
         Console.WriteLine("EMERGENCY_OWNED_PID_ONLY_AND_BOUNDED_ROOT_PROBE_PASS");
@@ -978,6 +1064,15 @@ internal static class RemoteMount
         if (!endpoint.Success) return endpoint;
         if (EmergencyPending(p.Id))
             return OperationResult.Fail("연결 취소됨: 비상 중단 요청");
+        // Do not create rclone/WinFsp/LockBridge until the configured NAS
+        // host can present a valid certificate for that EXACT hostname.
+        // This prevents the "T:\\ I/O device error" from an otherwise
+        // mountable but inaccessible Synology WebDAV HTTPS share.
+        if (p.Protocol == "WebDAV" && !p.WebDavUseHttp)
+        {
+            var tls = await WebDavTlsPreflight.CheckAsync(p);
+            if (!tls.Success) return tls;
+        }
         if (p.UseNativeWebDavLocks)
         {
             // Experimental RFC4918 mode must first prove actual server LOCK
@@ -1205,8 +1300,13 @@ internal static class RemoteMount
             // stdout is drained to prevent deadlock.
             process.OutputDataReceived += (_, _) => { };
             process.BeginOutputReadLine();
-            lock (Guard) Running[p.Id] = new Instance(process, port, user, secret, null,
-                myboxGateway, legacyGateway, nativeGateway);
+            lock (Guard)
+            {
+                EverBrowseVerified.Remove(p.Id);
+                BrowseVerified.Remove(p.Id);
+                Running[p.Id] = new Instance(process, port, user, secret, null,
+                    myboxGateway, legacyGateway, nativeGateway);
+            }
             // The first OAuth cloud mount can take >20s to initialize on a
             // cold Windows session (observed: Google Drive started after
             // 35 seconds even though the prior 20s check already failed).

@@ -57,6 +57,7 @@ internal static class Program
                 PcUpdateService.FeedPolicyTest();
                 PcUpdateApply.LocalPolicyTest();
                 RemoteMount.EmergencyPolicyTestAsync().GetAwaiter().GetResult();
+                WebDavTlsPreflight.PolicyTest();
             }
             catch (Exception ex)
             {

@@ -1,6 +1,7 @@
 using Microsoft.Win32;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using System.Collections.Concurrent;
 
 namespace NASMount;
 
@@ -447,6 +448,51 @@ internal static class ExplorerDriveIcon
             AppStore.Log("COMPUTER_SHELL_STATUS_WARNING " +
                 letter + " " + ex.Message);
             return null;
+        }
+    }
+
+    // Explorer COM can block independently of the WinFsp mount. Never
+    // execute this lookup on the WinForms UI thread or start repeated
+    // COM workers while an earlier query is still running.
+    private static readonly ConcurrentDictionary<string, Task<bool?>> ShellLookups =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static Task<bool?> StartShellStaLookup(string driveLetter)
+    {
+        var completion = new TaskCompletionSource<bool?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            try { completion.TrySetResult(ComputerFolderStillShows(driveLetter)); }
+            catch (Exception ex)
+            {
+                AppStore.Log("EXPLORER_STA_LOOKUP_FAIL " + ex.GetType().Name);
+                completion.TrySetResult(null);
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "FileHub.ExplorerVisibility." + driveLetter
+        };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        return completion.Task;
+    }
+    internal static async Task<bool?> ComputerFolderShowsAsync(string letter)
+    {
+        if (letter.Length != 1 || !char.IsLetter(letter[0])) return null;
+        string normalized = letter.ToUpperInvariant();
+        Task<bool?> check = ShellLookups.GetOrAdd(normalized, StartShellStaLookup);
+        try { return await check.WaitAsync(TimeSpan.FromSeconds(4)); }
+        catch (TimeoutException)
+        {
+            AppStore.Log("EXPLORER_SHELL_PROBE_TIMEOUT letter=" + letter);
+            return null;
+        }
+        finally
+        {
+            if (check.IsCompleted)
+                ((ICollection<KeyValuePair<string, Task<bool?>>>)ShellLookups)
+                    .Remove(new(normalized, check));
         }
     }
 

@@ -30,6 +30,9 @@ internal sealed partial class MainForm : Form
     readonly Dictionary<Guid, DateTime> retry = new();
     readonly SessionReconnectPause manualReconnectPause = new();
     readonly HashSet<Guid> integrityNoticesShown = new();
+    readonly HashSet<Guid> cloudHealthRunning = [];
+    readonly Dictionary<Guid, DateTime> nextCloudHealthCheck = [];
+    readonly Dictionary<Guid, bool?> cloudShellShown = [];
     bool exiting;
     // While a safe exit is in progress, startup/timer/cloud callbacks must
     // not create another mount behind the exit workflow.
@@ -83,7 +86,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.93 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.94 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -133,6 +136,91 @@ internal sealed partial class MainForm : Form
     }
     NasProfile? Selected() => selectedId is Guid id ? cfg.Profiles.FirstOrDefault(p => p.Id == id) : null;
     void RefreshList() => RefreshModernCards();
+
+    // The WinFsp root and the Explorer "This PC" namespace are separate.
+    // A cloud can browse at O:\ yet be absent from Explorer's drive list.
+    // Probe both out of the UI thread, then re-announce ONLY our verified
+    // mounted profile. Never restart Explorer, kill WinFsp or remount here.
+    private async Task CheckGoogleExplorerVisibilityAsync(
+        NasProfile profile, bool manual = false)
+    {
+        if (shutdownRequested || exiting || IsDisposed || Disposing ||
+            profile.Protocol != "GoogleDrive" ||
+            !RemoteMount.IsRunning(profile)) return;
+        if (!cloudHealthRunning.Add(profile.Id)) return;
+        try
+        {
+            if (!manual && nextCloudHealthCheck.TryGetValue(profile.Id,
+                    out var next) && DateTime.UtcNow < next) return;
+            nextCloudHealthCheck[profile.Id] = DateTime.UtcNow.AddSeconds(55);
+            var health = await RemoteMount.CheckMountedHealthAsync(profile);
+            if (shutdownRequested || IsDisposed || Disposing) return;
+            if (!health.Success)
+            {
+                AppStore.Log("GOOGLE_LIVE_MOUNT_UNHEALTHY id=" + profile.Id +
+                    " detail=" + health.Message.Replace('\n', ' '));
+                cloudShellShown[profile.Id] = null;
+                RefreshList();
+                if (manual)
+                    MessageBox.Show(this, health.Message +
+                        "\n\n기존 연결 프로세스와 미전송 파일은 보존했습니다.",
+                        "Google Drive 연결 재확인", MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                return;
+            }
+            bool? shown = await ExplorerDriveIcon.ComputerFolderShowsAsync(profile.Letter);
+            if (shutdownRequested || IsDisposed || Disposing ||
+                !RemoteMount.IsMounted(profile)) return;
+            cloudShellShown[profile.Id] = shown;
+            AppStore.Log("GOOGLE_EXPLORER_SHELL_VISIBILITY id=" + profile.Id +
+                " letter=" + profile.Letter + " shown=" +
+                (shown?.ToString() ?? "unknown") + " manual=" + manual);
+            if (shown == false || manual)
+            {
+                ExplorerDriveIcon.NotifyMounted(profile, deferGlobalNotify: true);
+                shellRefresh.Request("GOOGLE_VERIFIED_EXPLORER_REANNOUNCE_" +
+                    profile.Id.ToString("N")[..8]);
+                await Task.Delay(1250);
+                bool? after = await ExplorerDriveIcon.ComputerFolderShowsAsync(
+                    profile.Letter);
+                if (!IsDisposed && !Disposing)
+                    cloudShellShown[profile.Id] = after;
+                AppStore.Log("GOOGLE_EXPLORER_SHELL_REPAIR_RESULT id=" +
+                    profile.Id + " shown=" + (after?.ToString() ?? "unknown"));
+                if (manual && !IsDisposed && !Disposing)
+                    MessageBox.Show(this,
+                        after == true
+                            ? "드라이브 " + profile.Letter + ": 가 Windows '내 PC' 목록에 등록돼 있습니다.\n" +
+                              "탐색기가 계속 이전 목록을 표시하면 해당 탐색기 창에서 F5를 눌러주세요."
+                            : "Google Drive 마운트 파일은 읽을 수 있지만 Windows '내 PC' 등록 상태를 아직 확인하지 못했습니다.\n" +
+                              "드라이브 문자를 변경하거나 캐시를 삭제하지 않았습니다.\n" +
+                              "Windows 탐색기 주소창에서 " + profile.Letter + @":\ 를 직접 입력해 접근을 확인하세요.",
+                        "Google Drive 탐색기 표시 복구",
+                        MessageBoxButtons.OK, after == true
+                            ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            }
+            else if (manual)
+                MessageBox.Show(this, "탐색기 O: 드라이브 등록을 확인했습니다.",
+                    "Google Drive 탐색기 표시");
+            if (!IsDisposed && !Disposing) RefreshList();
+        }
+        catch (Exception ex)
+        {
+            AppStore.Log("GOOGLE_EXPLORER_RECONCILE_FAILED id=" + profile.Id +
+                " reason=" + ex.GetType().Name);
+            if (manual && !IsDisposed && !Disposing)
+                MessageBox.Show(this, "탐색기 표시 확인 중 오류: " + ex.Message,
+                    "Google Drive");
+        }
+        finally { cloudHealthRunning.Remove(profile.Id); }
+    }
+
+    private async Task CheckAllGoogleExplorerVisibilityAsync()
+    {
+        foreach (var p in cfg.Profiles.ToArray().Where(p =>
+            p.Protocol == "GoogleDrive" && RemoteMount.IsRunning(p)))
+            await CheckGoogleExplorerVisibilityAsync(p);
+    }
     void Add()
     {
         var free = DriveLetterAllocator.HighestFree(cfg.Profiles);
@@ -312,6 +400,27 @@ internal sealed partial class MainForm : Form
         var p=Selected();if(p is null)return;
         if(connect)await ConnectOne(p,true);
         else {
+            // A connection that NEVER passed the first root browse cannot
+            // contain a verified FileHub session. Do not show the Office
+            // upload warning or wait on a hung per-profile semaphore.
+            if (p.Protocol != "SMB" &&
+                (RemoteMount.FailedBeforeFirstMount(p) ||
+                 (preparingConnections.Contains(p.Id) &&
+                  !RemoteMount.IsMounted(p))))
+            {
+                manualReconnectPause.ManualDisconnectRequested(p.Id);
+                RemoteMount.RequestEmergency(p.Id);
+                if (RemoteMount.FailedBeforeFirstMount(p))
+                {
+                    var stopped = await Task.Run(() =>
+                        RemoteMount.StopFailedBeforeFirstMountAsync(p))
+                        .WaitAsync(TimeSpan.FromSeconds(8));
+                    AppStore.Log("MANUAL_FAILED_CONNECT_FORCE_STOP id=" +
+                        p.Id + " ok=" + stopped.Success);
+                }
+                RefreshList();
+                return;
+            }
             if(p.Protocol!="SMB" && MessageBox.Show("열린 문서를 모두 저장하고 닫았나요?\n캐시에 업로드 대기 중인 파일이 있을 수 있습니다.",
                 "연결 해제 확인",MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
             // Store the user's intent BEFORE awaiting the unmount. Timer
@@ -974,8 +1083,29 @@ internal sealed partial class MainForm : Form
             AppStore.Log((connect?"CONNECT ":"DISCONNECT ")+p.RemoteDisplay+" | "+result.Message);
             if(!result.Success)
             {
+                if (connect && p.Protocol != "SMB" &&
+                    RemoteMount.FailedBeforeFirstMount(p))
+                {
+                    // The backend/bridge may exist but the connection has
+                    // never been usable. Stop it automatically, rather than
+                    // leaving a broken WinFsp drive blocking later Exit.
+                    try
+                    {
+                        var stopped = await Task.Run(() =>
+                            RemoteMount.StopFailedBeforeFirstMountAsync(p))
+                            .WaitAsync(TimeSpan.FromSeconds(8));
+                        AppStore.Log("CONNECT_FAILURE_AUTO_FORCE_STOP id=" +
+                            p.Id + " success=" + stopped.Success);
+                    }
+                    catch (Exception ex)
+                    {
+                        AppStore.Log("CONNECT_FAILURE_AUTO_STOP_TIMEOUT id=" +
+                            p.Id + " type=" + ex.GetType().Name);
+                    }
+                }
                 retry[p.Id] = DateTime.UtcNow.AddSeconds(
-                    connect && p.UseNativeWebDavLocks ? 600 :
+                    connect && (p.UseNativeWebDavLocks ||
+                        result.Message.Contains("인증서")) ? 600 :
                     connect && RemoteMount.IsRunning(p) ? 10 : 60);
                 if(showError)MessageBox.Show(result.Message,"FileHub AIO",MessageBoxButtons.OK,MessageBoxIcon.Warning);
             }
@@ -1600,6 +1730,74 @@ internal sealed partial class MainForm : Form
             AppStore.Log("EMERGENCY_FORCE_EXIT_GUI_TERMINATION");
             tray.Visible = false;
             Environment.Exit(3);
+        }
+    }
+
+    // A user pressing Exit is not asking to keep the GUI open until every
+    // broken WinFsp call recovers. Failed NEVER-mounted connections are
+    // forcibly stopped, without an upload warning. A previously mounted
+    // session gets a short graceful disconnect; if it does not respond,
+    // leave its child + cache intact and always exit the GUI.
+    private async Task ExitProgramFast()
+    {
+        if (shutdownRequested || exiting) return;
+        shutdownRequested = true;
+        timer.Stop();
+        uploadStatusTimer.Stop();
+        status.Text = "프로그램 종료 중...";
+        var profiles = cfg.Profiles.Where(p => p.Protocol != "SMB").ToArray();
+        foreach (var p in profiles)
+            if (preparingConnections.Contains(p.Id) &&
+                !RemoteMount.IsMounted(p))
+                RemoteMount.RequestEmergency(p.Id);
+        try
+        {
+            var stops = profiles.Select(async p =>
+            {
+                if (RemoteMount.FailedBeforeFirstMount(p))
+                {
+                    var force = await Task.Run(() =>
+                        RemoteMount.StopFailedBeforeFirstMountAsync(p));
+                    AppStore.Log("EXIT_FAILED_CONNECT_FORCE_STOP id=" + p.Id +
+                        " success=" + force.Success);
+                    return;
+                }
+                if (!RemoteMount.HasManagedRecord(p)) return;
+                var gate = GateFor(p);
+                if (!await gate.WaitAsync(TimeSpan.FromMilliseconds(350)))
+                {
+                    AppStore.Log("EXIT_BUSY_MOUNT_PRESERVED id=" + p.Id);
+                    return;
+                }
+                try
+                {
+                    var outcome = await Task.Run(() => RemoteMount.Disconnect(p));
+                    AppStore.Log("EXIT_HEALTHY_MOUNT_SAFE_STOP id=" + p.Id +
+                        " success=" + outcome.Success);
+                    // Avoid a potentially blocking Explorer Shell COM call
+                    // on the UI thread during the guaranteed Exit path.
+                }
+                catch (Exception ex)
+                {
+                    AppStore.Log("EXIT_MOUNT_RECOVERY_DEFERRED id=" + p.Id +
+                        " error=" + ex.GetType().Name);
+                }
+                finally { gate.Release(); }
+            }).ToArray();
+            // Whole program budget, not one 8-second wait per drive.
+            await Task.WhenAll(stops).WaitAsync(TimeSpan.FromSeconds(8));
+        }
+        catch (Exception ex)
+        {
+            AppStore.Log("EXIT_FAST_UNCERTAIN_BACKENDS_PRESERVED type=" +
+                ex.GetType().Name);
+        }
+        finally
+        {
+            AppStore.Log("EXIT_FAST_GUI_TERMINATE reason=user_exit");
+            exiting = true;
+            tray.Visible = false;
+            Environment.Exit(0);
         }
     }
 
