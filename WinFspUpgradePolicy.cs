@@ -53,16 +53,18 @@ internal static class WinFspUpgradePolicy
     internal static bool UpgradeAvailable(Version? installed) =>
         installed is null || installed < PackageVersion;
 
-    // Compare the actual installed DLL build. A calendar date is only a
-    // fallback for machines where the version cannot be read.
+    // The installed version alone does NOT prove that a mounted drive failed.
+    // Especially do not call 2026 Beta a RaiDrive error: some installations
+    // run normally alongside it. Only warn when a required driver is absent
+    // or an installed version is older than the bundled stable version.
     internal static string FooterNotice(bool installed, Version? installedVersion)
     {
         if (!installed)
             return "● WinFsp 미설치 · 설정에서 WinFsp 확인/설치";
         if (installedVersion is null)
-            return "● WinFsp 버전 확인 불가 · 설정에서 정식판 설치 상태 확인";
+            return string.Empty;
         if (IsKnownBeta(installedVersion))
-            return "● WinFsp 베타 2.2 감지 · RaiDrive 보호: 수동 복구 필요";
+            return string.Empty;
         if (!UpgradeAvailable(installedVersion))
             return string.Empty;
         return $"● WinFsp {installedVersion} · 설정에서 정식판 설치 권장";
@@ -82,12 +84,12 @@ internal static class WinFspUpgradePolicy
         if (!IsKnownBeta(new Version(2, 2, 26215)) ||
             !IsKnownBeta(new Version(2, 2, 26286)) ||
             IsKnownBeta(new Version(2, 1, 25156)) ||
-            !FooterNotice(true, new Version(2, 2, 26215)).Contains("수동 복구 필요") ||
-            !FooterNotice(true, new Version(2, 2, 26286)).Contains("RaiDrive") ||
+            FooterNotice(true, new Version(2, 2, 26215)) != string.Empty ||
+            FooterNotice(true, new Version(2, 2, 26286)) != string.Empty ||
             FooterNotice(true, new Version(2, 1, 25156)) != string.Empty ||
             FooterNotice(true, new Version(2, 3, 0)) != string.Empty ||
             !FooterNotice(true, new Version(2, 1, 24255)).Contains("정식판 설치 권장") ||
-            !FooterNotice(true, null).Contains("버전 확인 불가") ||
+            FooterNotice(true, null) != string.Empty ||
             !FooterNotice(false, null).Contains("미설치"))
             throw new InvalidOperationException("WINFSP_FOOTER_NOTICE_POLICY_FAILED");
         Console.WriteLine("WINFSP_DRIVER_UPGRADE_POLICY_PASS");

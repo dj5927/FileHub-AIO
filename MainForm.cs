@@ -83,7 +83,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.91 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.92 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -838,17 +838,15 @@ internal sealed partial class MainForm : Form
         if (RemoteMount.HasWinFsp && WinFspUpgradePolicy.IsKnownBeta(installed))
         {
             MessageBox.Show(this,
-                "현재 WinFsp " + installed + " (2026 Beta)가 설치돼 있습니다.\n" +
-                "RaiDrive도 이 시스템 드라이버를 사용하므로 FileHub에서 " +
-                "정식판 MSI를 덮어 설치하지 않습니다.\n\n" +
-                "1. RaiDrive와 FileHub의 열린 파일을 저장하고 모든 드라이브 연결을 해제\n" +
-                "2. 두 프로그램과 다른 WinFsp 사용 프로그램을 완전히 종료\n" +
-                "3. Windows 설정 → 앱 → 설치된 앱에서 WinFsp 2026 Beta 제거\n" +
-                "4. Windows 재시작 후 RaiDrive 설치 프로그램으로 복구/재설치\n" +
-                "5. WinFsp가 없거나 정식판이 필요하면 FileHub 설정에서 다시 설치\n\n" +
-                "시스템 드라이버 제거·재부팅은 자동으로 실행하지 않습니다.",
-                "RaiDrive 보호 · WinFsp 베타 수동 복구 안내",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                "WinFsp " + installed + " (2026 Beta)가 설치되어 있습니다.\n\n" +
+                "드라이버 버전이 베타라는 사실만으로 연결 오류가 있는 것은 아닙니다.\n" +
+                "RaiDrive와 FileHub의 연결이 정상이라면 변경할 필요가 없습니다.\n\n" +
+                "FileHub 패키지에는 2025 정식판이 포함되어 있지만,\n" +
+                "다른 프로그램이 사용하는 공용 시스템 드라이버를 강제로\n" +
+                "내리거나 덮어쓰지 않습니다. 실제 문제가 재발하면\n" +
+                "연결 로그와 설치 상태를 먼저 확인하세요.",
+                "WinFsp 설치 버전 확인",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         if(RemoteMount.HasWinFsp && !WinFspUpgradePolicy.UpgradeAvailable(installed))

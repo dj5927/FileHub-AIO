@@ -55,25 +55,29 @@ internal sealed partial class MainForm
         if (updateNotice.Visible)
             throw new InvalidOperationException("Up-to-date version must not show a notice");
         DisplayWinFspNotice(true, new Version(2, 2, 26215));
-        if (!winFspNotice.Visible || !winFspNotice.Text.Contains("베타 2.2") ||
-            !winFspNotice.Text.Contains("수동 복구 필요") ||
-            TextRenderer.MeasureText(winFspNotice.Text, winFspNotice.Font).Width >
-                footerNotices.ClientSize.Width - 12 ||
-            footerNotices.Width < 400)
-            throw new InvalidOperationException("Outdated WinFsp footer missing");
+        if (winFspNotice.Visible || winFspNotice.Text.Length != 0)
+            throw new InvalidOperationException("Working WinFsp beta must not trigger a false failure notice");
         DisplayUpdateNotice(new Version(1, 3, 90));
-        if (!winFspNotice.Visible || !updateNotice.Visible ||
+        if (winFspNotice.Visible || !updateNotice.Visible ||
             updateNotice.Bottom != footerNotices.ClientSize.Height)
-            throw new InvalidOperationException("PC and WinFsp notices must coexist");
+            throw new InvalidOperationException("PC OTA must remain visible with installed beta");
+        DisplayWinFspNotice(true, new Version(2, 1, 24255));
+        if (!winFspNotice.Visible ||
+            !winFspNotice.Text.Contains("정식판 설치 권장") ||
+            TextRenderer.MeasureText(winFspNotice.Text, winFspNotice.Font).Width >
+                footerNotices.ClientSize.Width - 12)
+            throw new InvalidOperationException("Genuinely old WinFsp must show an unclipped advisory");
+        if (updateNotice.Bottom != footerNotices.ClientSize.Height)
+            throw new InvalidOperationException("PC update and old driver advisory must coexist");
         DisplayWinFspNotice(true, new Version(2, 1, 25156));
         if (winFspNotice.Visible || !updateNotice.Visible)
             throw new InvalidOperationException("Stable WinFsp must hide only driver notice");
         DisplayWinFspNotice(true, null);
-        if (!winFspNotice.Visible || !winFspNotice.Text.Contains("버전 확인 불가"))
-            throw new InvalidOperationException("Unknown WinFsp must show date fallback");
-        if (TextRenderer.MeasureText(winFspNotice.Text, winFspNotice.Font).Width >
-            footerNotices.ClientSize.Width - 12)
-            throw new InvalidOperationException("WinFsp fallback notice text clipped");
+        if (winFspNotice.Visible || winFspNotice.Text.Length != 0)
+            throw new InvalidOperationException("Unreadable driver metadata must not imply failure");
+        DisplayWinFspNotice(false, null);
+        if (!winFspNotice.Visible || !winFspNotice.Text.Contains("미설치"))
+            throw new InvalidOperationException("Missing driver must still show install notice");
         DisplayUpdateNotice(null);
         RefreshWinFspNotice();
     }

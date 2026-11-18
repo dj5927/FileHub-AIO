@@ -124,7 +124,7 @@ internal static class ComponentInventory
             WinFspUpgradePolicy.PackageVersion + "\r\n" +
             "WinFsp 설치 안내: " +
             (WinFspUpgradePolicy.IsKnownBeta(WinFspUpgradePolicy.InstalledVersion())
-                ? "2026 베타 설치됨 - RaiDrive 보호를 위해 수동 제거/재부팅/복구 필요"
+                ? "2026 베타 설치됨 - 설치 버전 정보만으로 오류를 판단하지 않음; 정상 연결 중이면 교체 불필요"
                 : WinFspUpgradePolicy.UpgradeAvailable(WinFspUpgradePolicy.InstalledVersion())
                     ? "WinFsp 2025 정식판 설치 가능 (모든 WinFsp 드라이브 해제 후 사용자 승인)"
                     : "현재 안정판 이상 설치됨 - 드라이버 변경 안 함") + "\r\n";

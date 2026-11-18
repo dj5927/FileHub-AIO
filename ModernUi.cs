@@ -350,7 +350,7 @@ internal sealed partial class MainForm
 
     private void InitializeModernUi(bool minimized)
     {
-        Text = "FileHub AIO v1.3.91  |  PC 드라이브";
+        Text = "FileHub AIO v1.3.92  |  PC 드라이브";
         FormBorderStyle = FormBorderStyle.None;
         ControlBox = false;
         MaximizeBox = false;
@@ -390,7 +390,7 @@ internal sealed partial class MainForm
             headerIcon.Image = badge.ToBitmap();
         } catch { /* A missing icon must never block connection controls. */ }
         header.Controls.Add(headerIcon);
-        var brand = ModernTheme.Label("FileHub AIO  v1.3.91", 9.3f, true);
+        var brand = ModernTheme.Label("FileHub AIO  v1.3.92", 9.3f, true);
         brand.SetBounds(35, 1, 215, 31);
         header.Controls.Add(brand);
         var actions = new FlowLayoutPanel
@@ -449,8 +449,9 @@ internal sealed partial class MainForm
         var driverTip = new ToolTip();
         driverTip.SetToolTip(winFspNotice,
             "PC 앱 OTA는 공유 시스템 드라이버를 자동 교체하지 않습니다.\n" +
-            "베타가 설치된 경우 RaiDrive와 FileHub를 종료하고\n" +
-            "환경 설정 → WinFsp 확인 / 설치에서 복구 절차를 확인하세요.");
+            "WinFsp 버전만으로 연결 실패를 판단하지 않습니다.\n" +
+            "RaiDrive와 FileHub가 정상이라면 드라이버 교체는 불필요합니다.\n" +
+            "환경 설정 → WinFsp 확인 / 설치에서 실제 버전을 확인하세요.");
         updateNotice = new LinkLabel {
             Text = "",
             Dock = DockStyle.Bottom,
@@ -486,10 +487,10 @@ internal sealed partial class MainForm
 
         tray = new NotifyIcon
         {
-            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.91",
+            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.92",
             Visible = true, ContextMenuStrip = new ContextMenuStrip()
         };
-        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.91 열기", null, (_, _) => ShowWindow());
+        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.92 열기", null, (_, _) => ShowWindow());
         tray.ContextMenuStrip.Items.Add("모두 연결", null, async (_, _) => await ConnectAll(true));
         tray.ContextMenuStrip.Items.Add("프로그램 종료", null, async (_, _) => await ExitSafely());
         tray.BalloonTipClicked += async (_, _) =>
