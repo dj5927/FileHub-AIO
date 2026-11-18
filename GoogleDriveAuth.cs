@@ -20,6 +20,48 @@ internal static class GoogleDriveAuth
     internal static string ConfigPath(NasProfile p) =>
         Path.Combine(DirectoryPath, p.Id.ToString("N") + ".conf");
 
+    private static void AtomicReplaceWithBackup(string temporary,
+        string destination, string backup)
+    {
+        if (File.Exists(destination))
+            File.Replace(temporary, destination, backup,
+                ignoreMetadataErrors: true);
+        else
+            File.Move(temporary, destination);
+    }
+
+    internal static string PreviousAuthorizationPath(NasProfile p) =>
+        ConfigPath(p) + ".previous-auth.bak";
+    internal static bool HasPreviousAuthorization(NasProfile p) =>
+        p.Protocol == "GoogleDrive" &&
+        File.Exists(PreviousAuthorizationPath(p));
+
+    internal static void RestorePreviousAuthorization(NasProfile p)
+    {
+        if (p.Protocol != "GoogleDrive")
+            throw new InvalidOperationException("Google Drive 프로필이 아닙니다.");
+        SecureDirectory();
+        string original = ConfigPath(p);
+        string backup = PreviousAuthorizationPath(p);
+        if (!File.Exists(backup))
+            throw new FileNotFoundException("복구할 이전 Google 인증이 없습니다.");
+        string content = File.ReadAllText(backup, Encoding.UTF8);
+        if (!content.Contains("[" + RemoteName(p) + "]", StringComparison.Ordinal) ||
+            !content.Contains("type = drive", StringComparison.Ordinal) ||
+            !content.Contains("refresh_token", StringComparison.Ordinal))
+            throw new InvalidDataException(
+                "이전 Google 인증 파일이 현재 프로필과 일치하지 않습니다.");
+        string temporary = original + "." + Guid.NewGuid().ToString("N") + ".restore";
+        try
+        {
+            File.WriteAllText(temporary, content, new UTF8Encoding(false));
+            AtomicReplaceWithBackup(temporary, original,
+                original + ".before-restore.bak");
+            AppStore.Log("GOOGLE_OAUTH_PREVIOUS_AUTH_RESTORED profile=" + p.Id);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+
     // Only report whether the access token is currently expired. Never log
     // tokens, refresh secrets, Google IDs, file paths or full config content.
     // This distinguishes a cold OAuth refresh from root-folder/API pacing.
@@ -108,6 +150,121 @@ internal static class GoogleDriveAuth
         string temporary = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
         File.WriteAllText(temporary, contents, new UTF8Encoding(false));
         File.Move(temporary, destination, overwrite: true);
+    }
+
+    // A token acquired for a new OAuth app must be tested before replacing
+    // the user's existing working account. Validate a disposable rclone
+    // configuration and atomically save it with a rollback backup.
+    internal static async Task ValidateAndSaveAuthorizedAsync(
+        NasProfile profile, string token, string clientId, string clientSecret,
+        string rcloneExe, Action<string> progress,
+        CancellationToken cancellationToken)
+    {
+        string candidate = BuildConfig(profile, token, clientId, clientSecret);
+        SecureDirectory();
+        string destination = ConfigPath(profile);
+        string temporary = destination + "." + Guid.NewGuid().ToString("N") + ".verify";
+        string backup = destination + ".previous-auth.bak";
+        try
+        {
+            File.WriteAllText(temporary, candidate, new UTF8Encoding(false));
+            progress("새 Google 인증으로 원격 폴더 읽기 검증 중...");
+            var start = new ProcessStartInfo(rcloneExe)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            foreach (string argument in new[]
+            {
+                "lsf", RemoteName(profile) + ":",
+                "--config", temporary,
+                "--max-depth", "1",
+                "--log-level", "ERROR",
+                "--drive-pacer-min-sleep", GoogleMountPacingPolicy.MinSleep,
+                "--drive-pacer-burst", GoogleMountPacingPolicy.Burst
+            })
+                start.ArgumentList.Add(argument);
+            using var process = new Process { StartInfo = start };
+            process.Start();
+            // Always drain both pipes; never log filenames or raw API errors.
+            Task<string> stdout = process.StandardOutput.ReadToEndAsync();
+            Task<string> stderr = process.StandardError.ReadToEndAsync();
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken);
+            limit.CancelAfter(TimeSpan.FromSeconds(45));
+            try
+            {
+                await process.WaitForExitAsync(limit.Token);
+                _ = await stdout;
+                _ = await stderr;
+            }
+            catch (OperationCanceledException)
+            {
+                try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+                catch { }
+                throw cancellationToken.IsCancellationRequested
+                    ? new OperationCanceledException(cancellationToken)
+                    : new IOException(
+                        "새 Google 인증 확인이 45초를 초과했습니다. 이전 인증은 유지됩니다.");
+            }
+            if (process.ExitCode != 0)
+                throw new IOException(
+                    "새 Google 인증으로 파일 목록을 조회하지 못했습니다. 기존 인증은 유지됩니다.");
+
+            cancellationToken.ThrowIfCancellationRequested();
+            AtomicReplaceWithBackup(temporary, destination, backup);
+            AppStore.Log("GOOGLE_OAUTH_VALIDATED_AND_SWAPPED profile=" +
+                profile.Id + " previousAuthBackup=" + File.Exists(backup) +
+                " clientMode=" + (clientId.Length > 0 ? "custom" : "shared"));
+        }
+        finally
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+        }
+    }
+
+    internal static void ValidationPolicyTest()
+    {
+        var profile = new NasProfile
+        {
+            Id = Guid.Parse("12345678-1111-2222-3333-444455556666"),
+            Protocol = "GoogleDrive"
+        };
+        const string json = "{\"access_token\":\"safe_access\",\"refresh_token\":\"safe_refresh\"}";
+        string text = BuildConfig(profile, json,
+            "test.apps.googleusercontent.com", "test_secret");
+        if (!text.Contains("client_id = test.apps.googleusercontent.com") ||
+            !text.Contains("client_secret = test_secret") ||
+            !text.Contains("refresh_token") ||
+            !text.Contains("scope = drive"))
+            throw new InvalidOperationException("OAuth candidate config invalid");
+        try
+        {
+            BuildConfig(profile, json, "invalid\nclient", "secret");
+            throw new InvalidOperationException("OAuth injection test failed");
+        }
+        catch (ArgumentException) { }
+        string scratch = Path.Combine(Path.GetTempPath(),
+            "FileHub_GoogleAuth_Swap_QA_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(scratch);
+        try
+        {
+            string current = Path.Combine(scratch, "current.conf");
+            string next = Path.Combine(scratch, "candidate.conf");
+            string old = Path.Combine(scratch, "previous.conf");
+            File.WriteAllText(current, "original-sentinel");
+            File.WriteAllText(next, "validated-new-sentinel");
+            AtomicReplaceWithBackup(next, current, old);
+            if (File.ReadAllText(current) != "validated-new-sentinel" ||
+                File.ReadAllText(old) != "original-sentinel" ||
+                File.Exists(next))
+                throw new InvalidOperationException(
+                    "OAuth validated swap did not preserve original state");
+        }
+        finally { Directory.Delete(scratch, recursive: true); }
+        Console.WriteLine("GOOGLE_OAUTH_VALIDATED_SWAP_AND_ROLLBACK_POLICY_PASS");
     }
 
     internal static void ImportAuthorizedConfig(NasProfile profile, string content)
@@ -210,7 +367,8 @@ internal static class GoogleDriveAuth
         if (process.ExitCode != 0 || !opened)
             throw new IOException("Google 로그인 프로세스가 정상 완료되지 않았습니다. 브라우저 로그인 및 OAuth Client ID를 확인하세요.");
         string token = ParseAuthorizedToken(result);
-        SaveAuthorized(p, token, clientId, clientSecret);
+        await ValidateAndSaveAuthorizedAsync(p, token, clientId,
+            clientSecret, exe, progress, cancellationToken);
         AppStore.Log("GOOGLE_OAUTH_COMPLETED profile=" + p.Id + " (token redacted)");
         progress("Google 계정 인증 완료. 자동 재연결 준비가 끝났습니다.");
     }

@@ -583,7 +583,8 @@ internal static class RemoteMount
     }
 
     private static async Task<UploadState> ReadUploadState(Instance instance,
-        CancellationToken cancellationToken = default, int attempts = 1)
+        CancellationToken cancellationToken = default, int attempts = 1,
+        int timeoutSeconds = 6)
     {
         // rclone's local control channel sometimes fails to respond while
         // its VFS is busy serving Explorer. Do not confuse a SINGLE 6-second
@@ -594,7 +595,7 @@ internal static class RemoteMount
             try
             {
                 using var client = new HttpClient {
-                    Timeout = TimeSpan.FromSeconds(6)
+                    Timeout = TimeSpan.FromSeconds(timeoutSeconds)
                 };
                 var rawAuth = Encoding.UTF8.GetBytes(
                     instance.RcUser + ":" + instance.RcPassword);
@@ -639,7 +640,55 @@ internal static class RemoteMount
             cache.TryGetProperty("outOfSpace", out var outOfSpace) && outOfSpace.GetBoolean());
     }
 
-    internal static async Task<OperationResult> GetTransferStatus(NasProfile profile)
+    private static readonly ConcurrentDictionary<Guid, DateTime>
+        NextUiTransferCheck = new();
+
+    // The 5-second UI timer must not make a new 6-second VFS request on
+    // every tick while a slow Google file enumeration holds the rclone
+    // backend. This is *display-only* throttling: explicit upload checks
+    // and safe disconnect still read the real status with full safeguards.
+    internal static async Task<OperationResult?> GetTransferStatusForUi(
+        NasProfile profile)
+    {
+        if (profile.Protocol != "GoogleDrive")
+            return await GetTransferStatus(profile);
+        DateTime now = DateTime.UtcNow;
+        if (NextUiTransferCheck.TryGetValue(profile.Id, out var due) && now < due)
+            return null;
+        NextUiTransferCheck[profile.Id] = now.AddSeconds(15);
+        var state = await GetTransferStatus(profile, uiProbe: true);
+        if (!state.Success && state.Message.StartsWith(
+                "업로드 상태를 확인할 수 없습니다:", StringComparison.Ordinal))
+        {
+            NextUiTransferCheck[profile.Id] =
+                DateTime.UtcNow.AddSeconds(30);
+            return OperationResult.Fail(
+                "업로드 상태 응답 지연 · 아직 안전 여부 미확인 " +
+                "(연결 유지, 안전 종료 시 재검증)");
+        }
+        return state;
+    }
+
+    internal static void GoogleUiTransferPolicyTest()
+    {
+        var profile = new NasProfile
+        {
+            Id = Guid.NewGuid(),
+            Protocol = "GoogleDrive"
+        };
+        try
+        {
+            NextUiTransferCheck[profile.Id] = DateTime.UtcNow.AddSeconds(20);
+            if (GetTransferStatusForUi(profile).GetAwaiter().GetResult() is not null)
+                throw new InvalidOperationException(
+                    "Google UI poll repeated before its cooldown expired");
+        }
+        finally { NextUiTransferCheck.TryRemove(profile.Id, out _); }
+        Console.WriteLine("GOOGLE_UI_TRANSFER_POLL_BACKOFF_POLICY_PASS");
+    }
+
+    internal static async Task<OperationResult> GetTransferStatus(
+        NasProfile profile, bool uiProbe = false)
     {
         Instance? instance;
         lock (Guard) Running.TryGetValue(profile.Id, out instance);
@@ -647,7 +696,8 @@ internal static class RemoteMount
             return OperationResult.Fail("현재 이 프로그램이 관리하는 연결이 없습니다.");
         try
         {
-            var state = await ReadUploadState(instance);
+            var state = await ReadUploadState(instance,
+                timeoutSeconds: uiProbe ? 2 : 6);
             string? critical = GetIntegrityAlert(profile.Id);
             if (critical is not null)
                 return OperationResult.Fail(critical + "\n" + state.Summary +
@@ -1323,7 +1373,8 @@ internal static class RemoteMount
                 " vfs-cache=" + (fastRead ? "writes" : "full") +
                 " dir-cache=" + directoryCacheTime +
                 " office-read-tuning=" + officeRead +
-                " write-back=" + (officeWriteSafety ? "15s" : "0s") +
+                " write-back=" + (officeWriteSafety ? "15s" :
+                    p.Protocol == "GoogleDrive" ? "5s" : "0s") +
                 " readonly=" + (!p.AllowUnprotectedWrites && !p.UseLockBridge));
             if (p.Protocol == "GoogleDrive")
                 AppStore.Log("GOOGLE_MOUNT_API_PACING minSleep=" +

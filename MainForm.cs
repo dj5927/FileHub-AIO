@@ -84,7 +84,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.101 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.102 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -581,6 +581,42 @@ internal sealed partial class MainForm : Form
         if (login.ShowDialog(this) == DialogResult.OK)
             await ConnectOne(p, true);
     }
+    async Task RestoreGooglePreviousAuthorization()
+    {
+        var p = Selected();
+        if (p is null || p.Protocol != "GoogleDrive") return;
+        if (RemoteMount.IsRunning(p))
+        {
+            MessageBox.Show(this,
+                "Google Drive를 정상 연결 해제한 다음 이전 인증을 복원하세요.",
+                "Google 인증 복구", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (!GoogleDriveAuth.HasPreviousAuthorization(p))
+        {
+            MessageBox.Show(this, "이전 Google 인증 백업이 없습니다.",
+                "Google 인증 복구", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (MessageBox.Show(this,
+                "이전 Google 인증으로 되돌릴까요? 현재 인증도 별도로 백업합니다.\n" +
+                "Google 계정 연결 후 파일 목록을 확인하세요.",
+                "Google 인증 복구", MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question) != DialogResult.Yes) return;
+        try
+        {
+            GoogleDriveAuth.RestorePreviousAuthorization(p);
+            await ConnectOne(p, true);
+        }
+        catch (Exception ex)
+        {
+            AppStore.Log("GOOGLE_OAUTH_RESTORE_FAILED profile=" + p.Id +
+                " type=" + ex.GetType().Name);
+            MessageBox.Show(this, "이전 인증 복원에 실패했습니다: " + ex.Message,
+                "Google 인증 복구", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
     async Task ReauthorizeOneDrive()
     {
         var p = Selected();
@@ -867,7 +903,7 @@ internal sealed partial class MainForm : Form
                         tray.ShowBalloonTip(15000, "FileHub AIO: 파일 저장 무결성 경고",
                             critical, ToolTipIcon.Error);
                     }
-                    var result = await RemoteMount.GetTransferStatus(p);
+                    var result = await RemoteMount.GetTransferStatusForUi(p);
                     if (IsDisposed || Disposing || shutdownRequested) break;
                     if (Selected()?.Id != p.Id)
                     {
@@ -876,7 +912,8 @@ internal sealed partial class MainForm : Form
                         transferStatusRefreshAgain = true;
                         continue;
                     }
-                    PresentTransferStatus(p, result);
+                    if (result is { } checkedState)
+                        PresentTransferStatus(p, checkedState);
                 }
                 catch (Exception ex)
                 {

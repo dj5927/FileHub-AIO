@@ -350,7 +350,7 @@ internal sealed partial class MainForm
 
     private void InitializeModernUi(bool minimized)
     {
-        Text = "FileHub AIO v1.3.101  |  PC 드라이브";
+        Text = "FileHub AIO v1.3.102  |  PC 드라이브";
         FormBorderStyle = FormBorderStyle.None;
         ControlBox = false;
         MaximizeBox = false;
@@ -390,7 +390,7 @@ internal sealed partial class MainForm
             headerIcon.Image = badge.ToBitmap();
         } catch { /* A missing icon must never block connection controls. */ }
         header.Controls.Add(headerIcon);
-        var brand = ModernTheme.Label("FileHub AIO  v1.3.101", 9.3f, true);
+        var brand = ModernTheme.Label("FileHub AIO  v1.3.102", 9.3f, true);
         brand.SetBounds(35, 1, 215, 31);
         header.Controls.Add(brand);
         var actions = new FlowLayoutPanel
@@ -487,10 +487,10 @@ internal sealed partial class MainForm
 
         tray = new NotifyIcon
         {
-            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.101",
+            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.102",
             Visible = true, ContextMenuStrip = new ContextMenuStrip()
         };
-        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.101 열기", null, (_, _) => ShowWindow());
+        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.102 열기", null, (_, _) => ShowWindow());
         tray.ContextMenuStrip.Items.Add("모두 연결", null, async (_, _) => await ConnectAll(true));
         tray.ContextMenuStrip.Items.Add("프로그램 종료", null, async (_, _) => await ExitProgramFast());
         tray.BalloonTipClicked += async (_, _) =>
@@ -1021,6 +1021,8 @@ internal sealed partial class MainForm
                 _ = CheckGoogleExplorerVisibilityAsync(p, manual: true));
         if (p.Protocol == "GoogleDrive")
             Item("Google 계정 재인증", () => _ = ReauthorizeGoogleDrive());
+        if (p.Protocol == "GoogleDrive")
+            Item("이전 Google 인증 복원", () => _ = RestoreGooglePreviousAuthorization());
         if (p.Protocol == "OneDrive")
             Item("Microsoft 계정 재인증", () => _ = ReauthorizeOneDrive());
         Item("업로드 상태", () => _ = CheckUploadStatus());

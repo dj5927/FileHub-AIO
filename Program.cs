@@ -125,6 +125,8 @@ internal static class Program
             {
                 GoogleMountPacingPolicy.SelfTest();
                 GoogleExplorerStabilityPolicy.SelfTest();
+                GoogleDriveAuth.ValidationPolicyTest();
+                RemoteMount.GoogleUiTransferPolicyTest();
             }
             catch (Exception ex)
             {
