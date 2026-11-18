@@ -29,6 +29,12 @@ internal static class RemoteMount
     }
     private static readonly Dictionary<Guid, Instance> Running = [];
     private static readonly object Guard = new();
+    // An emergency operation is an explicit user request. It blocks an
+    // in-flight connect from launching another backend after an emergency stop.
+    private static readonly ConcurrentDictionary<Guid, byte> EmergencyRequested = new();
+    internal static void RequestEmergency(Guid id) => EmergencyRequested[id] = 1;
+    internal static void ClearEmergency(Guid id) => EmergencyRequested.TryRemove(id, out _);
+    internal static bool EmergencyPending(Guid id) => EmergencyRequested.ContainsKey(id);
     // A mountpoint's existence alone does not prove Explorer can open it.
     private static readonly HashSet<Guid> BrowseVerified = [];
 
@@ -219,6 +225,9 @@ internal static class RemoteMount
 
     public static bool IsMounted(NasProfile p)
     {
+        // Never call Directory.Exists on a WinFsp mount from the WinForms UI.
+        // With a stalled server/native LOCK callback, that kernel operation
+        // can block the entire window, including Close and the tray menu.
         lock (Guard)
         {
             if (!Running.TryGetValue(p.Id, out var instance)) return false;
@@ -228,7 +237,101 @@ internal static class RemoteMount
                 return false;
             }
         }
-        return Directory.Exists(p.Letter.ToUpperInvariant() + @":\");
+        return true; // Root was already verified asynchronously.
+    }
+
+    // One outstanding Windows filesystem probe per connection attempt.
+    // A blocked WinFsp callback must NOT spawn another blocked thread every
+    // 250ms and must never pin the UI synchronization context.
+    private sealed class MountRootProbe(string root, Func<bool>? check = null)
+    {
+        private Task<bool>? pending;
+        internal int Started { get; private set; }
+        internal async Task<bool> CheckAsync()
+        {
+            if (pending is null)
+            {
+                Started++;
+                pending = Task.Run(check ?? (() => Directory.Exists(root)));
+            }
+            try
+            {
+                bool exists = await pending.WaitAsync(TimeSpan.FromMilliseconds(650));
+                pending = null; // false is normal while mount initializes.
+                return exists;
+            }
+            catch (TimeoutException)
+            {
+                // Keep ONE blocked probe rather than starting a new one.
+                AppStore.Log("WINFSP_ROOT_PROBE_TIMEOUT root=" +
+                    (root.Length > 1 ? root[..2] : "private"));
+                return false;
+            }
+        }
+    }
+
+    internal static async Task EmergencyPolicyTestAsync()
+    {
+        // No NAS/drive/process is touched by this regression test.
+        Guid id = Guid.NewGuid();
+        RequestEmergency(id);
+        if (!EmergencyPending(id))
+            throw new InvalidOperationException("Emergency request flag missing");
+        var result = await EmergencyStopOwnedAsync(new NasProfile { Id = id });
+        if (result.Success || !EmergencyPending(id))
+            throw new InvalidOperationException(
+                "An unowned process may never be terminated during emergency shutdown");
+        ClearEmergency(id);
+        if (EmergencyPending(id))
+            throw new InvalidOperationException("Manual retry must clear emergency flag");
+
+        var probe = new MountRootProbe("X:", () =>
+        {
+            Thread.Sleep(2250); // Simulated stalled kernel callback.
+            return false;
+        });
+        var sw = Stopwatch.StartNew();
+        if (await probe.CheckAsync() || await probe.CheckAsync() ||
+            sw.Elapsed > TimeSpan.FromSeconds(1.9) || probe.Started != 1)
+            throw new InvalidOperationException(
+                "WinFsp root probe blocked UI or spawned duplicate stuck workers");
+
+        // Prove that ONLY the exact child registered in our in-memory
+        // ownership record can be terminated, without touching any NAS.
+        using var child = new Process();
+        string executable = Environment.ProcessPath ??
+            throw new InvalidOperationException("No test executable path");
+        child.StartInfo = new ProcessStartInfo(executable)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        if (Path.GetFileNameWithoutExtension(executable)
+            .Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+            child.StartInfo.ArgumentList.Add(
+                System.Reflection.Assembly.GetExecutingAssembly().Location);
+        child.StartInfo.ArgumentList.Add("--emergency-child-wait");
+        var childId = Guid.NewGuid();
+        try
+        {
+            if (!child.Start())
+                throw new InvalidOperationException("Cannot start isolated test child");
+            lock (Guard) Running[childId] = new Instance(child, 0, "", "", null);
+            var stopped = await EmergencyStopOwnedAsync(
+                new NasProfile { Id = childId, Protocol = "WebDAV" });
+            if (!stopped.Success || !child.HasExited)
+                throw new InvalidOperationException("Owned test child did not stop");
+        }
+        finally
+        {
+            if (!child.HasExited)
+            {
+                try { child.Kill(); } catch { }
+            }
+            lock (Guard) Running.Remove(childId);
+            ClearEmergency(childId);
+        }
+        Console.WriteLine("EMERGENCY_OWNED_PID_ONLY_AND_BOUNDED_ROOT_PROBE_PASS");
     }
 
     public static bool IsRunning(NasProfile p)
@@ -825,6 +928,8 @@ internal static class RemoteMount
 
     public static async Task<OperationResult> Connect(NasProfile p, string? password)
     {
+        if (EmergencyPending(p.Id))
+            return OperationResult.Fail("사용자가 이 연결의 비상 중단을 요청했습니다. 다시 연결을 눌러 재시도하세요.");
         if (!TryValidate(p, out var reason)) return OperationResult.Fail(reason);
         if (IsRunning(p))
         {
@@ -871,6 +976,25 @@ internal static class RemoteMount
             " ok=" + endpoint.Success +
             " duplicateRemoteLsf=false");
         if (!endpoint.Success) return endpoint;
+        if (EmergencyPending(p.Id))
+            return OperationResult.Fail("연결 취소됨: 비상 중단 요청");
+        if (p.UseNativeWebDavLocks)
+        {
+            // Experimental RFC4918 mode must first prove actual server LOCK
+            // enforcement and cleanup. Do not spawn WinFsp when unsupported.
+            AppStore.Log("NATIVE_DAV_CAPABILITY_PREFLIGHT_BEGIN id=" + p.Id);
+            var nativeCheck = await WebDavLockProbe.TestProfile(p, password ?? "");
+            AppStore.Log("NATIVE_DAV_CAPABILITY_PREFLIGHT_RESULT id=" + p.Id +
+                " supported=" + nativeCheck.Supported +
+                " enforced=" + nativeCheck.Enforced +
+                " cleanup=" + nativeCheck.CleanupSucceeded);
+            if (!nativeCheck.Success)
+                return OperationResult.Fail(
+                    "서버 기본 잠금 모드를 사용할 수 없습니다.\n" +
+                    nativeCheck.Detail + "\n\n" +
+                    "연결을 시작하지 않았습니다. '서버 기본 잠금'을 끄고 " +
+                    "일반 파일잠금 브리지로 연결하세요.");
+        }
         string? bridgeExe = null;
         string? backend = null;
         if (p.UseLockBridge)
@@ -1068,6 +1192,13 @@ internal static class RemoteMount
                     }
                 }
             };
+            if (EmergencyPending(p.Id))
+            {
+                myboxGateway?.Dispose();
+                legacyGateway?.Dispose();
+                nativeGateway?.Dispose();
+                return OperationResult.Fail("연결 취소됨: 비상 중단 요청");
+            }
             process.Start();
             googleTrace?.Milestone("process_started");
             process.BeginErrorReadLine();
@@ -1083,8 +1214,12 @@ internal static class RemoteMount
             // claim success because the child process merely exists.
             int maxWaitSteps = (int)Math.Ceiling(
                 StartupReadinessPolicy.MountWait(p.Protocol).TotalMilliseconds / 250d);
+            var mountProbe = new MountRootProbe(p.Letter.ToUpperInvariant() + @":\");
+            var backendProbe = backend is null ? null : new MountRootProbe(backend);
             for (int i = 0; i < maxWaitSteps; i++)
             {
+                if (EmergencyPending(p.Id))
+                    return OperationResult.Fail("마운트 시작 취소됨: 비상 중단 요청");
                 if (process.HasExited)
                 {
                     myboxGateway?.Dispose();
@@ -1095,7 +1230,7 @@ internal static class RemoteMount
                         (startupErrors.IsEmpty ? "추가 오류 메시지는 로그 폴더에서 확인하세요." :
                             string.Join("\n", startupErrors.ToArray())));
                 }
-                if (!p.UseLockBridge && Directory.Exists(p.Letter.ToUpperInvariant() + @":\"))
+                if (!p.UseLockBridge && await mountProbe.CheckAsync())
                 {
                     googleTrace?.Milestone("drive_letter_ready");
                     var verified = await VerifiedThenOk(p,
@@ -1126,7 +1261,8 @@ internal static class RemoteMount
                         vfsReady = response.IsSuccessStatusCode;
                     }
                     catch { }
-                    if (vfsReady && Directory.Exists(backend))
+                    if (vfsReady && backendProbe is not null &&
+                        await backendProbe.CheckAsync())
                     {
                         var bi = new ProcessStartInfo(bridgeExe)
                         {
@@ -1174,7 +1310,9 @@ internal static class RemoteMount
                                     (bridgeErrors.IsEmpty ? "추가 원인은 FileHub AIO 로그를 확인하세요." :
                                         string.Join("\n", bridgeErrors.ToArray())));
                             }
-                            if (Directory.Exists(p.Letter.ToUpperInvariant()+@":\"))
+                            if (EmergencyPending(p.Id))
+                                return OperationResult.Fail("잠금 브리지 시작 취소됨: 비상 중단 요청");
+                            if (await mountProbe.CheckAsync())
                                 return await VerifiedThenOk(p, 
                                     $"{p.Letter}: 잠금 브리지 마운트 시작. 여러 PC 실기 검증이 필요합니다.");
                             await Task.Delay(250);
@@ -1249,6 +1387,8 @@ internal static class RemoteMount
 
     public static async Task<OperationResult> Disconnect(NasProfile p)
     {
+        if (EmergencyPending(p.Id))
+            return OperationResult.Fail("비상 중단이 요청됐으므로 일반 안전 해제를 취소합니다.");
         var stopTimer = Stopwatch.StartNew();
         void StopPhase(string phase) =>
             AppStore.Log("SAFE_DISCONNECT_PHASE profile=" + p.Id +
@@ -1293,6 +1433,8 @@ internal static class RemoteMount
             UploadState? last = null;
             for (int attempt = 0; attempt < 24; attempt++)
             {
+                if (EmergencyPending(p.Id))
+                    return OperationResult.Fail("비상 중단 요청으로 업로드 확인 대기를 취소했습니다.");
                 last = await ReadUploadState(instance, attempts: 2);
                 if (last.IsSafeToDisconnect) break;
                 if (last.Errors > 0 || last.OutOfSpace)
@@ -1305,6 +1447,8 @@ internal static class RemoteMount
                 return OperationResult.Fail("NAS 업로드가 아직 완료되지 않아 연결을 유지합니다.\n" +
                     (last?.Summary ?? "") + "\n잠시 후 다시 시도하세요.");
             StopPhase("uploads_confirmed");
+            if (EmergencyPending(p.Id))
+                return OperationResult.Fail("비상 중단 요청으로 안전 해제를 취소했습니다.");
             if (instance.Bridge is not null && !instance.Bridge.HasExited)
             {
                 using var pipe = new NamedPipeClientStream(".", "NASMountBridge_" +
@@ -1369,5 +1513,77 @@ internal static class RemoteMount
         {
             return OperationResult.Fail("안전한 마운트 종료 실패. 강제 종료하지 않았습니다: " + e.Message);
         }
+    }
+
+    /// <summary>
+    /// Explicit user emergency action only. It can lose unflushed VFS data.
+    /// Stop ONLY processes started by this in-memory FileHub instance.
+    /// Never target a named PID from another app, RaiDrive, or stale logs.
+    /// </summary>
+    internal static async Task<OperationResult> EmergencyStopOwnedAsync(NasProfile p)
+    {
+        RequestEmergency(p.Id);
+        Instance? instance;
+        lock (Guard) Running.TryGetValue(p.Id, out instance);
+        if (instance is null)
+            return OperationResult.Fail(
+                "현재 FileHub 실행이 소유한 백엔드가 없습니다. " +
+                "다른 FileHub 또는 RaiDrive 프로세스는 변경하지 않았습니다.");
+
+        static async Task<bool> StopOwnedProcessAsync(Process process,
+            Guid id, string kind)
+        {
+            try
+            {
+                if (process.HasExited) return true;
+                // WinFsp callbacks can stall even Process.Kill(). Never
+                // block the UI and always bound the wait.
+                await Task.Run(() =>
+                {
+                    if (!process.HasExited)
+                        process.Kill(entireProcessTree: false);
+                }).WaitAsync(TimeSpan.FromSeconds(3));
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3));
+                return process.HasExited;
+            }
+            catch (Exception ex)
+            {
+                AppStore.Log("EMERGENCY_STOP_INCOMPLETE id=" + id +
+                    " kind=" + kind + " error=" + ex.GetType().Name);
+                return false;
+            }
+        }
+
+        AppStore.Log("EMERGENCY_STOP id=" + p.Id +
+            " owned_children_only=true cache_preserved=true");
+        bool bridgeStopped = instance.Bridge is null ||
+            await StopOwnedProcessAsync(instance.Bridge, p.Id, "bridge");
+        bool backendStopped = await StopOwnedProcessAsync(instance.Process, p.Id, "rclone");
+        if (!bridgeStopped || !backendStopped)
+            return OperationResult.Fail(
+                "일부 프로세스 종료를 확인하지 못했습니다. 캐시와 서버 파일은 " +
+                "삭제하지 않았고 RaiDrive에도 접근하지 않았습니다.\n" +
+                "Windows 작업 관리자에서 해당 FileHub 프로세스 상태를 확인하세요.");
+        lock (Guard)
+        {
+            if (Running.TryGetValue(p.Id, out var current) &&
+                ReferenceEquals(current.Process, instance.Process))
+            {
+                Running.Remove(p.Id);
+                BrowseVerified.Remove(p.Id);
+            }
+        }
+        // Do not UNLOCK a remote file before verifying a completed upload.
+        // The server may retain a lease until expiry. Preserve all cache data.
+        try { instance.NativeGateway?.Dispose(); }
+        catch (Exception e) { AppStore.Log("EMERGENCY_GATEWAY " + e.GetType().Name); }
+        try { instance.LegacyGateway?.Dispose(); }
+        catch (Exception e) { AppStore.Log("EMERGENCY_LEGACY " + e.GetType().Name); }
+        try { instance.MyBoxGateway?.Dispose(); }
+        catch (Exception e) { AppStore.Log("EMERGENCY_MYBOX " + e.GetType().Name); }
+        return OperationResult.Ok(
+            "FileHub 소유의 잠금 브리지와 rclone 프로세스를 중단했습니다.\n" +
+            "미전송 파일은 유실될 수 있으며 VFS 캐시·로그는 삭제하지 않았습니다.\n" +
+            "WinFsp 드라이브 문자가 남으면 재부팅 전에 파일 상태를 확인하세요.");
     }
 }

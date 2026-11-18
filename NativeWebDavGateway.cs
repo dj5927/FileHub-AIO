@@ -212,7 +212,13 @@ internal sealed class NativeWebDavGateway : IDisposable
             return;
         }
         string key = ClientKey(payload.Path);
-        await leaseGate.WaitAsync(stopping.Token);
+        // These control calls run synchronously in WinFsp callbacks through
+        // LockBridge. Never let a stalled remote LOCK/UNLOCK wait forever.
+        // This deadline does NOT apply to streaming file PUT/GET forwarding.
+        using var commandDeadline =
+            CancellationTokenSource.CreateLinkedTokenSource(stopping.Token);
+        commandDeadline.CancelAfter(TimeSpan.FromSeconds(12));
+        await leaseGate.WaitAsync(commandDeadline.Token);
         try
         {
             if (path == "__native_lock_control/acquire")
@@ -224,18 +230,20 @@ internal sealed class NativeWebDavGateway : IDisposable
                 // one another's edit ownership.
                 using (var legacyCheck = await upstream.SendAsync(
                     new HttpRequestMessage(HttpMethod.Head, Remote(key + ".nasmount.lock")),
-                    stopping.Token))
+                    commandDeadline.Token))
                 {
                     if (legacyCheck.StatusCode != HttpStatusCode.NotFound)
                         throw new IOException("Old .nasmount.lock marker exists or cannot be checked");
                 }
                 var lease = await NativeWebDavLockProtocol.AcquireAsync(
-                    upstream, Remote(key), stopping.Token);
+                    upstream, Remote(key), commandDeadline.Token);
                 string id = Guid.NewGuid().ToString("N");
                 if (!leases.TryAdd(key, new OwnedLock { Id = id, Lease = lease }))
                 {
+                    using var rollbackDeadline = new CancellationTokenSource(
+                        TimeSpan.FromSeconds(6));
                     await NativeWebDavLockProtocol.ReleaseAsync(
-                        upstream, lease, stopping.Token);
+                        upstream, lease, rollbackDeadline.Token);
                     throw new IOException("Concurrent local lease conflict");
                 }
                 await ReplyJson(context, 200, new ControlAnswer(id, lease.ExpiresUtc, true));
@@ -246,7 +254,7 @@ internal sealed class NativeWebDavGateway : IDisposable
             if (path == "__native_lock_control/release")
             {
                 await NativeWebDavLockProtocol.ReleaseAsync(
-                    upstream, active.Lease, stopping.Token);
+                    upstream, active.Lease, commandDeadline.Token);
                 leases.TryRemove(key, out _);
                 await ReplyJson(context, 200, new ControlAnswer(active.Id, active.Lease.ExpiresUtc, true));
                 return;
@@ -254,7 +262,7 @@ internal sealed class NativeWebDavGateway : IDisposable
             if (path == "__native_lock_control/refresh")
             {
                 active.Lease = await NativeWebDavLockProtocol.RefreshAsync(
-                    upstream, active.Lease, stopping.Token);
+                    upstream, active.Lease, commandDeadline.Token);
                 active.Healthy = true;
                 await ReplyJson(context, 200,
                     new ControlAnswer(active.Id, active.Lease.ExpiresUtc, true));

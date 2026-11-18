@@ -37,7 +37,8 @@ internal static class WebDavLockProbe
             return new(false, false, false, false, true, "WebDAV 연결만 검사할 수 있습니다.");
         using var first = CreateClient(profile.IsAnonymous ? null : profile.Username, password);
         using var second = CreateClient(profile.IsAnonymous ? null : profile.Username, password);
-        return await Test(first, second, WebDavSaveProbe.RootUri(profile));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        return await Test(first, second, WebDavSaveProbe.RootUri(profile), deadline.Token);
     }
 
     private static HttpClient CreateClient(string? username, string password)
@@ -49,7 +50,8 @@ internal static class WebDavLockProbe
         return client;
     }
 
-    internal static async Task<Result> Test(HttpClient first, HttpClient second, Uri folder)
+    internal static async Task<Result> Test(HttpClient first, HttpClient second, Uri folder,
+        CancellationToken cancellationToken = default)
     {
         if (!folder.IsAbsoluteUri || folder.Scheme is not ("https" or "http"))
             return new(false, false, false, false, true, "WebDAV 경로가 유효하지 않습니다.");
@@ -66,7 +68,7 @@ internal static class WebDavLockProbe
             using (var request = new HttpRequestMessage(HttpMethod.Put, uri))
             {
                 request.Content = new ByteArrayContent(original);
-                using var put = await first.SendAsync(request);
+                using var put = await first.SendAsync(request, cancellationToken);
                 put.EnsureSuccessStatusCode();
                 fileCreated = true;
             }
@@ -75,7 +77,7 @@ internal static class WebDavLockProbe
                 request.Headers.TryAddWithoutValidation("Depth", "0");
                 request.Headers.TryAddWithoutValidation("Timeout", "Second-120");
                 request.Content = new StringContent(LockXml, Encoding.UTF8, "application/xml");
-                using var response = await first.SendAsync(request);
+                using var response = await first.SendAsync(request, cancellationToken);
                 if (!response.IsSuccessStatusCode)
                 {
                     notes.Add("서버 LOCK 미지원/거부: HTTP " + (int)response.StatusCode);
@@ -83,7 +85,7 @@ internal static class WebDavLockProbe
                 else
                 {
                     lockGranted = true;
-                    token = await ExtractToken(response);
+                    token = await ExtractToken(response, cancellationToken);
                     if (string.IsNullOrWhiteSpace(token))
                     {
                         notes.Add("LOCK 응답은 성공했지만 Lock-Token을 찾지 못했습니다.");
@@ -97,15 +99,15 @@ internal static class WebDavLockProbe
                 using var request = new HttpRequestMessage(HttpMethod.Put, uri);
                 request.Content = new ByteArrayContent(
                     Encoding.UTF8.GetBytes("unauthorized second writer"));
-                using var attempt = await second.SendAsync(request);
+                using var attempt = await second.SendAsync(request, cancellationToken);
                 enforced = attempt.StatusCode == (HttpStatusCode)423;
                 notes.Add(enforced
                     ? "두 번째 연결의 잠금 토큰 없는 쓰기를 HTTP 423으로 차단함"
                     : "두 번째 연결의 쓰기 응답 HTTP " + (int)attempt.StatusCode +
                       " — 표준 LOCK 강제 여부를 확인하지 못함");
-                using var current = await first.GetAsync(uri);
+                using var current = await first.GetAsync(uri, cancellationToken);
                 current.EnsureSuccessStatusCode();
-                byte[] actual = await current.Content.ReadAsByteArrayAsync();
+                byte[] actual = await current.Content.ReadAsByteArrayAsync(cancellationToken);
                 if (!actual.AsSpan().SequenceEqual(original))
                 {
                     enforced = false;
@@ -118,12 +120,13 @@ internal static class WebDavLockProbe
                     using var authorizedRequest = new HttpRequestMessage(HttpMethod.Put, uri);
                     authorizedRequest.Headers.TryAddWithoutValidation("If", "(" + token + ")");
                     authorizedRequest.Content = new ByteArrayContent(authorized);
-                    using var authorizedResponse = await first.SendAsync(authorizedRequest);
+                    using var authorizedResponse = await first.SendAsync(authorizedRequest,
+                        cancellationToken);
                     if (authorizedResponse.IsSuccessStatusCode)
                     {
-                        using var verified = await first.GetAsync(uri);
+                        using var verified = await first.GetAsync(uri, cancellationToken);
                         verified.EnsureSuccessStatusCode();
-                        authorizedWrite = (await verified.Content.ReadAsByteArrayAsync())
+                        authorizedWrite = (await verified.Content.ReadAsByteArrayAsync(cancellationToken))
                             .AsSpan().SequenceEqual(authorized);
                         notes.Add(authorizedWrite
                             ? "잠금 토큰을 포함한 소유자의 PUT과 내용 검증 성공"
@@ -138,7 +141,9 @@ internal static class WebDavLockProbe
         }
         catch (Exception ex)
         {
-            notes.Add("LOCK 검사 중 오류: " + ex.Message);
+            notes.Add(ex is OperationCanceledException
+                ? "LOCK 검사 제한시간(30초) 초과: 서버 기본 잠금을 사용하지 않습니다."
+                : "LOCK 검사 중 오류: " + ex.Message);
         }
         finally
         {
@@ -148,7 +153,12 @@ internal static class WebDavLockProbe
                 {
                     using var unlock = new HttpRequestMessage(new HttpMethod("UNLOCK"), uri);
                     unlock.Headers.TryAddWithoutValidation("Lock-Token", token);
-                    using var response = await first.SendAsync(unlock);
+                    // Cleanup is independently bounded even when the main
+                    // capability deadline has expired.
+                    using var cleanupDeadline = new CancellationTokenSource(
+                        TimeSpan.FromSeconds(6));
+                    using var response = await first.SendAsync(unlock,
+                        cleanupDeadline.Token);
                     released = response.IsSuccessStatusCode;
                     if (!released)
                         notes.Add("UNLOCK 실패: HTTP " + (int)response.StatusCode);
@@ -163,7 +173,10 @@ internal static class WebDavLockProbe
                 try
                 {
                     using var request = new HttpRequestMessage(HttpMethod.Delete, uri);
-                    using var response = await first.SendAsync(request);
+                    using var cleanupDeadline = new CancellationTokenSource(
+                        TimeSpan.FromSeconds(6));
+                    using var response = await first.SendAsync(request,
+                        cleanupDeadline.Token);
                     cleaned = response.IsSuccessStatusCode ||
                         response.StatusCode == HttpStatusCode.NotFound;
                     if (!cleaned)
@@ -190,7 +203,8 @@ internal static class WebDavLockProbe
             string.Join("\n", notes));
     }
 
-    private static async Task<string?> ExtractToken(HttpResponseMessage response)
+    private static async Task<string?> ExtractToken(HttpResponseMessage response,
+        CancellationToken cancellationToken)
     {
         if (response.Headers.TryGetValues("Lock-Token", out var values))
         {
@@ -201,7 +215,7 @@ internal static class WebDavLockProbe
         }
         try
         {
-            string xml = await response.Content.ReadAsStringAsync();
+            string xml = await response.Content.ReadAsStringAsync(cancellationToken);
             var doc = XDocument.Parse(xml);
             XNamespace dav = "DAV:";
             string? href = doc.Descendants(dav + "locktoken")

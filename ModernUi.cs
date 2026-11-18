@@ -350,7 +350,7 @@ internal sealed partial class MainForm
 
     private void InitializeModernUi(bool minimized)
     {
-        Text = "FileHub AIO v1.3.92  |  PC 드라이브";
+        Text = "FileHub AIO v1.3.93  |  PC 드라이브";
         FormBorderStyle = FormBorderStyle.None;
         ControlBox = false;
         MaximizeBox = false;
@@ -390,7 +390,7 @@ internal sealed partial class MainForm
             headerIcon.Image = badge.ToBitmap();
         } catch { /* A missing icon must never block connection controls. */ }
         header.Controls.Add(headerIcon);
-        var brand = ModernTheme.Label("FileHub AIO  v1.3.92", 9.3f, true);
+        var brand = ModernTheme.Label("FileHub AIO  v1.3.93", 9.3f, true);
         brand.SetBounds(35, 1, 215, 31);
         header.Controls.Add(brand);
         var actions = new FlowLayoutPanel
@@ -487,12 +487,17 @@ internal sealed partial class MainForm
 
         tray = new NotifyIcon
         {
-            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.92",
+            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.93",
             Visible = true, ContextMenuStrip = new ContextMenuStrip()
         };
-        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.92 열기", null, (_, _) => ShowWindow());
+        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.93 열기", null, (_, _) => ShowWindow());
         tray.ContextMenuStrip.Items.Add("모두 연결", null, async (_, _) => await ConnectAll(true));
         tray.ContextMenuStrip.Items.Add("프로그램 종료", null, async (_, _) => await ExitSafely());
+        tray.ContextMenuStrip.Items.Add(new ToolStripSeparator());
+        tray.ContextMenuStrip.Items.Add("비상 종료 · 창만 닫고 연결 보존", null,
+            (_, _) => EmergencyExitGuiOnly());
+        tray.ContextMenuStrip.Items.Add("비상 종료 · FileHub 연결 강제 중단", null,
+            async (_, _) => await EmergencyStopAllAndExit());
         tray.BalloonTipClicked += async (_, _) =>
             await CheckForPcUpdateAsync(preferCached: true, startDownloadNow: true);
         tray.DoubleClick += (_, _) => ShowWindow();
@@ -1009,6 +1014,8 @@ internal sealed partial class MainForm
         if (p.Protocol == "OneDrive")
             Item("Microsoft 계정 재인증", () => _ = ReauthorizeOneDrive());
         Item("업로드 상태", () => _ = CheckUploadStatus());
+        if (p.Protocol != "SMB")
+            Item("비상 연결 종료 · 데이터 손실 위험", () => _ = EmergencyDisconnectSelected());
         if (p.Protocol != "SMB")
             Item("끊어진 네트워크 위치 정리", () => _ = CleanupOldNetworkLocation());
         Item("로그 폴더", OpenLogs);

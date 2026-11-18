@@ -9,6 +9,14 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        // Private, isolated crash-recovery test child. This branch never
+        // opens app settings, network sessions, WinFsp, or a window.
+        if (args.Length == 1 &&
+            args[0].Equals("--emergency-child-wait", StringComparison.Ordinal))
+        {
+            Thread.Sleep(TimeSpan.FromSeconds(25));
+            return;
+        }
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
@@ -48,6 +56,7 @@ internal static class Program
                 WinFspUpgradePolicy.PolicyTest();
                 PcUpdateService.FeedPolicyTest();
                 PcUpdateApply.LocalPolicyTest();
+                RemoteMount.EmergencyPolicyTestAsync().GetAwaiter().GetResult();
             }
             catch (Exception ex)
             {

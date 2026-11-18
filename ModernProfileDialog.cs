@@ -216,7 +216,7 @@ internal sealed class ModernProfileDialog : Form
             132, 171, 550, 28, 9f, ModernTheme.Muted);
         Check(webDavHttpBox, "HTTP 사용", 132, 231);
         webDavHttpBox.Checked = profile.WebDavUseHttp;
-        Check(nativeDavBox, "서버 기본 잠금 (폴더 없음)", 132, 368);
+        Check(nativeDavBox, "서버 기본 잠금 (실험 · 폴더 없음)", 132, 368);
         nativeDavBox.Checked = profile.UseNativeWebDavLocks;
         tip.SetToolTip(nativeDavBox,
             "WebDAV LOCK/UNLOCK으로 파일 옆에 .nasmount.lock 폴더를 만들지 않습니다. " +
@@ -1103,8 +1103,9 @@ internal sealed class ModernProfileDialog : Form
             next.UseLockBridge && nativeDavBox.Checked;
         if (next.UseNativeWebDavLocks &&
             MessageBox.Show(this,
-                "서버 기본 잠금은 .nasmount.lock 폴더를 만들지 않습니다. " +
-                "서버가 WebDAV LOCK 토큰을 지원하지 않으면 Excel 저장이 차단될 수 있습니다. " +
+                "서버 기본 잠금은 .nasmount.lock 폴더를 만들지 않는 실험 기능입니다. " +
+                "연결 전에 실제 서버의 WebDAV LOCK/UNLOCK과 배타적 쓰기 차단을 검사합니다. " +
+                "서버가 호환되지 않으면 안전을 위해 연결 자체를 중단합니다. " +
                 "구 버전 FileHub AIO와 같은 문서를 동시에 열지 마세요. 사용하시겠습니까?",
                 "서버 기본 잠금 호환성 확인", MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning) != DialogResult.Yes) return;
