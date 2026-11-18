@@ -57,9 +57,9 @@ internal static class Program
                 PcUpdateService.FeedPolicyTest();
                 PcUpdateApply.LocalPolicyTest();
                 RemoteMount.EmergencyPolicyTestAsync().GetAwaiter().GetResult();
-                WebDavTlsPreflight.PolicyTest();
                 MountPresentation.GoogleSessionPolicyTest();
                 DriveLetterAllocator.GoogleLetterPolicyTest();
+                RemoteMount.WebDavEndpointPolicyTest();
             }
             catch (Exception ex)
             {

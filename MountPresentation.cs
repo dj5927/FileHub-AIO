@@ -18,16 +18,16 @@ internal static class MountPresentation
     // it remains GUID-bound so cleanup never targets another product.
     private static readonly ConcurrentDictionary<Guid, string> CloudSessionNames = new();
 
-    internal static void BeginGoogleNetworkMountAttempt(NasProfile p)
+    internal static void BeginNetworkMountAttempt(NasProfile p)
     {
-        if (p.Protocol != "GoogleDrive" || p.UseFixedDriveMode) return;
+        if (p.Protocol == "SMB" || p.UseLockBridge || p.UseFixedDriveMode) return;
         string server = "NASMount-" + p.Id.ToString("N")[..8] + "-" +
             Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(4))
                 .ToLowerInvariant();
         CloudSessionNames[p.Id] = server;
     }
 
-    internal static void ForgetGoogleNetworkMountAttempt(NasProfile p) =>
+    internal static void ForgetNetworkMountAttempt(NasProfile p) =>
         CloudSessionNames.TryRemove(p.Id, out _);
 
     internal static string NetworkServerName(NasProfile p) =>
@@ -42,11 +42,11 @@ internal static class MountPresentation
             DisplayName = "Google Drive"
         };
         string old = RcloneNetworkVolume(google);
-        BeginGoogleNetworkMountAttempt(google);
+        BeginNetworkMountAttempt(google);
         string first = RcloneNetworkVolume(google);
-        BeginGoogleNetworkMountAttempt(google);
+        BeginNetworkMountAttempt(google);
         string second = RcloneNetworkVolume(google);
-        ForgetGoogleNetworkMountAttempt(google);
+        ForgetNetworkMountAttempt(google);
         if (first == second || old == first ||
             !first.StartsWith(@"\\NASMount-12345678-", StringComparison.Ordinal) ||
             !first.EndsWith(@"\Google Drive", StringComparison.Ordinal) ||
@@ -54,7 +54,19 @@ internal static class MountPresentation
                 StringComparison.Ordinal))
             throw new InvalidOperationException(
                 "Google WinFsp network names must be unique and profile-owned");
-        Console.WriteLine("GOOGLE_UNIQUE_WIN_FSP_UNC_MOUNT_SESSION_PASS");
+        var tera = new NasProfile {
+            Id = Guid.Parse("aa123456-1111-2222-3333-444455556666"),
+            Protocol = "TeraBox", Letter = "P", DisplayName = "TeraBox"
+        };
+        string oldTera = RcloneNetworkVolume(tera);
+        BeginNetworkMountAttempt(tera);
+        string newTera = RcloneNetworkVolume(tera);
+        ForgetNetworkMountAttempt(tera);
+        if (oldTera == newTera ||
+            !newTera.StartsWith(@"\\NASMount-aa123456-", StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "TeraBox must not reuse a stale WinFsp network server");
+        Console.WriteLine("GOOGLE_TERABOX_UNIQUE_WIN_FSP_UNC_SESSION_PASS");
     }
     internal static string BackendParent => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

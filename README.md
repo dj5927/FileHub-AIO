@@ -4,8 +4,8 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 버전과 업데이트
 
-- PC 버전: v1.3.95, 이후 v1.3.96 / v1.3.97...
-- PC 전용 GitHub 릴리즈 태그: pc-v1.3.95 / pc-v1.3.96 ...
+- PC 버전: v1.3.96, 이후 v1.3.97 / v1.3.98...
+- PC 전용 GitHub 릴리즈 태그: pc-v1.3.96 / pc-v1.3.97 ...
 - Android 버전: v0.1.x — Windows 업데이트와 별개로 운영
 - 프로그램 실행 시 트레이 업데이트 알림 / 환경 설정 → PC 업데이트 확인
 - 새 PC 버전을 받으면 GitHub 릴리즈 ZIP SHA-256 검증 → 사용자의 설치 승인 → 원격 드라이브 안전 해제 → 프로그램 업데이트 후 재실행
@@ -13,7 +13,7 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 설치
 
-GitHub Releases에서 FileHub-AIO-PC-1.3.95-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 v1.3.83~v1.3.94에서는 PC 업데이트 확인으로 v1.3.95를 설치할 수 있습니다.
+GitHub Releases에서 FileHub-AIO-PC-1.3.96-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 v1.3.83~v1.3.95에서는 PC 업데이트 확인으로 v1.3.96을 설치할 수 있습니다.
 
 업데이트 설치 전에는 Excel/Word 등 열린 문서를 모두 저장하고 닫아야 합니다. 안전하게 해제하지 못한 NAS 드라이브가 있으면 프로그램 교체를 중단합니다. 이전 버전은 사용자 백업 폴더에 보관합니다.
 
@@ -84,6 +84,31 @@ PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj 
   CVE-2026-7162 보안 패치가 포함되지 않았을 수 있습니다.
   안정성과 RaiDrive 호환성 우선의 복귀이므로 보안 위험을 인지하고 사용하세요.
 - 실제 RaiDrive 동작과 파일 잠금은 사용자 PC 실기기에서 최종 확인해야 합니다.
+
+## v1.3.96 사용자 WebDAV 설정 존중 · 모든 드라이브 명칭 · 빨간 X 정리
+
+- 입력한 WebDAV 도메인/포트/HTTP 사용 옵션을 그대로 rclone에 전달.
+  Synology 브랜드명이나 포트 5006을 추측해 HTTP/HTTPS를 강제
+  변경하거나 접속을 차단하는 사전 검증 코드를 삭제했습니다.
+- 사용자 요청에 따라 WebDAV HTTPS 인증서 호스트명 확인을 생략
+  (rclone --no-check-certificate)하며 임의의 Synology.me 도메인으로
+  재작성하지 않습니다. 해당 WebDAV 프로세스에만 적용됩니다.
+  주소가 올바르지 않거나 서버가 선택한 프로토콜을 제공하지
+  않으면 실제 연결 자체는 실패할 수 있습니다.
+- Google 및 TeraBox 등 모든 network-mode WinFsp 연결은
+  시도마다 고유한 네트워크 서버 이름을 사용해 과거 실패 연결과의
+  80070050 이름 충돌을 줄입니다.
+- 탐색기 이름에 원시 UNC NASMount 서버 경로가 붙는 오류 대응:
+  WebDAV, FTP, SFTP, MyBox, OneDrive, Google Drive, TeraBox에서
+  연결된 Windows MountPoints2 항목에 사용자 표시명을 반복 적용.
+  네트워크 이름 변경은 백그라운드 STA 스레드에서 처리합니다.
+- 연결 해제 후 빨간 X가 남는 오류 대응: 정상 종료가 확인된
+  FileHub 프로필의 자기 WNet 연결, MountPoints2 항목과 네트워크
+  공유/서버 캐시를 정확한 프로필 GUID 범위로 정리합니다.
+  시작할 때도 끊어진 해당 프로필을 발견하면 정리합니다.
+- X 버튼은 트레이로 숨김, 트레이 프로그램 종료만 실제 종료.
+  추가 비상 종료 메뉴는 없습니다.
+- 회사 PC에서의 실제 WinFsp/탐색기 재현 검증은 아직 필요합니다.
 
 ## v1.3.95 Google WinFsp 네트워크 충돌 · NAS 포트 오류 · 종료 메뉴 간소화
 

@@ -60,10 +60,8 @@ internal sealed partial class MainForm : Form
             {
                 // Later UNC label registration must not trigger another
                 // desktop-wide refresh after the grouped arrival.
-                foreach (var p in profiles.Where(p =>
-                    p.Protocol is "MyBox" or "OneDrive"))
-                    ExplorerDriveIcon.EnsureConfiguredDisplayName(p,
-                        deferGlobalNotify: true);
+                foreach (var p in profiles.Where(RemoteMount.UsesNetworkDriveMode))
+                    ExplorerDriveIcon.ScheduleNetworkLabelRepair(p);
                 int count = ExplorerDriveIcon.NotifyMountedBatch(profiles);
                 AppStore.Log("SHELL_BATCH_PRESENTATION_FINISHED count=" +
                     count + " reason=" + reason);
@@ -86,7 +84,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.95 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.96 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -1147,6 +1145,7 @@ internal sealed partial class MainForm : Form
                     // Merge expensive desktop-wide icon association invalidation
                     // and Explorer F5 across simultaneously finishing drives.
                     ExplorerDriveIcon.Apply(p, deferGlobalNotify: p.Protocol != "SMB");
+                    ExplorerDriveIcon.ScheduleNetworkLabelRepair(p);
                     if (p.Protocol != "SMB")
                         PostExplorerUpdate(p, mounted: true);
                 }
@@ -1204,8 +1203,8 @@ internal sealed partial class MainForm : Form
                 shellRefresh.Request(
                     (mounted ? "FAST_CONNECT_" : "FAST_DISCONNECT_") +
                     p.Id.ToString("N")[..8]);
-                if (mounted && p.Protocol is ("MyBox" or "OneDrive"))
-                    _ = RefreshCloudLabelWhenSettled(p);
+                if (mounted && RemoteMount.UsesNetworkDriveMode(p))
+                    ExplorerDriveIcon.ScheduleNetworkLabelRepair(p);
             }
             catch (Exception ex)
             {

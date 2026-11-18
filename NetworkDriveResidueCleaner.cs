@@ -61,7 +61,8 @@ internal static class NetworkDriveResidueCleaner
         if (IsForeignActiveMapping(profile, current)) return false;
         if (!RemoteMount.IsOurNetworkShare(profile, current.Remote) &&
             !RemoteMount.IsOurNetworkShare(profile,
-                RememberedConnection(profile.Letter.ToUpperInvariant()))) return false;
+                RememberedConnection(profile.Letter.ToUpperInvariant())) &&
+            !ExplorerDriveIcon.HasOwnedMountPointHistory(profile)) return false;
         try
         {
             var drive = new DriveInfo(profile.Letter.ToUpperInvariant() + ":\\");
@@ -257,6 +258,9 @@ internal static class NetworkDriveResidueCleaner
             string? remembered = RememberedConnection(letter);
             bool currentOurs = RemoteMount.IsOurNetworkShare(p, current.Remote);
             bool rememberedOurs = RemoteMount.IsOurNetworkShare(p, remembered);
+            bool historyGhost = !RemoteMount.IsRunning(p) &&
+                ExplorerDriveIcon.HasOwnedMountPointHistory(p) &&
+                IsDisconnectedOwnedGhost(p);
             if (IsForeignActiveMapping(p, current))
             {
                 AppStore.Log("NETWORK_CLEANUP_FOREIGN_MOUNT_PRESERVED " + p.Id +
@@ -269,19 +273,29 @@ internal static class NetworkDriveResidueCleaner
                     return OperationResult.Fail("FileHub AIO 네트워크 기록 정리 실패");
                 return OperationResult.Ok("다른 프로그램의 네트워크 연결은 유지했습니다.");
             }
-            if (currentOurs || rememberedOurs)
+            if (currentOurs || rememberedOurs || historyGhost)
             {
                 // v1.3.41 used flags=0, which leaves Windows' saved mapped
                 // network profile. This flag is essential for red-X removal.
+                bool backendStopped = !RemoteMount.IsRunning(p);
                 int result = WNetCancelConnection2(letter + ":",
-                    CONNECT_UPDATE_PROFILE, force: false);
+                    CONNECT_UPDATE_PROFILE, force: backendStopped);
                 AppStore.Log("NETWORK_WNET_CANCEL_PROFILE " + p.Id +
-                    " letter=" + letter + " status=" + result);
+                    " letter=" + letter + " status=" + result +
+                    " backendStopped=" + backendStopped);
+                if (backendStopped && currentOurs &&
+                    RemoteMount.IsOurNetworkShare(p, CurrentConnection(letter).Remote))
+                {
+                    int remoteStatus = WNetCancelConnection2(current.Remote!,
+                        CONNECT_UPDATE_PROFILE, force: true);
+                    AppStore.Log("NETWORK_WNET_CANCEL_OWNED_UNC id=" +
+                        p.Id + " status=" + remoteStatus);
+                }
                 if (result != NO_ERROR && result != ERROR_NOT_CONNECTED)
                 {
                     AppStore.Log("NETWORK_WNET_NONFATAL_STATUS " + p.Id +
                         " code=" + result);
-                    if (RemoteMount.DriveLetterExists(letter))
+                    if (RemoteMount.DriveLetterExists(letter) && !backendStopped)
                         return OperationResult.Fail(letter +
                             ": Windows 네트워크 연결을 다른 프로그램이 사용 중이거나" +
                             " 열린 파일이 있어 안전하게 해제하지 못했습니다." +

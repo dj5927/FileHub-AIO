@@ -724,6 +724,8 @@ internal static class RemoteMount
             UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardError = true, RedirectStandardOutput = true
         };
+        if (p.Protocol == "WebDAV" && !p.WebDavUseHttp)
+            psi.ArgumentList.Add("--no-check-certificate");
         string envPrefix = "RCLONE_CONFIG_" + RemoteName(p).ToUpperInvariant() + "_";
         psi.Environment[envPrefix + "TYPE"] = p.Protocol == "GoogleDrive" ? "drive" :
             p.Protocol == "MyBox" || CharsetSupport.RequiresGateway(p) ?
@@ -809,6 +811,33 @@ internal static class RemoteMount
 
     internal static string? RemoteSecret(NasProfile p, string? password) =>
         p.IsAnonymous ? (p.Protocol == "FTP" ? "anonymous@" : null) : password;
+
+    internal static void WebDavEndpointPolicyTest()
+    {
+        var profile = new NasProfile {
+            Id = Guid.NewGuid(), Protocol = "WebDAV",
+            Host = "custom.storage.example", Port = 5006,
+            IsAnonymous = true, WebDavUseHttp = true
+        };
+        string prefix = "RCLONE_CONFIG_NM_" +
+            profile.Id.ToString("N").ToUpperInvariant() + "_";
+        var http = BuildStartInfo(profile, null, "rclone.exe")
+            .GetAwaiter().GetResult();
+        if (http.Environment[prefix + "URL"] !=
+                "http://custom.storage.example:5006/" ||
+            http.ArgumentList.Contains("--no-check-certificate"))
+            throw new InvalidOperationException(
+                "Custom WebDAV HTTP address/port must be used as entered");
+        profile.WebDavUseHttp = false;
+        var https = BuildStartInfo(profile, null, "rclone.exe")
+            .GetAwaiter().GetResult();
+        if (https.Environment[prefix + "URL"] !=
+                "https://custom.storage.example:5006/" ||
+            !https.ArgumentList.Contains("--no-check-certificate"))
+            throw new InvalidOperationException(
+                "Custom WebDAV HTTPS address/port must not be rewritten or blocked");
+        Console.WriteLine("USER_CONFIGURED_WEBDAV_ENDPOINT_NO_BRAND_GUESS_PASS");
+    }
 
     internal static Dictionary<string, string> FtpEnvironment(NasProfile p) => new()
     {
@@ -1073,11 +1102,6 @@ internal static class RemoteMount
         // host can present a valid certificate for that EXACT hostname.
         // This prevents the "T:\\ I/O device error" from an otherwise
         // mountable but inaccessible Synology WebDAV HTTPS share.
-        if (p.Protocol == "WebDAV")
-        {
-            var tls = await WebDavTlsPreflight.CheckAsync(p);
-            if (!tls.Success) return tls;
-        }
         if (p.UseNativeWebDavLocks)
         {
             // Experimental RFC4918 mode must first prove actual server LOCK
@@ -1126,7 +1150,7 @@ internal static class RemoteMount
                 legacyGateway = await LegacyCharsetGateway.StartAsync(p, password);
             if (p.UseNativeWebDavLocks)
                 nativeGateway = NativeWebDavGateway.Start(p, password);
-            MountPresentation.BeginGoogleNetworkMountAttempt(p);
+            MountPresentation.BeginNetworkMountAttempt(p);
             var psi = await BuildStartInfo(p, password, exe, myboxGateway?.Url,
                 legacyGateway?.Url, nativeGateway?.Url);
             using var portChooser = new TcpListener(IPAddress.Loopback, 0);
