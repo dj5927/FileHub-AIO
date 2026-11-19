@@ -6,7 +6,7 @@
 | 종류 | 배포/빌드 버전 | 상태 |
 |---|---|---|
 | 일반 rclone | v1.76.0 | 공식 릴리즈 ZIP·EXE SHA-256 고정, 최신 유지 |
-| Google 전용 비동기 용량 rclone | v1.76.0 FileHub 패치 | 공식 rclone을 소스 빌드, WinFsp 포함, EXE SHA-256 고정. 네트워크 용량 요청에서 Google API 동기 호출 제거 |
+| Google 전용 비동기 용량 rclone | v1.76.0 FileHub 패치 | 공식 태그·패치를 고정해 소스 빌드, WinFsp 포함. 빌드별 SHA-256 매니페스트와 패치 마커를 함께 검증. 네트워크 용량 요청에서 Google API 동기 호출 제거 |
 | TeraBox rclone-extra | v1.76.0-extra | 확장 ZIP·EXE SHA-256 고정, 최신 유지 |
 | WinFsp MSI | **2.1.25156 (2025 정식판)** | 공식 서명 MSI, SHA-256 고정, RaiDrive와 공유하는 시스템 드라이버 |
 | WinFsp .NET 바인딩 | **2.1.25156** | 포함된 정식 드라이버와 버전 일치 |

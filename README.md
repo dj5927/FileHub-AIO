@@ -39,6 +39,14 @@ PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj 
 
 ## v1.3.106 WebDAV LockBridge 네트워크 표시명 누락 수정
 
+- GitHub Windows 빌드에서는 같은 공식 Go 소스·패치라도 실행 파일
+  해시가 개발 PC와 다를 수 있습니다. 고정된 개발 PC EXE 해시로
+  차단하지 않고, GitHub에서 **정확한 공식 태그·패치 적용 여부**를
+  먼저 확인한 뒤 실제 빌드 결과의 독립 SHA-256 매니페스트를
+  생성합니다. FileHub는 매니페스트 일치·비동기 캐시 패치 마커
+  존재·일반/TeraBox 엔진과 비동일성을 모두 검증하며, 불일치 시
+  기존 공식 rclone의 안전한 가상 용량 모드로 폴백합니다.
+
 - 실제 사용자 PC에서 `새 NAS (R:)`는 **WebDAV LockBridge**
   연결입니다. rclone 백엔드는 로컬 private-mount로 실행되지만
   LockBridge의 **공개 R:은 WinFsp.Net 네트워크 드라이브**입니다.

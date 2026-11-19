@@ -104,11 +104,10 @@ internal static class RcloneExecutableInspector
             string manifest = Path.Combine(Path.GetDirectoryName(executable)!,
                 ManifestFileName(executable));
             if (ManifestFileName(executable) == "rclone-filehub-google.sha256" &&
-                !string.Equals(hash, GoogleAsyncQuotaEngine.Sha256,
-                    StringComparison.OrdinalIgnoreCase))
+                !GoogleAsyncQuotaEngine.MatchesPatchManifest(executable, hash))
                 return OperationResult.Fail(
-                    "Google 전용 rclone 파일의 고정 SHA-256이 일치하지 않습니다. " +
-                    "정상 엔진으로 자동 복구하거나 새 배포본을 사용하세요.");
+                    "Google 전용 rclone의 패치 식별자나 독립 SHA-256 " +
+                    "매니페스트가 일치하지 않습니다. 새 배포본을 사용하세요.");
             if (File.Exists(manifest))
             {
                 string expected = (await File.ReadAllTextAsync(manifest)).Trim().Split(' ')[0];

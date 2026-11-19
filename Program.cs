@@ -137,6 +137,9 @@ internal static class Program
                     if (!googleBinary.Success)
                         throw new InvalidOperationException(
                             "Google bundle verification failed: " + googleBinary.Message);
+                    if (!GoogleAsyncQuotaEngine.IsAvailable)
+                        throw new InvalidOperationException(
+                            "Google bundle manifest verified but patched VFS engine is unavailable");
                     Console.WriteLine("GOOGLE_ASYNC_QUOTA_BUNDLED_BINARY_SHA256_PASS");
                 }
             }
