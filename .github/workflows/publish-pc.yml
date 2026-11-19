@@ -160,6 +160,8 @@ jobs:
         run: |
           $output = & ./publish/FileHubAIO.exe --google-cold-start-policy-test 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0 -or
+              $output -notmatch 'GOOGLE_DESKTOP_OAUTH_JSON_IMPORT_POLICY_PASS' -or
+              $output -notmatch 'GOOGLE_OAUTH_ABOUT_ONLY_VALIDATION_POLICY_PASS' -or
               $output -notmatch 'RCLONE_THREE_ENGINE_DISTINCT_MANIFEST_POLICY_PASS' -or
               $output -notmatch 'GOOGLE_ASYNC_QUOTA_BUNDLED_BINARY_SHA256_PASS') {
             throw 'Packaged Google engine integrity preflight failed: ' + $output
@@ -184,6 +186,7 @@ jobs:
             if (-not (Test-Path ("publish/" + $required))) { throw "Missing $required" }
           }
           Copy-Item README.md publish/README.md -Force
+          Copy-Item GOOGLE_OAUTH_SETUP_KR.md publish/GOOGLE_OAUTH_SETUP_KR.md -Force
           Copy-Item third_party publish/third_party -Recurse -Force
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
           Compress-Archive -Path publish/* -DestinationPath ("release-assets/" + $asset) -CompressionLevel Optimal
@@ -192,6 +195,9 @@ jobs:
           @"
           ## FileHub AIO PC ${{ steps.version.outputs.tag }}
           - Windows PC 전용 릴리즈. Android APK 및 Android 최신 릴리즈는 변경하지 않습니다.
+          - Google Drive 전용 OAuth Client ID 전환 지원: 데스크톱 OAuth JSON 가져오기, 공용/전용 인증 모드 표시, 공용 인증 명시 동의.
+          - 새 Google 인증 검증 시 불필요한 폴더 목록 조회를 없애고 rclone about --json으로 접근 여부만 확인. 이전 인증 백업과 복원 유지.
+          - 공용 Client ID의 403 API 제한으로 인한 30~35초 연결 지연은 전용 OAuth 재인증 후 실제 재측정이 필요합니다.
           - WebDAV LockBridge 네트워크 위치에서 사용자 설정 드라이브명 유지 (\\NASMount-... 노출 수정).
           - Google Drive 실제 전체/사용/남은 용량을 비동기 캐시로 표시하며 탐색기 응답 지연 방지.
           - Google 전용 rclone, 일반 rclone, TeraBox 엔진의 SHA-256을 각각 독립 검증.

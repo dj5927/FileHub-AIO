@@ -1190,6 +1190,10 @@ internal static class RemoteMount
             " ok=" + endpoint.Success +
             " duplicateRemoteLsf=false");
         if (!endpoint.Success) return endpoint;
+        if (p.Protocol == "GoogleDrive")
+            AppStore.Log("GOOGLE_OAUTH_CLIENT_MODE id=" + p.Id +
+                " mode=" + GoogleDriveAuth.ClientMode(p) +
+                " rawCredentialsNotLogged=true");
         if (EmergencyPending(p.Id))
             return OperationResult.Fail("연결 취소됨: 비상 중단 요청");
         // Do not create rclone/WinFsp/LockBridge until the configured NAS

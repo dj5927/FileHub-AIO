@@ -4,8 +4,8 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 버전과 업데이트
 
-- PC 버전: v1.3.107, 이후 v1.3.108 / v1.3.109...
-- PC 전용 GitHub 릴리즈 태그: pc-v1.3.107 / pc-v1.3.108 ...
+- PC 버전: v1.3.108, 이후 v1.3.109 / v1.3.110...
+- PC 전용 GitHub 릴리즈 태그: pc-v1.3.108 / pc-v1.3.109 ...
 - Android 버전: v0.1.x — Windows 업데이트와 별개로 운영
 - 프로그램 실행 시 트레이 업데이트 알림 / 환경 설정 → PC 업데이트 확인
 - 새 PC 버전을 받으면 GitHub 릴리즈 ZIP SHA-256 검증 → 사용자의 설치 승인 → 원격 드라이브 안전 해제 → 프로그램 업데이트 후 재실행
@@ -13,7 +13,7 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 설치
 
-GitHub Releases에서 FileHub-AIO-PC-1.3.107-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.107을 설치할 수 있습니다.
+GitHub Releases에서 FileHub-AIO-PC-1.3.108-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.108을 설치할 수 있습니다.
 
 업데이트 설치 전에는 Excel/Word 등 열린 문서를 모두 저장하고 닫아야 합니다. 안전하게 해제하지 못한 NAS 드라이브가 있으면 프로그램 교체를 중단합니다. 이전 버전은 사용자 백업 폴더에 보관합니다.
 
@@ -32,6 +32,33 @@ GitHub Actions는 공식 릴리즈 파일과 컴파일된 실행 파일의 SHA-2
 PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj -c Release -r win-x64 --self-contained true -o publish, dotnet publish LockBridge/LockBridge.csproj -c Release -r win-x64 --self-contained true -o bridge 를 순서대로 실행합니다.
 
 두 프로젝트를 컴파일하는 것만으로 전체 배포본이 완성되는 것은 아닙니다. rclone, 확장 엔진, WinFsp 배포 파일은 GitHub Actions에서 공식 릴리즈로부터 수집합니다.
+
+## v1.3.108 Google OAuth 전용 인증 전환 간소화
+
+- Google Drive 30~35초 연결 지연과 공용 Google OAuth 클라이언트의
+  HTTP 403 rateLimitExceeded 및 재시도가 실측됐습니다.
+  API 제한을 무시하거나 재시도 횟수를 강제로 줄이지 않습니다.
+- Google Drive를 정상 연결 해제한 뒤 항목의 ⋯ 메뉴에서
+  Google 계정 재인증을 열면 현재 인증 방식이 공용인지 전용인지 표시됩니다.
+- Google Cloud에서 다운로드한 데스크톱 앱 OAuth JSON의
+  installed.client_id와 installed.client_secret을
+  OAuth JSON 가져오기로 읽어 입력합니다. 웹 클라이언트 JSON과
+  서비스 계정 JSON, 잘못된 Client ID는 거부합니다.
+- 전용 Client ID 없이 공용 인증을 시도하려면 위험 안내에
+  명시적으로 동의해야 합니다. 계정 토큰이나 Client Secret은
+  애플리케이션 로그에 기록하지 않습니다.
+- 새 OAuth 토큰 검증은 전체 폴더 목록을 요청하는 rclone lsf 대신
+  읽기 전용 rclone about --json을 사용합니다. 개발 PC에서
+  약 0.97초로 확인했고 추가적인 루트 폴더 조회를 제거했습니다.
+- 검증 실패 시 기존 인증은 그대로 유지되고, 검증 성공 시에는
+  이전 인증이 previous-auth.bak으로 백업됩니다.
+- Google 연결 로그에 비밀정보 없이
+  GOOGLE_OAUTH_CLIENT_MODE mode=shared 또는 mode=custom을 기록합니다.
+- WebDAV·TeraBox, 파일 잠금, Google API pacing 100ms/Burst8,
+  기존 Google VFS 캐시와 비동기 용량 처리는 변경하지 않았습니다.
+- 발급 절차는 GOOGLE_OAUTH_SETUP_KR.md에서 안내합니다.
+  실제 Client ID는 Google Cloud에서 사용자가 발급받아야 하며
+  별도 인증을 완료하기 전에는 속도 개선이 확인됐다고 표시하지 않습니다.
 
 ## v1.3.107 WebDAV 1~2글자 이름 표시 및 Google 지연 구간 진단
 
