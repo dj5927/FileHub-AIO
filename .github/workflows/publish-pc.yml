@@ -169,7 +169,7 @@ jobs:
         shell: pwsh
         run: |
           $asset = '${{ steps.version.outputs.asset }}'
-          foreach ($required in @('FileHubAIO.exe','tools/NASMountLockBridge.exe','tools/rclone.exe','tools/rclone-filehub-google.exe','tools/rclone-filehub-google.sha256','tools/rclone-terabox.exe','tools/winfsp-2.1.25156.msi')) {
+          foreach ($required in @('FileHubAIO.exe','tools/NASMountLockBridge.exe','tools/rclone.exe','tools/rclone.sha256','tools/rclone-filehub-google.exe','tools/rclone-filehub-google.sha256','tools/rclone-terabox.exe','tools/rclone-terabox.sha256','tools/winfsp-2.1.25156.msi')) {
             if (-not (Test-Path ("publish/" + $required))) { throw "Missing $required" }
           }
           Copy-Item README.md publish/README.md -Force
@@ -180,11 +180,13 @@ jobs:
           "$hash  $asset" | Set-Content release-assets/SHA256SUMS -Encoding ascii
           @"
           ## FileHub AIO PC ${{ steps.version.outputs.tag }}
-          - Windows PC 전용 릴리즈 / GitHub OTA 기능 포함
-          - SHA-256 검증 후 NAS 드라이브 안전 해제 및 프로그램 업데이트
-          - Google 전용 비동기 실제 용량 캐시 (rclone v1.76.0 FileHub 패치)
-          - Android APK와 별도 버전, 별도 릴리즈 태그
-          - 실제 사용자 NAS의 다중 PC Office 편집은 시험 검증 후 사용하세요.
+          - Windows PC 전용 릴리즈. Android APK 및 Android 최신 릴리즈는 변경하지 않습니다.
+          - WebDAV LockBridge 네트워크 위치에서 사용자 설정 드라이브명 유지 (\\NASMount-... 노출 수정).
+          - Google Drive 실제 전체/사용/남은 용량을 비동기 캐시로 표시하며 탐색기 응답 지연 방지.
+          - Google 전용 rclone, 일반 rclone, TeraBox 엔진의 SHA-256을 각각 독립 검증.
+          - 연결 종료 시 파일 업로드·잠금 상태 확인 및 PC 전용 GitHub OTA 업데이트 지원.
+          - 압축에 전체 Windows 실행 파일과 의존성을 포함하며, 기존 NAS 계정 및 설정 파일은 별도 유지됩니다.
+          - 네트워크 환경별 실제 WebDAV 파일 잠금 및 다중 PC Office 동시 편집은 사용 환경에서 별도 검증이 필요합니다.
           "@ | Set-Content release-assets/RELEASE_NOTES.md -Encoding utf8
 
       - name: Publish PC-only release without changing Android latest
