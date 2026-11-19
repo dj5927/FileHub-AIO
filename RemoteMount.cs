@@ -1401,6 +1401,11 @@ internal static class RemoteMount
                         "virtual_safe_fallback"));
             process = new Process { StartInfo = psi, EnableRaisingEvents = true };
             var logId = p.Id;
+            // Lightweight startup timings distinguish Windows process launch,
+            // rclone backend initialization and WinFsp drive visibility.
+            // Never include command-line secrets, URLs or file names.
+            var mountStartupClock = Stopwatch.StartNew();
+            int googleFirstOutputSeen = 0;
             var startupErrors = new ConcurrentQueue<string>();
             var googleTrace = googleTraceEnabled ? new GoogleStartupTrace(p.Id) : null;
             static void RememberError(ConcurrentQueue<string> errors, string line)
@@ -1420,6 +1425,12 @@ internal static class RemoteMount
             {
                 if (!string.IsNullOrEmpty(eventArgs.Data))
                 {
+                    if (p.Protocol == "GoogleDrive" &&
+                        Interlocked.CompareExchange(
+                            ref googleFirstOutputSeen, 1, 0) == 0)
+                        AppStore.Log("GOOGLE_MOUNT_FIRST_STDERR_TIMING id=" +
+                            logId + " elapsedMs=" +
+                            mountStartupClock.ElapsedMilliseconds);
                     string? critical = RcloneIntegrityMonitor.Classify(eventArgs.Data);
                     if (critical is not null)
                         IntegrityAlerts.TryAdd(logId, critical);
@@ -1450,6 +1461,9 @@ internal static class RemoteMount
                 return OperationResult.Fail("연결 취소됨: 비상 중단 요청");
             }
             process.Start();
+            if (p.Protocol == "GoogleDrive")
+                AppStore.Log("GOOGLE_MOUNT_PROCESS_SPAWN_TIMING id=" +
+                    p.Id + " elapsedMs=" + mountStartupClock.ElapsedMilliseconds);
             googleTrace?.Milestone("process_started");
             process.BeginErrorReadLine();
             // stdout is drained to prevent deadlock.
@@ -1471,6 +1485,7 @@ internal static class RemoteMount
                 StartupReadinessPolicy.MountWait(p.Protocol).TotalMilliseconds / 250d);
             var mountProbe = new MountRootProbe(p.Letter.ToUpperInvariant() + @":\");
             var backendProbe = backend is null ? null : new MountRootProbe(backend);
+            int nextGoogleCheckpoint = 0;
             for (int i = 0; i < maxWaitSteps; i++)
             {
                 if (EmergencyPending(p.Id))
@@ -1485,8 +1500,27 @@ internal static class RemoteMount
                         (startupErrors.IsEmpty ? "추가 오류 메시지는 로그 폴더에서 확인하세요." :
                             string.Join("\n", startupErrors.ToArray())));
                 }
+                if (p.Protocol == "GoogleDrive")
+                {
+                    long elapsed = mountStartupClock.ElapsedMilliseconds;
+                    int[] milestones = { 5000, 15000, 30000, 45000 };
+                    if (nextGoogleCheckpoint < milestones.Length &&
+                        elapsed >= milestones[nextGoogleCheckpoint])
+                    {
+                        AppStore.Log("GOOGLE_MOUNT_WAIT_CHECKPOINT id=" + p.Id +
+                            " elapsedMs=" + elapsed +
+                            " processAlive=" + !process.HasExited +
+                            " firstOutput=" + (Volatile.Read(
+                                ref googleFirstOutputSeen) != 0));
+                        nextGoogleCheckpoint++;
+                    }
+                }
                 if (!p.UseLockBridge && await mountProbe.CheckAsync())
                 {
+                    if (p.Protocol == "GoogleDrive")
+                        AppStore.Log("GOOGLE_MOUNT_DRIVE_VISIBLE_TIMING id=" +
+                            p.Id + " elapsedMs=" +
+                            mountStartupClock.ElapsedMilliseconds);
                     googleTrace?.Milestone("drive_letter_ready");
                     var verified = await VerifiedThenOk(p,
                         $"{p.Protocol} 드라이브 연결: {p.Letter}: " +

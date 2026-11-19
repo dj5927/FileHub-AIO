@@ -4,8 +4,8 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 버전과 업데이트
 
-- PC 버전: v1.3.106, 이후 v1.3.107 / v1.3.108...
-- PC 전용 GitHub 릴리즈 태그: pc-v1.3.106 / pc-v1.3.107 ...
+- PC 버전: v1.3.107, 이후 v1.3.108 / v1.3.109...
+- PC 전용 GitHub 릴리즈 태그: pc-v1.3.107 / pc-v1.3.108 ...
 - Android 버전: v0.1.x — Windows 업데이트와 별개로 운영
 - 프로그램 실행 시 트레이 업데이트 알림 / 환경 설정 → PC 업데이트 확인
 - 새 PC 버전을 받으면 GitHub 릴리즈 ZIP SHA-256 검증 → 사용자의 설치 승인 → 원격 드라이브 안전 해제 → 프로그램 업데이트 후 재실행
@@ -13,7 +13,7 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 설치
 
-GitHub Releases에서 FileHub-AIO-PC-1.3.106-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.106을 설치할 수 있습니다.
+GitHub Releases에서 FileHub-AIO-PC-1.3.107-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.107을 설치할 수 있습니다.
 
 업데이트 설치 전에는 Excel/Word 등 열린 문서를 모두 저장하고 닫아야 합니다. 안전하게 해제하지 못한 NAS 드라이브가 있으면 프로그램 교체를 중단합니다. 이전 버전은 사용자 백업 폴더에 보관합니다.
 
@@ -32,6 +32,37 @@ GitHub Actions는 공식 릴리즈 파일과 컴파일된 실행 파일의 SHA-2
 PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj -c Release -r win-x64 --self-contained true -o publish, dotnet publish LockBridge/LockBridge.csproj -c Release -r win-x64 --self-contained true -o bridge 를 순서대로 실행합니다.
 
 두 프로젝트를 컴파일하는 것만으로 전체 배포본이 완성되는 것은 아닙니다. rclone, 확장 엔진, WinFsp 배포 파일은 GitHub Actions에서 공식 릴리즈로부터 수집합니다.
+
+## v1.3.107 WebDAV 1~2글자 이름 표시 및 Google 지연 구간 진단
+
+- 다른 PC의 탐색기에서 WebDAV `원텍`, `오름`에
+  `\\NASMount-...`가 표시되는 문제를 수정했습니다.
+  기존 UNC 표시명 코드는 공유 이름이 최소 3글자일 때만
+  등록을 허용했으므로 2글자 사용자 이름 전체도 누락했습니다.
+  새 코드는 1~2글자 이름은 **전체 문자열 정확 일치**,
+  3글자 이상의 WinFsp 축약 이름은 앞부분 일치를 허용합니다.
+  현재 프로필 소유 서버 및 공유명 조건은 유지하며, 무관한
+  네트워크 위치의 레지스트리를 수정하지 않습니다.
+- 실제 다른 PC에서 보고된 2글자 한국어 WebDAV 예제, 기존
+  문수나스 및 Google Drive 축약 이름, 다른 프로필/부분 문자열
+  혼동을 방지하는 회귀 테스트를 추가하고 GitHub Actions
+  릴리즈 필수 검사에도 포함했습니다.
+- 2026-11-19 12:00 이후 *현재 접근할 수 있는 PC*의 로그에는
+  Google 신규 연결 시도가 없었습니다. 대신 11:01:05 시작한
+  Google 연결은 총 34,735ms이고, 11:01:40 루트 열람은
+  349ms였습니다. 같은 날 다른 연결은 1초대부터 35초대까지
+  편차가 큽니다. Google 토큰이 정상이고 VFS 캐시가 작아
+  단정적인 API 또는 파일 캐시 설정 변경은 보류했습니다.
+- Google rclone 프로세스 생성 시간, 첫 stderr 출력, 마운트가
+  Windows 드라이브로 보이는 시간, 5/15/30/45초 체크포인트를
+  개인정보와 원격 파일명 없이 안전하게 기록합니다.
+  추가 연결 시 `GOOGLE_MOUNT_PROCESS_SPAWN_TIMING`,
+  `GOOGLE_MOUNT_FIRST_STDERR_TIMING`,
+  `GOOGLE_MOUNT_WAIT_CHECKPOINT`,
+  `GOOGLE_MOUNT_DRIVE_VISIBLE_TIMING`을 비교하면
+  OS 실행 지연과 rclone 내부 준비 지연을 분리할 수 있습니다.
+  새로운 지연의 최종 원인과 해결 여부는 실사용 로그가 필요합니다.
+
 
 ## 검증 범위
 

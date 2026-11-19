@@ -170,6 +170,7 @@ jobs:
         run: |
           $output = & ./publish/FileHubAIO.exe --explorer-label-policy-test 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0 -or
+              $output -notmatch 'SHORT_KOREAN_WEBDAV_NETWORK_LABEL_POLICY_PASS' -or
               $output -notmatch 'WEBDAV_LOCKBRIDGE_OWNED_UNC_LABEL_POLICY_PASS' -or
               $output -notmatch 'EXPLORER_CLOUD_LABEL_MYBOX_ONEDRIVE_POLICY_PASS') {
             throw 'WinFsp network-label regression: ' + $output

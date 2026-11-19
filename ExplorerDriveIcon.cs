@@ -90,7 +90,10 @@ internal static class ExplorerDriveIcon
     // ##NASMount-f15d6c50-d9016a70#Goo for "Google Drive"). Looking for
     // ##NASMount-...#Google Drive never finds it, so the raw UNC leaks into
     // Explorer. Only consider the exact live random-session server and a
-    // prefix of the configured share label. Never CREATE a Shell ghost.
+    // prefix of the configured share label. Exact names shorter than three
+    // characters must still match (e.g. Korean two-character WebDAV labels);
+    // short partial prefixes of a longer label must not match.
+    // Never CREATE a Shell ghost.
     internal static bool IsCurrentMountPointKey(
         string key, string serverName, string configuredLabel)
     {
@@ -98,9 +101,11 @@ internal static class ExplorerDriveIcon
         if (!key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             return false;
         string share = key[prefix.Length..];
-        return share.Length >= 3 &&
+        return share.Length >= 1 &&
             share.Length <= configuredLabel.Length &&
             configuredLabel.StartsWith(share, StringComparison.OrdinalIgnoreCase) &&
+            (share.Length >= 3 || string.Equals(share, configuredLabel,
+                StringComparison.OrdinalIgnoreCase)) &&
             !share.Contains('#') && !share.Contains('\\');
     }
 
@@ -383,6 +388,7 @@ internal static class ExplorerDriveIcon
             Registry.CurrentUser.DeleteSubKeyTree(qaRoot,
                 throwOnMissingSubKey: false);
         }
+        ShortNetworkLabelPolicy.SelfTest();
         Console.WriteLine("WEBDAV_LOCKBRIDGE_OWNED_UNC_LABEL_POLICY_PASS");
         Console.WriteLine("EXPLORER_CLOUD_LABEL_MYBOX_ONEDRIVE_POLICY_PASS");
     }
