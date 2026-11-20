@@ -34,12 +34,19 @@ internal static class GoogleDriveAuth
         ConfigPath(p) + ".previous-auth.bak";
     internal static bool HasPreviousAuthorization(NasProfile p) =>
         p.Protocol == "GoogleDrive" &&
-        File.Exists(PreviousAuthorizationPath(p));
+        (GoogleDirectCredentialStore.HasBackup(p) ||
+         File.Exists(PreviousAuthorizationPath(p)));
 
     internal static void RestorePreviousAuthorization(NasProfile p)
     {
         if (p.Protocol != "GoogleDrive")
             throw new InvalidOperationException("Google Drive 프로필이 아닙니다.");
+        if (GoogleDirectCredentialStore.HasBackup(p))
+        {
+            GoogleDirectCredentialStore.RestoreBackup(p);
+            AppStore.Log("GOOGLE_DIRECT_DPAPI_PREVIOUS_AUTH_RESTORED profile=" + p.Id);
+            return;
+        }
         SecureDirectory();
         string original = ConfigPath(p);
         string backup = PreviousAuthorizationPath(p);
@@ -84,6 +91,7 @@ internal static class GoogleDriveAuth
     internal static bool IsAuthorized(NasProfile p)
     {
         if (p.Protocol != "GoogleDrive") return false;
+        if (GoogleDirectCredentialStore.HasNative(p)) return true;
         try
         {
             string path = ConfigPath(p);
@@ -100,6 +108,7 @@ internal static class GoogleDriveAuth
     internal static string ClientMode(NasProfile p)
     {
         if (!IsAuthorized(p)) return "not-authorized";
+        if (GoogleDirectCredentialStore.HasNative(p)) return "custom";
         try
         {
             string contents = File.ReadAllText(ConfigPath(p), Encoding.UTF8);
@@ -188,19 +197,12 @@ internal static class GoogleDriveAuth
         if (!response.IsSuccessStatusCode)
             throw new IOException("Google direct OAuth validation HTTP " +
                 (int)response.StatusCode + ". Previous login is unchanged.");
-        string candidate = BuildConfig(profile, jsonToken, clientId, clientSecret);
-        SecureDirectory();
-        string current = ConfigPath(profile);
-        string temporary = current + "." + Guid.NewGuid().ToString("N") + ".native";
-        try
-        {
-            File.WriteAllText(temporary, candidate, new UTF8Encoding(false));
-            AtomicReplaceWithBackup(temporary, current,
-                PreviousAuthorizationPath(profile));
-            AppStore.Log("GOOGLE_NATIVE_BROWSER_OAUTH_SAVED profile=" +
-                profile.Id + " rcloneAuth=false previousSaved=true");
-        }
-        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        // Separate DPAPI store: native Google auth never writes a rclone
+        // config. Previous legacy credentials remain untouched for rollback.
+        GoogleDirectCredentialStore.SaveBrowserGrant(
+            profile, jsonToken, clientId, clientSecret);
+        AppStore.Log("GOOGLE_NATIVE_BROWSER_DPAPI_AUTH_SAVED profile=" +
+            profile.Id + " rcloneAuth=false previousPreserved=true");
     }
 
     // A token acquired for a new OAuth app must be tested before replacing

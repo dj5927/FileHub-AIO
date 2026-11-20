@@ -16,6 +16,7 @@ internal static class GoogleDirectApiPolicyTest
         internal int Reads;
         internal int Uploads;
         internal int UploadStarts;
+        internal int GeneratedIds;
         internal bool Limit;
 
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -30,6 +31,12 @@ internal static class GoogleDirectApiPolicyTest
             if (Limit)
                 return Response(HttpStatusCode.Forbidden,
                     """{"error":{"status":"PERMISSION_DENIED","errors":[{"reason":"rateLimitExceeded"}]}}""");
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri.AbsolutePath.EndsWith("/files/generateIds"))
+            {
+                Interlocked.Increment(ref GeneratedIds);
+                return Response(HttpStatusCode.OK, """{"ids":["pre_new_1"]}""");
+            }
             if (request.Method == HttpMethod.Get &&
                 request.RequestUri.AbsolutePath.EndsWith("/files/fileA_1") &&
                 request.RequestUri.Query.Contains("alt=media"))
@@ -51,6 +58,7 @@ internal static class GoogleDirectApiPolicyTest
                 using var json = JsonDocument.Parse(await request.Content!
                     .ReadAsStringAsync(cancellationToken));
                 if (json.RootElement.GetProperty("name").GetString() != "new.txt" ||
+                    json.RootElement.GetProperty("id").GetString() != "pre_new_1" ||
                     json.RootElement.GetProperty("parents")[0].GetString() != "root")
                     throw new InvalidOperationException("Direct new file upload targeted the wrong object");
                 Interlocked.Increment(ref UploadStarts);
@@ -68,7 +76,7 @@ internal static class GoogleDirectApiPolicyTest
                     throw new InvalidOperationException("Direct Google upload byte range or content mismatch");
                 Interlocked.Increment(ref Uploads);
                 return Response(HttpStatusCode.OK,
-                    """{"id":"new_file_1","name":"new.txt","mimeType":"application/octet-stream","size":"8","version":"1"}""");
+                    """{"id":"pre_new_1","name":"new.txt","mimeType":"application/octet-stream","size":"8","version":"1","md5Checksum":"e44f9e348e41cb272efa87387728571b"}""");
             }
             if (request.Method == HttpMethod.Get &&
                 request.RequestUri.AbsolutePath.EndsWith("/files"))
@@ -171,8 +179,8 @@ internal static class GoogleDirectApiPolicyTest
             throw new InvalidOperationException("Google direct ranged content read failed");
         using var uploadBody = new MemoryStream(Encoding.ASCII.GetBytes("DATA1234"));
         var uploaded = await api.UploadNewAsync("root", "new.txt", uploadBody);
-        if (uploaded.Id != "new_file_1" || fake.UploadStarts != 1 ||
-            fake.Uploads != 1)
+        if (uploaded.Id != "pre_new_1" || fake.UploadStarts != 1 ||
+            fake.Uploads != 1 || fake.GeneratedIds != 1)
             throw new InvalidOperationException("Direct Google new-file upload failed");
         Console.WriteLine("GOOGLE_DIRECT_API_RANGE_READ_AND_NEW_RESUMABLE_UPLOAD_PASS");
 

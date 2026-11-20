@@ -30,6 +30,9 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
     private readonly string _stageRoot;
     private int _opened;
     internal int OpenedHandles => Volatile.Read(ref _opened);
+    internal int PendingRecoveryCount => Directory.Exists(_stageRoot)
+        ? Directory.EnumerateFiles(_stageRoot, "*.json").Count()
+        : 0;
 
     internal sealed record Entry(string Path, string Name, string Id,
         bool Directory, long Size, DateTime Modified, string Mime, string? Version);
@@ -42,15 +45,23 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
     }
     private readonly ConcurrentDictionary<string, Entry> _recent = new(
         StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _recentUntil = new(
+        StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan EntryTtl = TimeSpan.FromSeconds(30);
+    private readonly ConcurrentDictionary<string, DirectGoogleWriteStage> _newFiles = new(
+        StringComparer.OrdinalIgnoreCase);
+    private sealed record NewFile(Entry Entry, DirectGoogleWriteStage Stage);
 
     internal DirectGoogleWinFsp(GoogleDirectApiClient api,
-        string localAclDirectory, bool allowFolderMutations)
+        string localAclDirectory, bool allowFolderMutations,
+        string? stageDirectory = null)
     {
         _api = api;
         _allowFolderMutations = allowFolderMutations;
         _acl = new DirectoryInfo(localAclDirectory).GetAccessControl()
             .GetSecurityDescriptorBinaryForm();
-        _stageRoot = Path.Combine(AppStore.DirectoryPath, "google-direct-stages");
+        _stageRoot = stageDirectory ?? Path.Combine(
+            AppStore.DirectoryPath, "google-direct-stages");
         // Pilot is read-only for files; no recovery directory or file
         // content is allocated until a future safe-write phase is enabled.
     }
@@ -86,7 +97,15 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
         if (path == "/")
             return new Entry("/", "", "root", true, 0,
                 DateTime.UnixEpoch, GoogleDirectApiClient.FolderMime, null);
-        if (_recent.TryGetValue(path, out var cached)) return cached;
+        if (_newFiles.TryGetValue(path, out var pending))
+            return new Entry(path, path[(path.LastIndexOf('/') + 1)..],
+                "local", false, pending.Length, DateTime.UtcNow,
+                "application/octet-stream", null);
+        if (_recent.TryGetValue(path, out var cached) &&
+            _recentUntil.TryGetValue(path, out var until) &&
+            until > DateTimeOffset.UtcNow) return cached;
+        _recent.TryRemove(path, out _);
+        _recentUntil.TryRemove(path, out _);
         Entry parent = Find(Parent(path)) ??
             throw new FileNotFoundException("Google directory parent not found");
         if (!parent.Directory) return null;
@@ -99,6 +118,7 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
         if (found is null) return null;
         var entry = FromItem(parent.Path, found);
         _recent[entry.Path] = entry;
+        _recentUntil[entry.Path] = DateTimeOffset.UtcNow + EntryTtl;
         return entry;
     }
 
@@ -110,7 +130,19 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
         var items = list.Select(item => FromItem(parent.Path, item))
             .OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        foreach (var item in items) _recent[item.Path] = item;
+        var newItems = _newFiles.Where(pair => Parent(pair.Key) == parent.Path)
+            .Select(pair => new Entry(pair.Key,
+                pair.Key[(pair.Key.LastIndexOf('/') + 1)..],
+                "local", false, pair.Value.Length, DateTime.UtcNow,
+                "application/octet-stream", null)).ToArray();
+        if (newItems.Length > 0)
+            items = items.Concat(newItems).OrderBy(item => item.Name,
+                StringComparer.OrdinalIgnoreCase).ToArray();
+        foreach (var item in items)
+        {
+            _recent[item.Path] = item;
+            _recentUntil[item.Path] = DateTimeOffset.UtcNow + EntryTtl;
+        }
         return items;
     }
 
@@ -134,6 +166,10 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
         result.ChangeTime = date;
         return result;
     }
+
+    private static FspFileInfo Describe(NewFile staged) =>
+        Describe(staged.Entry with { Size = staged.Stage.Length,
+            Modified = DateTime.UtcNow });
 
     private static int Failure(Exception ex, string operation)
     {
@@ -202,11 +238,23 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
         fileNode = null!; fileDesc = null!; info = default; normalizedName = null!;
         try
         {
+            if (_newFiles.TryGetValue(Canonical(fileName), out var localStage))
+            {
+                var provisional = Find(fileName)!;
+                var writable = new NewFile(provisional, localStage);
+                fileNode = writable; fileDesc = writable;
+                info = Describe(writable);
+                Interlocked.Increment(ref _opened);
+                return Ok;
+            }
             var entry = Find(fileName);
             if (entry is null) return Missing;
             // No existing-file writes until Drive CAS semantics and
             // recovery journaling have passed two-client regression.
-            if (!entry.Directory && (grantedAccess & 0x00010116u) != 0)
+            // DELETE access (0x10000) is needed for a Windows file RENAME.
+            // Deny content writes (data/append/EA), but allow a metadata
+            // rename without making the existing binary content writable.
+            if (!entry.Directory && (grantedAccess & 0x00000016u) != 0)
                 return Denied;
             fileNode = entry; fileDesc = entry;
             info = Describe(entry);
@@ -219,6 +267,26 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
 
     public override void Close(object fileNode, object fileDesc)
     {
+        if (fileDesc is NewFile staged)
+        {
+            try
+            {
+                if (!staged.Stage.Uploaded && !staged.Stage.Discarded)
+                    staged.Stage.Commit();
+            }
+            catch (Exception error) when (error is IOException or HttpRequestException)
+            {
+                Failure(error, "CloseNewFileRecoveryRetained");
+            }
+            finally
+            {
+                _newFiles.TryRemove(staged.Entry.Path, out _);
+                _recent.TryRemove(staged.Entry.Path, out _);
+                staged.Stage.Dispose();
+                Interlocked.Decrement(ref _opened);
+            }
+            return;
+        }
         if (fileDesc is Entry)
             Interlocked.Decrement(ref _opened);
     }
@@ -226,14 +294,33 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
     public override int GetFileInfo(object fileNode, object fileDesc,
         out FspFileInfo info)
     {
-        info = fileDesc is Entry e ? Describe(e) : default;
-        return fileDesc is Entry ? Ok : Denied;
+        info = fileDesc switch
+        {
+            NewFile staged => Describe(staged),
+            Entry e => Describe(e),
+            _ => default
+        };
+        return fileDesc is Entry or NewFile ? Ok : Denied;
     }
 
     public override int Read(object fileNode, object fileDesc, IntPtr buffer,
         ulong offset, uint length, out uint transferred)
     {
         transferred = 0;
+        if (fileDesc is NewFile staged)
+        {
+            if (offset >= (ulong)staged.Stage.Length) return Eof;
+            try
+            {
+                byte[] chunk = new byte[(int)Math.Min(length,
+                    Math.Min(4UL * 1024 * 1024, (ulong)staged.Stage.Length - offset))];
+                int read = staged.Stage.Read((long)offset, chunk);
+                if (read > 0) Marshal.Copy(chunk, 0, buffer, read);
+                transferred = (uint)read;
+                return Ok;
+            }
+            catch (IOException ex) { return Failure(ex, "ReadNewStage"); }
+        }
         if (fileDesc is not Entry entry || entry.Directory) return Denied;
         if (entry.Mime.StartsWith("application/vnd.google-apps.",
             StringComparison.OrdinalIgnoreCase)) return Unsupported;
@@ -300,7 +387,7 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
         out FspFileInfo info, out string normalizedName)
     {
         fileNode = null!; fileDesc = null!; info = default; normalizedName = null!;
-        if (!_allowFolderMutations || (createOptions & 1u) == 0)
+        if (!_allowFolderMutations)
             return Denied;
         try
         {
@@ -308,9 +395,26 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
             if (Find(target) is not null) return Exists;
             var parent = Find(Parent(target));
             if (parent is null || !parent.Directory) return Missing;
+            if ((createOptions & 1u) == 0)
+            {
+                // New binary files are always durable locally first.
+                // Existing Drive IDs are never overwritten via this path.
+                var stage = new DirectGoogleWriteStage(_api, _stageRoot,
+                    parent.Id, target[(target.LastIndexOf('/') + 1)..]);
+                if (!_newFiles.TryAdd(target, stage))
+                {
+                    stage.Discard();
+                    return Exists;
+                }
+                var pendingEntry = Find(target)!;
+                var writer = new NewFile(pendingEntry, stage);
+                fileNode = writer; fileDesc = writer; info = Describe(writer);
+                Interlocked.Increment(ref _opened);
+                return Ok;
+            }
             var created = _api.CreateFolderAsync(parent.Id,
                 target[(target.LastIndexOf('/') + 1)..]).GetAwaiter().GetResult();
-            _recent.Clear();
+            _recent.Clear(); _recentUntil.Clear();
             var entry = FromItem(parent.Path, created);
             _recent[entry.Path] = entry;
             fileNode = entry; fileDesc = entry; info = Describe(entry);
@@ -322,23 +426,150 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
     }
 
     public override int CanDelete(object fileNode, object fileDesc, string fileName)
-        => Denied; // Trash/version-aware delete not yet validated.
+        => fileDesc is NewFile pending && !pending.Stage.Uploaded
+            ? Ok : (_allowFolderMutations && fileDesc is Entry entry &&
+                entry.Id != "root" ? Ok : Denied);
+
+    public override int Write(object fileNode, object fileDesc, IntPtr buffer,
+        ulong offset, uint length, bool writeToEndOfFile, bool constrainedIo,
+        out uint transferred, out FspFileInfo info)
+    {
+        transferred = 0; info = default;
+        if (fileDesc is not NewFile file || length > 4 * 1024 * 1024)
+            return Denied;
+        try
+        {
+            ulong position = writeToEndOfFile ? (ulong)file.Stage.Length : offset;
+            if (constrainedIo && position >= (ulong)file.Stage.Length)
+            {
+                info = Describe(file);
+                return Ok;
+            }
+            int permitted = (int)(constrainedIo ?
+                Math.Min(length, (ulong)file.Stage.Length - position) : length);
+            byte[] data = new byte[permitted];
+            if (permitted > 0) Marshal.Copy(buffer, data, 0, permitted);
+            file.Stage.Write(position, data, false);
+            transferred = (uint)permitted;
+            info = Describe(file);
+            return Ok;
+        }
+        catch (Exception ex) when (ex is IOException or ArgumentException or OverflowException)
+        { return Failure(ex, "WriteNewFile"); }
+    }
+
+    public override int Flush(object fileNode, object fileDesc, out FspFileInfo info)
+    {
+        info = default;
+        if (fileDesc is not NewFile file) return Ok;
+        try
+        {
+            file.Stage.FlushLocal();
+            // On explicit Windows Flush an upload error MUST be reported.
+            file.Stage.Commit();
+            info = Describe(file);
+            return Ok;
+        }
+        catch (Exception ex) when (ex is IOException or HttpRequestException)
+        { return Failure(ex, "FlushNewFileRecoveryRetained"); }
+    }
+
+    public override int SetFileSize(object fileNode, object fileDesc, ulong newSize,
+        bool setAllocationSize, out FspFileInfo info)
+    {
+        info = default;
+        if (fileDesc is not NewFile file || newSize > long.MaxValue) return Denied;
+        try
+        {
+            if (!setAllocationSize || (ulong)file.Stage.Length > newSize)
+                file.Stage.SetLength((long)newSize);
+            info = Describe(file);
+            return Ok;
+        }
+        catch (IOException ex) { return Failure(ex, "SetFileSizeNewFile"); }
+    }
+
+    public override int Overwrite(object fileNode, object fileDesc,
+        uint fileAttributes, bool replaceFileAttributes, ulong allocationSize,
+        out FspFileInfo info)
+    {
+        info = default;
+        if (fileDesc is not NewFile file) return Denied;
+        try
+        {
+            file.Stage.SetLength(0);
+            info = Describe(file);
+            return Ok;
+        }
+        catch (IOException ex) { return Failure(ex, "OverwriteNewStage"); }
+    }
+
+    public override void Cleanup(object fileNode, object fileDesc,
+        string fileName, uint flags)
+    {
+        if (fileDesc is Entry existing)
+        {
+            if ((flags & 1u) != 0 && _allowFolderMutations &&
+                existing.Id != "root")
+            {
+                try
+                {
+                    var parent = Find(Parent(existing.Path));
+                    if (parent is null) throw new DirectoryNotFoundException();
+                    _api.TrashAsync(existing.Id, parent.Id,
+                        existing.Version).GetAwaiter().GetResult();
+                    _recent.Clear(); _recentUntil.Clear();
+                }
+                catch (Exception ex) when (ex is IOException or ArgumentException)
+                { Failure(ex, "TrashReversible"); }
+            }
+            return;
+        }
+        if (fileDesc is not NewFile file) return;
+        if ((flags & 1u) != 0)
+        {
+            try { file.Stage.Discard(); }
+            catch (IOException ex) { Failure(ex, "DiscardNewFile"); }
+            _newFiles.TryRemove(file.Entry.Path, out _);
+            return;
+        }
+        try
+        {
+            // Cleanup is the last Windows handle, before the cache manager
+            // eventually sends Close. The remote file is committed here.
+            file.Stage.Commit();
+            if (file.Stage.Uploaded)
+            {
+                _newFiles.TryRemove(file.Entry.Path, out _);
+                _recent.TryRemove(file.Entry.Path, out _);
+                file.Stage.Dispose();
+            }
+        }
+        catch (Exception ex) when (ex is IOException or HttpRequestException)
+        { Failure(ex, "CleanupNewFileRecoveryRetained"); }
+    }
 
     public override int Rename(object fileNode, object fileDesc,
         string fileName, string newFileName, bool replaceIfExists)
     {
         if (!_allowFolderMutations || fileDesc is not Entry entry ||
-            !entry.Directory || replaceIfExists) return Denied;
+            entry.Id == "root") return Denied;
         try
         {
             string target = Canonical(newFileName);
-            if (Parent(target) != Parent(entry.Path)) return Unsupported;
             if (Find(target) is not null) return Exists;
-            var parent = Find(Parent(entry.Path));
-            if (parent is null) return Missing;
-            _api.RenameAsync(entry.Id, target[(target.LastIndexOf('/') + 1)..],
-                parent.Id).GetAwaiter().GetResult();
-            _recent.Clear();
+            var sourceParent = Find(Parent(entry.Path));
+            var destinationParent = Find(Parent(target));
+            if (sourceParent is null || destinationParent is null ||
+                !destinationParent.Directory) return Missing;
+            string newName = target[(target.LastIndexOf('/') + 1)..];
+            if (sourceParent.Id == destinationParent.Id)
+                _api.RenameAsync(entry.Id, newName,
+                    sourceParent.Id).GetAwaiter().GetResult();
+            else
+                _api.MoveAsync(entry.Id, sourceParent.Id,
+                    destinationParent.Id, newName).GetAwaiter().GetResult();
+            _recent.Clear(); _recentUntil.Clear();
             return Ok;
         }
         catch (Exception ex) when (ex is IOException or ArgumentException)
@@ -347,7 +578,9 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
 
     public void Dispose()
     {
-        _recent.Clear();
+        foreach (var stage in _newFiles.Values) stage.Dispose();
+        _newFiles.Clear();
+        _recent.Clear(); _recentUntil.Clear();
     }
 }
 
@@ -370,8 +603,10 @@ internal static class DirectGoogleWinFspHost
         // The direct pilot must prove the root is usable before occupying
         // a drive letter. Avoid reporting a mounted-but-unusable drive.
         _ = api.ListChildrenAsync("root").GetAwaiter().GetResult();
+        string recovery = Path.Combine(AppStore.DirectoryPath,
+            "google-direct-stages", profile.Id.ToString("N"));
         using var provider = new DirectGoogleWinFsp(api, Path.GetTempPath(),
-            writeFolders);
+            writeFolders, recovery);
         using var host = new FileSystemHost(provider);
         host.FileSystemName = "NTFS";
         // Pilot is local fixed volume; no synthetic NASMount UNC name.
@@ -396,10 +631,15 @@ internal static class DirectGoogleWinFspHost
             string request = reader.ReadLine() ?? "";
             if (request == "PING")
                 writer.WriteLine("READY " + provider.OpenedHandles +
-                    " rclone=false");
-            else if (request == "QUIT" && provider.OpenedHandles == 0)
+                    " rclone=false pending=" + provider.PendingRecoveryCount);
+            else if (request == "STATUS")
+                writer.WriteLine("READY " + provider.OpenedHandles +
+                    " PENDING " + provider.PendingRecoveryCount);
+            else if (request == "QUIT" && provider.OpenedHandles == 0 &&
+                provider.PendingRecoveryCount == 0)
             { writer.WriteLine("OK"); break; }
-            else writer.WriteLine("BUSY " + provider.OpenedHandles);
+            else writer.WriteLine("BUSY " + provider.OpenedHandles +
+                " PENDING " + provider.PendingRecoveryCount);
         }
         return 0;
     }

@@ -27,5 +27,6 @@
     <Compile Include="..\OfficeMarkerWorkbook.cs" Link="Shared\OfficeMarkerWorkbook.cs"/>
     <Compile Include="..\GoogleDirectApiClient.cs" Link="Shared\GoogleDirectApiClient.cs"/>
     <Compile Include="..\GoogleDirectOAuthSession.cs" Link="Shared\GoogleDirectOAuthSession.cs"/>
+    <Compile Include="..\GoogleDirectCredentialStore.cs" Link="Shared\GoogleDirectCredentialStore.cs"/>
   </ItemGroup>
 </Project>

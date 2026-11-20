@@ -1,0 +1,82 @@
+name: Direct Google WinFsp pilot safety tests
+
+on:
+  push:
+    branches:
+      - pc/direct-google-pilot
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: filehub-google-direct-pilot
+  cancel-in-progress: true
+
+jobs:
+  google-direct:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out pilot branch
+        uses: actions/checkout@v7
+
+      - name: Install .NET 10
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build FileHub and direct WinFsp bridge
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet build NASMount.csproj -c Release -nologo
+          if ($LASTEXITCODE -ne 0) { throw 'Main app failed to compile' }
+          dotnet build LockBridge/LockBridge.csproj -c Release -nologo
+          if ($LASTEXITCODE -ne 0) { throw 'Direct Google WinFsp bridge failed to compile' }
+          $app = 'bin/Release/net10.0-windows/win-x64/FileHubAIO.exe'
+          $out = & $app --google-direct-api-policy-test 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or
+              $out -notmatch 'GOOGLE_DIRECT_DPAPI_OAUTH_ROUNDTRIP_AND_BACKUP_PASS' -or
+              $out -notmatch 'GOOGLE_DIRECT_API_RANGE_READ_AND_NEW_RESUMABLE_UPLOAD_PASS') {
+            throw 'Direct Google API/DPAPI/PKCE policy failed: ' + $out
+          }
+
+      - name: Install pinned official WinFsp driver
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi'
+          $file = Join-Path $env:RUNNER_TEMP 'winfsp-2.1.25156.msi'
+          Invoke-WebRequest -Uri $url -OutFile $file
+          $actual = (Get-FileHash $file -Algorithm SHA256).Hash
+          if ($actual -ne '073A70E00F77423E34BED98B86E600DEF93393BA5822204FAC57A29324DB9F7A') {
+            throw 'Pinned WinFsp MSI hash mismatch'
+          }
+          $proc = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            '/i', ('"' + $file + '"'), '/qn', '/norestart', 'INSTALLLEVEL=1000')
+          if ($proc.ExitCode -notin @(0,3010)) {
+            throw ('WinFsp installation failed code=' + $proc.ExitCode)
+          }
+          $dll = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'WinFsp/bin/winfsp-x64.dll'
+          if (!(Test-Path $dll)) { throw 'WinFsp x64 driver DLL missing' }
+
+      - name: Real WinFsp native Google file operations over isolated fake API
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bridge = 'LockBridge/bin/Release/net10.0-windows/win-x64/NASMountLockBridge.exe'
+          $output = & $bridge --direct-google-winfsp-policy-test 2>&1 | Out-String
+          foreach ($required in @(
+            'GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_READ_PASS',
+            'GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_FOLDER_CREATE_RENAME_PASS',
+            'GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_NEW_FILE_UPLOAD_PASS',
+            'GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_FILE_RENAME_TRASH_PASS',
+            'GOOGLE_DIRECT_UPLOAD_403_FAILURE_PRESERVES_LOCAL_RECOVERY_PASS'
+          )) {
+            if ($output -notmatch $required) {
+              throw ('Google WinFsp operation failed: ' + $required + ' ' + $output)
+            }
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Google WinFsp native API test failed' }
+          Write-Output $output

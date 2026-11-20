@@ -453,6 +453,7 @@ internal static class Program
             {
                 GoogleDirectBrowserAuth.PolicyTest();
                 GoogleDirectApiPolicyTest.RunAsync().GetAwaiter().GetResult();
+                GoogleDirectCredentialStore.SelfTest();
             }
             catch (Exception ex)
             {

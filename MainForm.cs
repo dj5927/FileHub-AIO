@@ -535,6 +535,22 @@ internal sealed partial class MainForm : Form
                 return;
             }
         }
+        // When the publisher provided FileHub's own OAuth Desktop client,
+        // migrate a legacy shared-rclone account via the SAME one-click
+        // browser login UX. No API key entry for ordinary users.
+        // Never pop a surprise Chrome consent window during autoconnect.
+        if (p.Protocol == "GoogleDrive" &&
+            GoogleDriveAuth.ClientMode(p) != "custom" &&
+            GoogleOAuthClientFile.TryReadPackagedClient(out _, out _))
+        {
+            if (!explicitRequest)
+            {
+                retry[p.Id] = DateTime.UtcNow.AddMinutes(5);
+                return;
+            }
+            using var directLogin = new GoogleDriveLoginDialog(p);
+            if (directLogin.ShowDialog(this) != DialogResult.OK) return;
+        }
         if (p.Protocol == "GoogleDrive" && !GoogleDriveAuth.IsAuthorized(p))
         {
             if (!explicitRequest)

@@ -25,10 +25,12 @@ internal sealed class GoogleDirectOAuthSession
     private string _accessToken;
     private DateTimeOffset _expiry;
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
+    private readonly Action<string, string, DateTimeOffset>? _persist;
 
     internal GoogleDirectOAuthSession(HttpClient http, string clientId,
         string clientSecret, string refreshToken, string accessToken,
-        DateTimeOffset expiry, Uri? tokenEndpoint = null)
+        DateTimeOffset expiry, Uri? tokenEndpoint = null,
+        Action<string, string, DateTimeOffset>? persist = null)
     {
         if (string.IsNullOrWhiteSpace(clientId) ||
             string.IsNullOrWhiteSpace(refreshToken))
@@ -42,6 +44,7 @@ internal sealed class GoogleDirectOAuthSession
         _expiry = expiry;
         _tokenEndpoint = tokenEndpoint ??
             new Uri("https://oauth2.googleapis.com/token");
+        _persist = persist;
         if (_tokenEndpoint.Scheme != Uri.UriSchemeHttps &&
             !(_tokenEndpoint.IsLoopback && _tokenEndpoint.Scheme == Uri.UriSchemeHttp))
             throw new ArgumentException("OAuth token URI must use HTTPS");
@@ -52,6 +55,15 @@ internal sealed class GoogleDirectOAuthSession
     {
         if (profile.Protocol != "GoogleDrive")
             throw new InvalidOperationException("Not a Google Drive profile");
+        if (GoogleDirectCredentialStore.HasNative(profile))
+        {
+            var native = GoogleDirectCredentialStore.Load(profile);
+            return new GoogleDirectOAuthSession(http, native.ClientId,
+                native.ClientSecret, native.RefreshToken, native.AccessToken,
+                native.Expiry, persist: (access, refresh, expiration) =>
+                    GoogleDirectCredentialStore.SaveRefresh(
+                        profile, access, refresh, expiration));
+        }
         // Direct engine never invokes rclone, including for OAuth refresh.
         // Read-only import of an existing profile is an interim bridge to
         // a proper FileHub-owned browser PKCE onboarding flow.
@@ -116,16 +128,19 @@ internal sealed class GoogleDirectOAuthSession
                 duration.TryGetInt32(out int ttl) ? ttl : 3600;
             if (seconds < 120)
                 throw new IOException("Google OAuth returned an unexpectedly short expiry");
-            _accessToken = fresh;
-            _expiry = DateTimeOffset.UtcNow.AddSeconds(seconds);
-            if (body.TryGetProperty("refresh_token", out var rotated) &&
-                !string.IsNullOrWhiteSpace(rotated.GetString()))
-            {
-                // Do not silently lose a rotated refresh token. The future
-                // dedicated DPAPI token store must persist it before use.
+            DateTimeOffset expires = DateTimeOffset.UtcNow.AddSeconds(seconds);
+            string nextRefresh = body.TryGetProperty("refresh_token", out var rotated) &&
+                !string.IsNullOrWhiteSpace(rotated.GetString())
+                    ? rotated.GetString()! : _refreshToken;
+            if (nextRefresh != _refreshToken && _persist is null)
                 throw new IOException(
-                    "Google OAuth rotated refresh token; dedicated secure storage required");
-            }
+                    "Google OAuth rotated refresh token; durable store required");
+            // Persist first. If saving fails, do not pretend the token
+            // rotation was durable across an application restart.
+            _persist?.Invoke(fresh, nextRefresh, expires);
+            _accessToken = fresh;
+            _refreshToken = nextRefresh;
+            _expiry = expires;
             return _accessToken;
         }
         finally { _refreshGate.Release(); }

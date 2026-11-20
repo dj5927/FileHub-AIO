@@ -32,7 +32,7 @@ internal sealed class GoogleDirectApiClient
 
     internal sealed record Item(string Id, string Name, bool IsFolder,
         long Size, string? Version, DateTimeOffset? Modified,
-        string MimeType = "");
+        string MimeType = "", string? Md5Checksum = null);
     private sealed record CachedChildren(DateTimeOffset Expires, IReadOnlyList<Item> Items);
 
     internal GoogleDirectApiClient(HttpClient http,
@@ -137,10 +137,12 @@ internal sealed class GoogleDirectApiClient
             long.TryParse(z.GetString(), out long parsedSize) ? parsedSize : 0;
         string? version = value.TryGetProperty("version", out var v) ?
             v.GetString() : null;
+        string? md5 = value.TryGetProperty("md5Checksum", out var check) ?
+            check.GetString() : null;
         DateTimeOffset? modified = value.TryGetProperty("modifiedTime", out var date) &&
             DateTimeOffset.TryParse(date.GetString(), out var parsedTime) ?
                 parsedTime : null;
-        return new Item(id, name, mime == FolderMime, size, version, modified, mime);
+        return new Item(id, name, mime == FolderMime, size, version, modified, mime, md5);
     }
 
     internal async Task<IReadOnlyList<Item>> ListChildrenAsync(
@@ -163,7 +165,7 @@ internal sealed class GoogleDirectApiClient
                 string relative = "files?pageSize=1000&supportsAllDrives=true&" +
                     "includeItemsFromAllDrives=true&q=" + Uri.EscapeDataString(query) +
                     "&fields=" + Uri.EscapeDataString(
-                        "nextPageToken,files(id,name,mimeType,size,modifiedTime,version)");
+                        "nextPageToken,files(id,name,mimeType,size,modifiedTime,version,md5Checksum)");
                 if (token is not null)
                     relative += "&pageToken=" + Uri.EscapeDataString(token);
                 using var doc = await SendJsonAsync(HttpMethod.Get, relative, null,
@@ -190,7 +192,7 @@ internal sealed class GoogleDirectApiClient
         fileId = ValidId(fileId);
         using var request = new HttpRequestMessage(HttpMethod.Get,
             new Uri(_api, "files/" + fileId +
-                "?fields=id,name,mimeType,size,modifiedTime,version&supportsAllDrives=true"));
+                "?fields=id,name,mimeType,size,modifiedTime,version,md5Checksum&supportsAllDrives=true"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer",
             await _accessToken(cancel).ConfigureAwait(false));
         using var result = await _http.SendAsync(request,
@@ -244,22 +246,35 @@ internal sealed class GoogleDirectApiClient
     // ONLY create a new item; never use this method to overwrite an existing
     // Drive ID. Existing-file updates need an independently proven conflict
     // protocol (Drive metadata version alone is not an atomic write CAS).
+    internal async Task<string> GenerateUploadIdAsync(CancellationToken cancel = default)
+    {
+        using var result = await SendJsonAsync(HttpMethod.Get,
+            "files/generateIds?count=1&space=drive", null, cancel).ConfigureAwait(false);
+        string id = result.RootElement.GetProperty("ids")[0].GetString() ?? "";
+        return ValidId(id);
+    }
+
     internal async Task<Item> UploadNewAsync(string parentId, string name,
-        Stream data, CancellationToken cancel = default)
+        Stream data, CancellationToken cancel = default, string? generatedId = null)
     {
         parentId = ValidId(parentId);
+        if (generatedId is not null) generatedId = ValidId(generatedId);
         if (string.IsNullOrWhiteSpace(name) || name.Length > 255 ||
             name.Contains('/') || name.Contains('\\') || !data.CanSeek ||
             data.Position != 0)
             throw new ArgumentException("Invalid new Google file payload");
         var upload = new Uri(_api, "../../upload/drive/v3/files?" +
-            "uploadType=resumable&fields=id,name,mimeType,size,modifiedTime,version");
+            "uploadType=resumable&supportsAllDrives=true&fields=id,name,mimeType,size,modifiedTime,version,md5Checksum");
+        string allocatedId = generatedId ??
+            await GenerateUploadIdAsync(cancel).ConfigureAwait(false);
         using var start = new HttpRequestMessage(HttpMethod.Post, upload)
         {
-            Content = new StringContent(JsonSerializer.Serialize(new
+            Content = new StringContent(JsonSerializer.Serialize(new Dictionary<string, object>
             {
-                name, parents = new[] { parentId },
-                mimeType = "application/octet-stream"
+                ["name"] = name,
+                ["parents"] = new[] { parentId },
+                ["mimeType"] = "application/octet-stream",
+                ["id"] = allocatedId
             }), Encoding.UTF8, "application/json")
         };
         start.Headers.Authorization = new AuthenticationHeaderValue("Bearer",
@@ -283,9 +298,11 @@ internal sealed class GoogleDirectApiClient
         const int chunkSize = 8 * 1024 * 1024;
         long sent = 0;
         bool empty = data.Length == 0;
+        int stalled = 0;
         while (sent < data.Length || empty)
         {
             cancel.ThrowIfCancellationRequested();
+            data.Position = sent;
             int size = empty ? 0 : (int)Math.Min(chunkSize, data.Length - sent);
             byte[] chunk = new byte[size];
             int total = 0;
@@ -314,13 +331,37 @@ internal sealed class GoogleDirectApiClient
                     await result.Content.ReadAsStreamAsync(cancel),
                     cancellationToken: cancel).ConfigureAwait(false);
                 var uploaded = ParseItem(doc.RootElement);
+                if (uploaded.Id != allocatedId)
+                    throw new IOException(
+                        "Google upload returned an unexpected file ID; local recovery retained");
                 InvalidateFolder(parentId);
                 return uploaded;
             }
             if ((int)result.StatusCode != 308)
                 throw new IOException("Google resumable upload HTTP " +
                     (int)result.StatusCode + "; local stage retained");
-            sent += size;
+            // 308 is not a guarantee that the whole requested chunk was
+            // stored. Drive reports the ACKNOWLEDGED range in its response
+            // header. Only advance to that offset, never skip unaccepted
+            // data. This also supports partial-chunk recovery.
+            long acknowledged = -1;
+            if (result.Headers.TryGetValues("Range", out var ranges))
+            {
+                string raw = ranges.FirstOrDefault() ?? "";
+                var match = System.Text.RegularExpressions.Regex.Match(
+                    raw, @"^bytes=0-(\d+)$");
+                if (match.Success &&
+                    long.TryParse(match.Groups[1].Value, out long last))
+                    acknowledged = last + 1;
+            }
+            if (acknowledged < sent || acknowledged > data.Length)
+                throw new IOException(
+                    "Google resumable upload acknowledged invalid byte range");
+            if (acknowledged == sent && ++stalled >= 3)
+                throw new IOException(
+                    "Google resumable upload did not advance; local recovery retained");
+            if (acknowledged > sent) stalled = 0;
+            sent = acknowledged;
             empty = false;
         }
         throw new IOException("Google resumable upload not confirmed; local stage retained");
@@ -358,6 +399,51 @@ internal sealed class GoogleDirectApiClient
             new { name = newName }, cancel).ConfigureAwait(false);
         InvalidateFolder(parentId);
         return ParseItem(doc.RootElement);
+    }
+
+    internal async Task<Item> MoveAsync(string fileId, string oldParentId,
+        string newParentId, string newName,
+        CancellationToken cancel = default)
+    {
+        fileId = ValidId(fileId);
+        oldParentId = ValidId(oldParentId);
+        newParentId = ValidId(newParentId);
+        if (string.IsNullOrWhiteSpace(newName) || newName.Length > 255 ||
+            newName.Contains('/') || newName.Contains('\\'))
+            throw new ArgumentException("Invalid Google Drive move target");
+        string query = "files/" + fileId +
+            "?supportsAllDrives=true&addParents=" +
+            Uri.EscapeDataString(newParentId) + "&removeParents=" +
+            Uri.EscapeDataString(oldParentId) +
+            "&fields=id,name,mimeType,size,modifiedTime,version";
+        using var doc = await SendJsonAsync(HttpMethod.Patch,
+            query, new { name = newName }, cancel).ConfigureAwait(false);
+        InvalidateFolder(oldParentId);
+        InvalidateFolder(newParentId);
+        return ParseItem(doc.RootElement);
+    }
+
+    internal async Task TrashAsync(string fileId, string parentId,
+        string? expectedVersion, CancellationToken cancel = default)
+    {
+        fileId = ValidId(fileId);
+        parentId = ValidId(parentId);
+        var current = await GetFileAsync(fileId, cancel).ConfigureAwait(false);
+        if (current is null)
+            throw new FileNotFoundException("Google deletion target was removed");
+        if (!string.IsNullOrEmpty(expectedVersion) &&
+            !string.Equals(expectedVersion, current.Version, StringComparison.Ordinal))
+            throw new IOException(
+                "Google file changed since Explorer opened it; keeping Drive original");
+        // Trash is reversible. No permanent DELETE is issued. Drive v3 does
+        // not promise this metadata version preflight is an atomic CAS.
+        using var doc = await SendJsonAsync(HttpMethod.Patch,
+            "files/" + fileId +
+                "?supportsAllDrives=true&fields=id,name,mimeType,size,version",
+            new { trashed = true }, cancel).ConfigureAwait(false);
+        if (doc.RootElement.GetProperty("id").GetString() != fileId)
+            throw new IOException("Google trash response returned wrong file ID");
+        InvalidateFolder(parentId);
     }
 
     internal sealed class GoogleDirectApiException(int http, string reason, bool throttled)
