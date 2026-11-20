@@ -1,8 +1,8 @@
-﻿param([int]$Port = 18800)
+﻿param([int]$Port = 18800, [switch]$SkipExcel)
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
-$rclone='E:\NASMount_Releases\NASMount_1_3_35_ICON_TITLEBAR\tools\rclone.exe'
-$bridge=Join-Path $repo 'LockBridge\bin\Release\net10.0-windows\win-x64\NASMountLockBridge.exe'
+$rclone=if($env:FILEHUB_LAB_RCLONE){$env:FILEHUB_LAB_RCLONE}else{'E:\NASMount_Releases\NASMount_1_3_35_ICON_TITLEBAR\tools\rclone.exe'}
+$bridge=if($env:FILEHUB_TEST_PUBLISHED_BRIDGE){$env:FILEHUB_TEST_PUBLISHED_BRIDGE}else{Join-Path $repo 'LockBridge\bin\Release\net10.0-windows\win-x64\NASMountLockBridge.exe'}
 $root=Join-Path $env:TEMP ('FileHubDirectWritableWinFsp_'+[guid]::NewGuid().ToString('N'))
 $server=Join-Path $root 'server'
 $journals=Join-Path $root 'journals'
@@ -46,6 +46,31 @@ try {
  }
  if(!$ready){Get-Content (Join-Path $logs 'mount.err') -Tail 15 -ErrorAction SilentlyContinue;throw 'Writable single WinFsp did not mount'}
  Write-Output 'ONE_LAYER_RW_MOUNT_PASS'
+
+ # Windows Explorer checks GetDiskFreeSpaceEx BEFORE copying any file.
+ # A drive reporting 0 bytes available is unusable regardless of whether
+ # the WebDAV server supports PUT. This exactly reproduces the reported
+ # "0 bytes available / not enough space" dialog.
+ Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class FileHubDiskQuotaProbe {
+ [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+ public static extern bool GetDiskFreeSpaceEx(string path,
+    out ulong available, out ulong total, out ulong free);
+}
+'@
+ [uint64]$available=0;[uint64]$total=0;[uint64]$free=0
+ if(![FileHubDiskQuotaProbe]::GetDiskFreeSpaceEx($drive,
+    [ref]$available,[ref]$total,[ref]$free)){
+   throw ('WinFsp GetDiskFreeSpaceEx failed '+
+      [Runtime.InteropServices.Marshal]::GetLastWin32Error())
+ }
+ Write-Output ('ONE_LAYER_RW_VOLUME total='+$total+' available='+$available)
+ if($total -lt 1GB -or $available -lt 32MB -or $available -gt $total){
+   throw 'WEB_DAV_VOLUME_ZERO_FREE_OR_INVALID_EXPLORER_COPY_BLOCKED'
+ }
+ Write-Output 'ONE_LAYER_RW_EXPLORER_COPY_HAS_SPACE_PASS'
 
  $path=Join-Path $drive 'test-created.txt'
  [IO.File]::WriteAllText($path,'first-save')
@@ -130,6 +155,7 @@ public static class FileHubNativeReplace {
  Write-Output ('ONE_LAYER_RW_EXE_VERSION_MS='+$sw.ElapsedMilliseconds)
  Write-Output 'ONE_LAYER_RW_EXE_SHA256_PASS'
 
+ if(-not $SkipExcel){
  $excel=New-Object -ComObject Excel.Application
  $excel.Visible=$false
  $excel.DisplayAlerts=$false
@@ -267,6 +293,7 @@ public static class FileHubWinFspTimeProbe {
    }
  }finally{$attrHandle.Dispose()}
  Write-Output 'ONE_LAYER_RW_EXCEL_ATTRIBUTE_ONLY_HANDLE_PASS'
+ }
  Write-Output 'ONE_LAYER_RW_WINFSP_INTEGRATION_PASS'
 }finally{
  if($book){try{$book.Close($false)}catch{}}

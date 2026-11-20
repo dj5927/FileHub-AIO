@@ -41,6 +41,9 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         internal string? ExpectedEtag;
         internal bool Created;
         internal bool Dirty;
+        // A previous PUT may already have reached the NAS even when the
+        // follow-up verification failed. Do not retry with a stale ETag.
+        internal bool UploadMayHaveCommitted;
         internal bool Closed;
         internal readonly FileStream Local;
         internal readonly object Gate = new();
@@ -62,6 +65,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
     private readonly Uri _root;
     private readonly HttpClient _http;
     private readonly string _journalRoot;
+    internal string JournalDirectory => _journalRoot;
     private readonly DirectWebDavReadOnlyBackend _read;
     private readonly ConcurrentDictionary<string, object> _locks =
         new(StringComparer.OrdinalIgnoreCase);
@@ -338,6 +342,27 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             string path = handle.RemotePath;
             lock (_locks.GetOrAdd(path, _ => new object()))
             {
+                if (handle.UploadMayHaveCommitted)
+                {
+                    // A previous Flush may have failed after the NAS PUT
+                    // succeeded. Check the full remote body before sending
+                    // the same update with an obsolete If-Match.
+                    if (AlreadyCommittedRemotely(handle))
+                    {
+                        handle.UploadMayHaveCommitted = false;
+                        return;
+                    }
+                    _read.Invalidate(path);
+                    var latest = _read.Stat(path);
+                    if (handle.Created ? latest is not null :
+                        latest?.ETag != handle.ExpectedEtag)
+                    {
+                        SaveJournal(handle, "conflict-recovery-required");
+                        throw new IOException(
+                            "Previous upload outcome uncertain and NAS " +
+                            "revision differs; recovery copy retained");
+                    }
+                }
                 SaveJournal(handle, "uploading");
                 using var request = new HttpRequestMessage(HttpMethod.Put, Remote(path));
                 if (handle.Created)
@@ -347,11 +372,20 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 else throw new IOException("Refusing unguarded WebDAV overwrite");
                 handle.Local.Seek(0, SeekOrigin.Begin);
                 request.Content = new StreamContent(new NonClosingStream(handle.Local));
+                // A timeout while sending or validating cannot prove that
+                // the server rejected the bytes. Future Flush/Close must
+                // re-read the remote content rather than re-PUT blindly.
+                handle.UploadMayHaveCommitted = true;
                 using var result = _http.Send(request,
                     HttpCompletionOption.ResponseHeadersRead);
                 if (result.StatusCode is HttpStatusCode.PreconditionFailed or
                     HttpStatusCode.Conflict or HttpStatusCode.Locked)
                 {
+                    if (AlreadyCommittedRemotely(handle))
+                    {
+                        handle.UploadMayHaveCommitted = false;
+                        return;
+                    }
                     SaveJournal(handle, "conflict");
                     throw new IOException("Concurrent NAS edit detected HTTP " +
                         (int)result.StatusCode + "; local recovery copy retained");
@@ -362,13 +396,28 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     throw new IOException("WebDAV upload failed HTTP " +
                         (int)result.StatusCode + "; local recovery copy retained");
                 }
-                _read.Invalidate(path);
-                var committed = _read.Stat(path);
+                DirectWebDavReadOnlyBackend.Entry? committed = null;
+                // Some WebDAV servers expose the old PROPFIND revision for
+                // a short interval after a successful PUT. Do not report
+                // Excel's Flush as failed on the first stale metadata read.
+                for (int attempt = 0; attempt < 5; attempt++)
+                {
+                    _read.Invalidate(path);
+                    committed = _read.Stat(path);
+                    if (committed is not null &&
+                        committed.Size == handle.Local.Length &&
+                        StrongEtag(committed.ETag)) break;
+                    if (attempt < 4) Thread.Sleep(150 * (attempt + 1));
+                }
                 if (committed is null || committed.Size != handle.Local.Length ||
                     !StrongEtag(committed.ETag))
                 {
                     SaveJournal(handle, "verification-needed");
-                    throw new IOException("Cannot prove NAS accepted exact size/ETag; recovery retained");
+                    Console.Error.WriteLine("DIRECT_WEBDAV_WRITE_VERIFY_METADATA_FAILED" +
+                        " stage=POST_PUT_METADATA sizeMatches=" +
+                        (committed?.Size == handle.Local.Length) +
+                        " etagStrong=" + StrongEtag(committed?.ETag));
+                    throw new IOException("WebDAV POST_PUT_METADATA verification failed; recovery retained");
                 }
                 if (handle.Local.Length <= 16 * 1024 * 1024)
                 {
@@ -388,6 +437,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 handle.ExpectedEtag = committed.ETag;
                 handle.Created = false;
                 handle.Dirty = false;
+                handle.UploadMayHaveCommitted = false;
                 SaveJournal(handle, "committed");
             }
         }
@@ -691,6 +741,40 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 if (!actual.SequenceEqual(value))
                     throw new IOException("Repeated save did not persist exact content " + round);
                 Console.WriteLine("DIRECT_WEBDAV_REPEAT_SAVE_ROUND_" + round + "_PASS");
+            }
+
+            // Reproduce a Synology save where PUT succeeded but Flush
+            // verification/response was lost. The old code retried the same
+            // If-Match on Close, received HTTP 412, and reported failure
+            // despite the desired bytes already being present on the NAS.
+            using (var h = write.Begin(workbook, create: false))
+            {
+                byte[] updated = Encoding.UTF8.GetBytes(
+                    "Verified bytes after lost flush response");
+                write.SetLength(h, 0);
+                write.Write(h, 0, updated);
+                string originalTag = h.ExpectedEtag ??
+                    throw new IOException("No original ETag for retry test");
+                using (var remote = new HttpClient())
+                using (var put = new HttpRequestMessage(HttpMethod.Put,
+                    write.Remote(workbook)))
+                {
+                    put.Headers.TryAddWithoutValidation("If-Match", originalTag);
+                    put.Content = new ByteArrayContent(updated);
+                    using var result = remote.Send(put);
+                    result.EnsureSuccessStatusCode();
+                }
+                h.UploadMayHaveCommitted = true; // Simulate lost confirmation.
+                write.Commit(h);
+                if (h.Dirty || h.UploadMayHaveCommitted)
+                    throw new IOException("Committed PUT was not reconciled");
+                write.Close(h, commit: true);
+                using var inspectionClient = new HttpClient();
+                if (!inspectionClient.GetByteArrayAsync(write.Remote(workbook))
+                    .GetAwaiter().GetResult().SequenceEqual(updated))
+                    throw new IOException("Reconciliation modified NAS bytes");
+                Console.WriteLine(
+                    "DIRECT_WEBDAV_LOST_FLUSH_412_RECONCILED_NO_REUPLOAD_PASS");
             }
 
             using (var h = write.Begin(workbook, create: false))

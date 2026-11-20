@@ -136,6 +136,17 @@ jobs:
           if (!(Test-Path $driverDll)) { throw 'WinFsp driver missing after installation' }
           Write-Output 'WINFSP_ACTUAL_WINDOWS_MOUNT_TEST_DRIVER_READY'
 
+      - name: Windows Explorer nonzero space, WebDAV upload and replacement integration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:FILEHUB_LAB_RCLONE = (Resolve-Path publish/tools/rclone.exe).Path
+          $env:FILEHUB_TEST_PUBLISHED_BRIDGE = (Resolve-Path bridge/NASMountLockBridge.exe).Path
+          # Office is not installed on GitHub hosted Windows runners; the
+          # actual Excel COM tests run separately in the local Windows lab.
+          & ./tests/direct_webdav_writable_winfsp_lab.ps1 -Port 18795 -SkipExcel
+          if (-not $?) { throw 'Writable WinFsp Explorer quota/copy/replace regression' }
+
       - name: Synology virtual-root WebDAV and automatic legacy compatibility fallback
         shell: pwsh
         run: |
@@ -257,6 +268,9 @@ jobs:
           - WebDAV 엑셀 저장 중 임시파일을 기존 파일명으로 교체할 때 대상 ETag 조건부 PUT, 최종 체크섬 검증, 원본 임시파일 조건부 삭제를 적용합니다. Windows 파일 수정시간·속성 처리도 개선했습니다.
           - WebDAV 폴더 감시 주기를 15초로 변경하고 저장 중 외부수정 오탐을 줄였습니다. 이미지 읽기 전용 캐시로 반복 HTTP 요청을 줄였습니다.
           - 실제 WinFsp 테스트에서 기존 파일 교체 3회/임시파일 미잔류, 한글 경로 기존 XLSX 5회 저장, 이미지 읽기, 쓰기잠금 충돌 차단을 통과했습니다. 실제 Synology 사용 환경에서 별도 검증이 필요합니다.
+          - WebDAV 직접 엔진의 사용 가능 공간 0바이트 버그를 수정했습니다. 저장용 로컬 디스크의 실제 사용 가능 용량을 WinFsp에 보고하며, 이 값은 원격 NAS의 실제 할당량이 아닙니다.
+          - WebDAV 저장 성공 후 응답 또는 메타데이터 검증이 지연될 경우, 기존 ETag로 반복 업로드하기 전에 NAS 원본 전체 체크섬을 확인합니다. 다른 사용자의 수정은 덮어쓰지 않습니다.
+          - 신규 GitHub Windows CI는 Explorer에서 실제 마운트 드라이브 용량이 0바이트면 실패하도록 검사합니다. 기존 문서와 미완료 저장 복구 기록은 삭제하지 않습니다.
           - v1.3.120~v1.3.121은 구버전 업데이트 종료 오류로 OTA가 차단될 수 있으므로 이번 버전은 처음 한 번 공식 ZIP 수동 교체가 필요할 수 있습니다.
           - 압축에 전체 Windows 실행 파일과 의존성을 포함하며, 기존 NAS 계정 및 설정 파일은 별도 유지됩니다.
           - 네트워크 환경별 실제 WebDAV 파일 잠금 및 다중 PC Office 동시 편집은 사용 환경에서 별도 검증이 필요합니다.

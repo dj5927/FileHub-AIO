@@ -83,6 +83,36 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         _leases = leases;
     }
 
+    public override int GetVolumeInfo(out VolumeInfo info)
+    {
+        // The read-only lab returns 0/0 for unknown NAS quota. On a writable
+        // WinFsp volume this blocks Explorer copies *before* Create is called.
+        // Every write is staged in the durable local journal first: report
+        // the actual available size of that local staging volume as a
+        // conservative write budget, NOT as the NAS server's real quota.
+        info = default;
+        try
+        {
+            string root = Path.GetPathRoot(_writes.JournalDirectory)
+                ?? throw new IOException("No staging volume root");
+            var drive = new DriveInfo(root);
+            long total = drive.TotalSize;
+            long free = drive.AvailableFreeSpace;
+            if (total <= 0 || free < 0)
+                throw new IOException("Invalid staging volume free space");
+            info.TotalSize = (ulong)total;
+            info.FreeSize = (ulong)Math.Min(total, free);
+            return Success;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+            or ArgumentException)
+        {
+            Console.Error.WriteLine("DIRECT_WEBDAV_STAGING_CAPACITY_ERROR type=" +
+                ex.GetType().Name);
+            return IoError;
+        }
+    }
+
     private string? AcquireOfficeLease(string path)
     {
         if (_leases is null || !WriteIntent.IsDocument(path)) return null;
