@@ -72,6 +72,14 @@ internal static class DirectWebDavLeaseLab
                 Thread.Sleep(250);
                 try { second.AddHandle(filename); secondOwned = true; reacquired = true; break; }
                 catch (CooperativeLocks.LockConflictException) { }
+                // A mock/NAS WebDAV server can acknowledge DELETE of the
+                // lock folder before its MKCOL namespace cache observes
+                // the removal. During that short window MKCOL returns
+                // 405 while owner.json already returns 404. Keep this
+                // *test-only* retry bounded; production Acquire still
+                // fails closed and never ignores an unknown lock owner.
+                catch (IOException ex) when (
+                    ex.Message.Contains("HTTP 405", StringComparison.Ordinal)) { }
             }
             if (!reacquired)
                 throw new IOException("Cooperative lock did not release safely");
