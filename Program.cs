@@ -87,6 +87,84 @@ internal static class Program
             }
             return;
         }
+        if (args.Length == 2 && args[0] == "--direct-webdav-gui-forced-exit-lab")
+        {
+            try
+            {
+                if (!int.TryParse(args[1], out int port) || port is < 1024 or > 65535)
+                    throw new ArgumentException("Invalid loopback WebDAV port");
+                string? letter = Enumerable.Range(0, 21)
+                    .Select(i => ((char)('Z' - i)).ToString())
+                    .FirstOrDefault(x => !Environment.GetLogicalDrives().Any(d =>
+                        d.StartsWith(x + ":", StringComparison.OrdinalIgnoreCase)));
+                if (letter is null) throw new IOException("No free test letter");
+                var profile = new NasProfile {
+                    Id = Guid.NewGuid(), Host = "127.0.0.1", Port = port,
+                    Protocol = "WebDAV", Letter = letter, DisplayName = "ForcedExitLab",
+                    UseLockBridge = true, IsAnonymous = true, WebDavUseHttp = true
+                };
+                Environment.SetEnvironmentVariable("NASMOUNT_LAB_DIRECT_MANAGED", "1");
+                FileStream? openWriter = null;
+                try
+                {
+                    var connected = RemoteMount.Connect(profile, "").GetAwaiter().GetResult();
+                    if (!connected.Success || RemoteMount.CurrentWebDavEngine(profile.Id) !=
+                        "direct-single-winfsp")
+                        throw new IOException("Force-exit lab connect: " + connected.Message);
+                    string relative = Environment.GetEnvironmentVariable(
+                        "FILEHUB_STRICT_DAV_DENY_ROOT_WRITES") == "1"
+                            ? @"Shared\force-exit-lab.txt" : "force-exit-lab.txt";
+                    openWriter = new FileStream(letter + @":\" + relative,
+                        FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite);
+                    openWriter.WriteByte(42);
+                    openWriter.Flush(true);
+                    var guarded = RemoteMount.Disconnect(profile).GetAwaiter().GetResult();
+                    if (guarded.Success || !guarded.Message.Contains(
+                        "OPEN_OR_RECOVERY_PENDING", StringComparison.Ordinal))
+                        throw new IOException("Guarded disconnect did not detect open writer");
+                    Console.WriteLine("DIRECT_GUI_OPEN_WRITER_SAFE_DISCONNECT_BLOCKED_PASS");
+                    var forced = RemoteMount.ForceDisconnectOwnedAsync(profile)
+                        .GetAwaiter().GetResult();
+                    if (!forced.Success || RemoteMount.HasManagedRecord(profile) ||
+                        RemoteMount.DriveLetterExists(letter))
+                        throw new IOException("Explicit forced disconnect failed: " + forced.Message);
+                    Console.WriteLine("DIRECT_GUI_USER_APPROVED_FORCE_WITH_OPEN_WRITER_PASS");
+                    try { openWriter.Dispose(); } catch (IOException) { }
+                    openWriter = null;
+                    // Simulate a fresh explicit Connect click after a forced
+                    // exit. The previous emergency flag must not strand the
+                    // profile; even a pending recovery journal may not make
+                    // the next explicit Exit unresponsive.
+                    RemoteMount.ClearEmergency(profile.Id);
+                    var reconnect = RemoteMount.Connect(profile, "")
+                        .GetAwaiter().GetResult();
+                    if (!reconnect.Success)
+                        throw new IOException("Reconnect after forced exit failed: " +
+                            reconnect.Message);
+                    Console.WriteLine("DIRECT_GUI_RECONNECT_AFTER_FORCE_PASS");
+                    var secondForce = RemoteMount.ForceDisconnectOwnedAsync(profile)
+                        .GetAwaiter().GetResult();
+                    if (!secondForce.Success || RemoteMount.DriveLetterExists(letter))
+                        throw new IOException("Repeated force exit failed: " +
+                            secondForce.Message);
+                    Console.WriteLine("DIRECT_GUI_REPEATED_FORCE_EXIT_NO_GHOST_PASS");
+                }
+                finally
+                {
+                    try { openWriter?.Dispose(); } catch (IOException) { }
+                    if (RemoteMount.HasManagedRecord(profile))
+                        RemoteMount.EmergencyStopOwnedAsync(profile)
+                            .GetAwaiter().GetResult();
+                    Environment.SetEnvironmentVariable("NASMOUNT_LAB_DIRECT_MANAGED", null);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("DIRECT_GUI_FORCED_EXIT_LAB_FAILED " + ex);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
         if (args.Length == 2 && args[0] == "--direct-webdav-gui-managed-flow-lab")
         {
             try

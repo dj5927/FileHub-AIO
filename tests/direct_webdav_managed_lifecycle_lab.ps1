@@ -107,6 +107,13 @@ try {
  if($reply -ne 'OK'){throw ('Manager never completed safe unmount '+$reply)}
  if(-not $managed.WaitForExit(14000)){throw 'Managed process did not exit after QUIT'}
  Write-Output 'DIRECT_MANAGED_SAFE_UNMOUNT_AND_PROCESS_EXIT_PASS'
+ if($env:FILEHUB_TEST_PUBLISHED_APP){
+   $output=& $env:FILEHUB_TEST_PUBLISHED_APP --direct-webdav-gui-forced-exit-lab ($Port+1) 2>&1 | Out-String
+   Write-Output $output
+   if($LASTEXITCODE -ne 0 -or $output -notmatch 'DIRECT_GUI_USER_APPROVED_FORCE_WITH_OPEN_WRITER_PASS'){
+     throw 'Explicit force-unmount while Office-style write handle remains open failed'
+   }
+ }
  Write-Output 'DIRECT_MANAGED_WEBDAV_GUI_LIFECYCLE_LAB_PASS'
  if($SynologyVirtualRoot){Write-Output 'DIRECT_SYNLOGY_VIRTUAL_ROOT_WRITABLE_SHARE_PASS'}
 } finally {

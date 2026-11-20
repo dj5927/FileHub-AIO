@@ -92,7 +92,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.119 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.120 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -428,14 +428,18 @@ internal sealed partial class MainForm : Form
                 RefreshList();
                 return;
             }
-            if(p.Protocol!="SMB" && MessageBox.Show("열린 문서를 모두 저장하고 닫았나요?\n캐시에 업로드 대기 중인 파일이 있을 수 있습니다.",
+            if(p.Protocol!="SMB" && MessageBox.Show(
+                "이 드라이브의 연결을 강제로 해제합니다.\n\n" +
+                "열린 프로그램, Excel 문서, 파일 잠금이 있어도 연결을 끊습니다.\n" +
+                "저장하지 않은 변경 내용 및 업로드 대기 파일이 손실될 수 있습니다.\n" +
+                "복구 캐시와 기록은 삭제하지 않습니다.\n\n계속하시겠습니까?",
                 "연결 해제 확인",MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
             // Store the user's intent BEFORE awaiting the unmount. Timer
             // ticks, startup auto-connect and cloud retry callbacks must not
             // undo a manual disconnect in the current program session.
             manualReconnectPause.ManualDisconnectRequested(p.Id);
             AppStore.Log("MANUAL_DISCONNECT_AUTO_RECONNECT_SUSPENDED " + p.Id);
-            await Perform(p,false,null,true);
+            await Perform(p,false,null,true,forceDisconnect:p.Protocol!="SMB");
         }
     }
     async Task ConnectOne(NasProfile p,bool explicitRequest,string? suppliedPassword=null)
@@ -1090,7 +1094,8 @@ internal sealed partial class MainForm : Form
         }
         finally {RefreshList();}
     }
-    async Task Perform(NasProfile p,bool connect,string? password,bool showError)
+    async Task Perform(NasProfile p,bool connect,string? password,bool showError,
+        bool forceDisconnect = false)
     {
         if (connect && shutdownRequested) return;
         if (connect && RemoteMount.EmergencyPending(p.Id)) return;
@@ -1123,7 +1128,10 @@ internal sealed partial class MainForm : Form
                 : " 해제 중...");
             var result=p.Protocol=="SMB"
                 ? await Task.Run(()=>connect?WindowsShare.Connect(p,password):WindowsShare.Disconnect(p))
-                : (connect?await RemoteMount.Connect(p,password):await RemoteMount.Disconnect(p));
+                : (connect ? await RemoteMount.Connect(p,password)
+                    : forceDisconnect
+                        ? await RemoteMount.ForceDisconnectOwnedAsync(p)
+                        : await RemoteMount.Disconnect(p));
             AppStore.Log((connect?"CONNECT ":"DISCONNECT ")+p.RemoteDisplay+" | "+result.Message);
             if(!result.Success)
             {
@@ -1793,11 +1801,8 @@ internal sealed partial class MainForm : Form
         Process.Start(new ProcessStartInfo("explorer.exe",folder){UseShellExecute=true});
     }
 
-    // The tray's normal Exit MUST NOT abandon an rclone backend after an
-    // arbitrary 8-second overall deadline. Google root enumeration can take
-    // longer than that; abandoning its child leaves W: mounted without a GUI
-    // and causes a collision on the next launch. Use the existing verified
-    // shutdown path, which refuses to exit when a mount is unsafe to release.
+    // Ordinary Exit is an explicit, warned user-authorized force disconnect.
+    // PC update keeps its separate guarded/safe disconnect path.
     private async Task ExitProgramFast()
     {
         await ExitSafely();
@@ -1809,14 +1814,46 @@ internal sealed partial class MainForm : Form
         shutdownRequested = true;
         timer.Stop();
         var heldGates = new List<SemaphoreSlim>();
+        bool forceApproved = false;
         try
         {
+            if (installUpdate is null)
+            {
+                var activeOrStarting = cfg.Profiles.Where(p =>
+                    p.Protocol != "SMB" &&
+                    (RemoteMount.HasManagedRecord(p) ||
+                     preparingConnections.Contains(p.Id))).ToArray();
+                if (activeOrStarting.Length > 0)
+                {
+                    if (MessageBox.Show(
+                        "FileHub 원격 드라이브 " + activeOrStarting.Length +
+                        "개를 해제하고 프로그램을 종료합니다.\n\n" +
+                        "실행 중인 EXE, 열린 Excel 문서 및 파일 잠금이 있어도 " +
+                        "FileHub 소유의 연결을 강제로 끊습니다.\n" +
+                        "저장하지 않은 내용과 전송 대기 파일이 손실될 수 있습니다.\n" +
+                        "복구 기록/캐시는 삭제하지 않습니다.\n" +
+                        "SMB와 다른 프로그램의 드라이브는 강제로 해제하지 않습니다.\n\n" +
+                        "강제 연결 해제 후 종료할까요?",
+                        "FileHub AIO 종료 확인", MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Warning) != DialogResult.Yes)
+                        return;
+                    forceApproved = true;
+                    // Cancel connections already in progress before waiting
+                    // on their per-profile semaphore; never relaunch them.
+                    foreach (var p in activeOrStarting)
+                        RemoteMount.RequestEmergency(p.Id);
+                    AppStore.Log("USER_CONFIRMED_FORCE_EXIT count=" +
+                        activeOrStarting.Length + " cachePreserved=true");
+                }
+            }
             // The timer or a user click may already have started connecting.
             // Wait for EACH already-running profile operation. A shared
             // global gate would serialize all startup and shutdown work.
-            // The 45-second limit is GLOBAL, not 45 seconds per profile.
+            // User-approved Exit has a bounded fast-cancel path. An update
+            // remains guarded and may wait up to 45 seconds.
             status.Text = "자동 연결 중지 · 진행 중인 연결 작업 확인 중...";
-            DateTime deadline = DateTime.UtcNow.AddSeconds(45);
+            DateTime deadline = DateTime.UtcNow.AddSeconds(
+                forceApproved ? 6 : 45);
             foreach (var p in cfg.Profiles.ToArray())
             {
                 var remaining = deadline - DateTime.UtcNow;
@@ -1825,6 +1862,13 @@ internal sealed partial class MainForm : Form
                     !await currentGate.WaitAsync(remaining))
                 {
                     AppStore.Log("SHUTDOWN_PROFILE_GATE_BUSY_TIMEOUT " + p.Id);
+                    if (forceApproved)
+                    {
+                        // The cancellation flag above prevents a connecting
+                        // worker from creating a new mount after this point.
+                        // Never block explicit Exit on a stuck network probe.
+                        continue;
+                    }
                     MessageBox.Show(
                         "진행 중인 드라이브 연결 작업이 완료되지 않아 종료를 보류했습니다.\n" +
                         "연결 또는 전송이 끝난 뒤 다시 [프로그램 종료]를 선택하세요.\n" +
@@ -1839,7 +1883,7 @@ internal sealed partial class MainForm : Form
             }
             var running = cfg.Profiles.Where(p =>
                 p.Protocol != "SMB" && RemoteMount.HasManagedRecord(p)).ToArray();
-            if (running.Length > 0 &&
+            if (!forceApproved && running.Length > 0 &&
                 MessageBox.Show(
                     "원격 드라이브 " + running.Length + "개가 이 프로그램에서 실행 중입니다.\n" +
                     "열린 문서를 모두 저장하고 닫았나요?\n\n" +
@@ -1849,16 +1893,20 @@ internal sealed partial class MainForm : Form
                     "FileHub AIO 안전 종료", MessageBoxButtons.YesNo,
                     MessageBoxIcon.Question) != DialogResult.Yes)
                 return;
-            status.Text = "연결 " + running.Length + "개 동시 안전 해제 중...";
+            status.Text = "연결 " + running.Length + "개 " +
+                (forceApproved ? "강제 해제 중..." : "안전 해제 중...");
             var disconnectTimer = Stopwatch.StartNew();
-            AppStore.Log("BATCH_SAFE_DISCONNECT_PARALLEL_START count=" + running.Length);
-            // No forced unmounts: RemoteMount.Disconnect independently
-            // refuses to stop any volume with dirty uploads, open Office
-            // bridge handles or unverifiable WinFsp release. The others can
-            // finish without waiting behind that particular profile.
+            AppStore.Log("BATCH_DISCONNECT_PARALLEL_START count=" +
+                running.Length + " forceApproved=" + forceApproved);
             var outcomes = await Task.WhenAll(running.Select(async p =>
             {
-                try { return (Profile: p, Result: await RemoteMount.Disconnect(p)); }
+                try
+                {
+                    return (Profile: p,
+                        Result: forceApproved
+                            ? await RemoteMount.ForceDisconnectOwnedAsync(p)
+                            : await RemoteMount.Disconnect(p));
+                }
                 catch (Exception ex)
                 {
                     return (Profile: p,
@@ -1887,7 +1935,7 @@ internal sealed partial class MainForm : Form
             AppStore.Log("BATCH_SAFE_DISCONNECT_PARALLEL_FINISHED succeeded=" +
                 (outcomes.Length - failed.Count) + " failed=" + failed.Count +
                 " elapsedMs=" + disconnectTimer.ElapsedMilliseconds);
-            if (failed.Count > 0)
+            if (failed.Count > 0 && !forceApproved)
             {
                 MessageBox.Show(
                     "다음 드라이브를 안전하게 해제하지 못해 프로그램 종료를 취소했습니다.\n\n" +
@@ -1899,6 +1947,10 @@ internal sealed partial class MainForm : Form
                     MessageBoxIcon.Warning);
                 return;
             }
+            if (failed.Count > 0 && forceApproved)
+                AppStore.Log("USER_FORCE_EXIT_INCOMPLETE " +
+                    string.Join(" | ", failed.Take(5)) +
+                    " userAuthorizedExit=true cachePreserved=true");
             // All owned backends are now safely stopped. Remove their
             // session-suffixed disconnected Shell entries BEFORE closing
             // the UI, so the user does not inherit red-X network tiles.
@@ -1950,9 +2002,28 @@ internal sealed partial class MainForm : Form
         catch (Exception e)
         {
             AppStore.Log("SHUTDOWN_EXCEPTION " + e);
-            MessageBox.Show("안전 종료 처리 중 오류가 발생했습니다.\n" + e.Message +
-                "\n업로드 중인 연결은 강제로 종료하지 않았습니다.",
-                "FileHub AIO 종료 보류", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            if (forceApproved && installUpdate is null)
+            {
+                // Even secondary Shell/UI errors cannot revoke the
+                // user's explicit, warned decision to quit.
+                foreach (var profile in cfg.Profiles.Where(p =>
+                    p.Protocol != "SMB" && RemoteMount.HasManagedRecord(p)))
+                {
+                    try { await RemoteMount.ForceDisconnectOwnedAsync(profile); }
+                    catch (Exception ex)
+                    {
+                        AppStore.Log("FORCE_EXIT_LAST_RESORT_FAILED id=" +
+                            profile.Id + " type=" + ex.GetType().Name);
+                    }
+                }
+                exiting = true;
+                tray.Visible = false;
+                Close();
+            }
+            else
+                MessageBox.Show("안전 종료 처리 중 오류가 발생했습니다.\n" + e.Message +
+                    "\n업로드 중인 연결은 강제로 종료하지 않았습니다.",
+                    "FileHub AIO 종료 보류", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
         {

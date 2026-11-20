@@ -2183,4 +2183,45 @@ internal static class RemoteMount
             "미전송 파일은 유실될 수 있으며 VFS 캐시·로그는 삭제하지 않았습니다.\n" +
             "WinFsp 드라이브 문자가 남으면 재부팅 전에 파일 상태를 확인하세요.");
     }
+
+    // Only after explicit user approval. The guarded QUIT can remain BUSY
+    // indefinitely on Office handles. Stop only children owned by this app;
+    // preserve recovery journals and never terminate another provider.
+    internal static async Task<OperationResult> ForceDisconnectOwnedAsync(NasProfile p)
+    {
+        if (p.Protocol == "SMB")
+            return OperationResult.Fail("SMB is not a FileHub-owned WinFsp process.");
+        var stopped = await EmergencyStopOwnedAsync(p);
+        if (!stopped.Success) return stopped;
+        OperationResult cleanup;
+        try
+        {
+            cleanup = await Task.Run(() =>
+                NetworkDriveResidueCleaner.AfterSafeStop(p))
+                .WaitAsync(TimeSpan.FromSeconds(6));
+        }
+        catch (Exception ex)
+        {
+            // Shell/MPR may stall while Explorer still holds an old handle.
+            // Never leave approved Exit stuck forever after owned processes
+            // have already been stopped.
+            AppStore.Log("CONFIRMED_FORCE_SHELL_CLEANUP_TIMEOUT id=" + p.Id +
+                " type=" + ex.GetType().Name);
+            cleanup = OperationResult.Fail("Windows Shell cleanup deferred.");
+        }
+        if (!cleanup.Success)
+            AppStore.Log("CONFIRMED_FORCE_SHELL_CLEANUP_WARNING id=" + p.Id +
+                " reason=" + cleanup.Message);
+        bool released = await WaitForLetterRelease(p.Letter);
+        AppStore.Log("CONFIRMED_FORCE_DISCONNECT_RESULT id=" + p.Id +
+            " released=" + released + " shellClean=" + cleanup.Success +
+            " cachePreserved=true");
+        if (!released)
+            return OperationResult.Fail("FileHub 프로세스 종료 확인, 그러나 " +
+                p.Letter + ": WinFsp 드라이브 문자는 아직 남아 있습니다. " +
+                "로컬 복구 기록은 보존했습니다.");
+        return OperationResult.Ok("사용자 승인으로 강제 연결 해제했습니다. " +
+            "미전송 데이터 및 복구 기록은 자동 삭제하지 않았습니다." +
+            (cleanup.Success ? "" : " 탐색기 네트워크 표시 정리는 재확인이 필요합니다."));
+    }
 }

@@ -250,7 +250,8 @@ jobs:
           - WebDAV LockBridge 네트워크 위치에서 사용자 설정 드라이브명 유지 (\\NASMount-... 노출 수정).
           - Google Drive 실제 전체/사용/남은 용량을 비동기 캐시로 표시하며 탐색기 응답 지연 방지.
           - Google 전용 rclone, 일반 rclone, TeraBox 엔진의 SHA-256을 각각 독립 검증.
-          - 연결 종료 시 파일 업로드·잠금 상태 확인 및 PC 전용 GitHub OTA 업데이트 지원.
+          - 트레이 프로그램 종료·수동 연결 해제는 사용자 경고 동의 후 FileHub 소유 연결을 강제 해제합니다. 열린 문서와 미완료 업로드가 유실될 수 있으며 복구 캐시/기록은 삭제하지 않습니다.
+          - PC 업데이트 설치는 별도의 안전 종료 검증을 유지하며, 파일 잠금이나 미완료 업로드를 강제로 우회하지 않습니다.
           - 압축에 전체 Windows 실행 파일과 의존성을 포함하며, 기존 NAS 계정 및 설정 파일은 별도 유지됩니다.
           - 네트워크 환경별 실제 WebDAV 파일 잠금 및 다중 PC Office 동시 편집은 사용 환경에서 별도 검증이 필요합니다.
           "@ | Set-Content release-assets/RELEASE_NOTES.md -Encoding utf8
