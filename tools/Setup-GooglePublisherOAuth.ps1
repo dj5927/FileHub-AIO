@@ -1,12 +1,15 @@
 # FileHub AIO publisher-only, one-time Google OAuth onboarding.
 # End users never run this script or enter a Client ID/JSON in FileHub.
-# The Google Desktop OAuth JSON stays in memory: only the GitHub Actions
-# encrypted repository secret receives its base64 encoding.
+# The publisher Desktop JSON is bundled into a local publisher test ZIP
+# (desktop OAuth is a public client identity), and optionally sent through
+# STDIN to a GitHub Actions encrypted repository secret. Never print it.
 [CmdletBinding()]
 param(
     [string]$CredentialFile,
     [switch]$OpenCloudSetup,
-    [switch]$SkipWorkflowRun
+    [switch]$SkipWorkflowRun,
+    [switch]$SkipLocalBundle,
+    [switch]$LocalOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -102,9 +105,19 @@ try {
         throw 'Google Desktop OAuth Client ID/Secret format is invalid.'
     }
 
+    # Build a Windows test ZIP directly on the publisher's PC, independent
+    # of GitHub CLI; a signed-in Google OAuth app remains mandatory.
+    if (-not $SkipLocalBundle) {
+        & (Join-Path $PSScriptRoot 'Build-GoogleDirectLocalPilot.ps1') `
+            -CredentialFile $resolved
+        if ($LASTEXITCODE -ne 0) { throw 'Publisher local test ZIP build failed.' }
+    }
+    if ($LocalOnly) { return }
+
     $gh = Get-Command gh -ErrorAction SilentlyContinue
     if (-not $gh) {
-        throw 'GitHub CLI (gh) is required for encrypted repository secret upload. Install from https://cli.github.com/, then run this script again.'
+        Write-Warning 'Local test ZIP is ready, but GitHub CLI is not installed. For CI deployment install https://cli.github.com/ and run publisher setup again.'
+        return
     }
     & gh auth status --hostname github.com 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) {

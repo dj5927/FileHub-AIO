@@ -323,3 +323,37 @@ read/write, disconnect/reconnect and Office save tests all pass.
   `GOOGLE_NATIVE_OAUTH_REFRESH_INVALID_RESPONSE_FAIL_CLOSED_PASS`.
 - Only the existing FileHub-native Desktop OAuth client can refresh its own
   token. There is still NO implicit rclone credential import or fallback.
+
+## Publisher login + tested local ZIP path (2026-11-21)
+
+- Added `tools/Setup-GooglePublisherOAuth.cmd`/`.ps1`: one-time **publisher**
+  Google Cloud Desktop OAuth JSON selection with a Windows file picker,
+  validation, direct local Windows test ZIP packaging, optional encrypted
+  GitHub Actions secret upload and developer CI trigger. Ordinary FileHub
+  users never see OAuth Client ID/JSON or a Google developer form.
+- GitHub CLI and a publisher-issued OAuth JSON are both absent from the
+  connected Windows PC. The publisher can now build a local test ZIP
+  **without GitHub CLI** as soon as their Google Cloud Desktop client JSON
+  is downloaded. The owner's initial Google Cloud registration and Chrome
+  consent cannot be performed by code without the account's authorization.
+- The GitHub pilot workflow is absent on default branch `main`. Onboarding
+  has a safe fast-forward-only developer-branch push fallback if workflow
+  dispatch is unavailable. Fake GitHub CLI tests verify both paths.
+- Added `tools/Build-GoogleDirectLocalPilot.ps1`: pinned SHA-verified
+  ancillary binaries, at-least-3GiB-free local fixed work drive, selective
+  extraction of five fixed ZIP entries, native WinFsp bridge publishing,
+  mandatory waited child-EXE success checks, forward-slash portable ZIP
+  names, and pre-publish verification of six required package contents.
+- The system C: drive was almost full (353MB) and full archive extraction
+  initially failed. Only our own leftover temporary publisher folders were
+  removed; our verified download cache was moved to D: (208GB free).
+- After repairing PowerShell 5 compatibility and GUI process wait handling,
+  a **real ~164MB Windows ZIP was generated using ONLY synthetic OAuth
+  credentials**, six mandatory entries verified, then the synthetic ZIP
+  deleted. No live Google login or user data was touched by this test.
+- The developer CI includes an offline publisher bootstrap test and a
+  synthetic local publisher packaging regression step; neither produces a
+  publicly downloadable ZIP with the fake credentials.
+- Stable `pc/windows` remains unaffected. Real Chrome owner consent,
+  actual Google Drive performance, repeat Excel saves and long-running
+  reconnect checks are still unverified. Never call this a finished product.

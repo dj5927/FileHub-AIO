@@ -117,6 +117,30 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Google WinFsp native API test failed' }
           Write-Output $output
 
+      - name: Regress local Windows packaging with synthetic OAuth (no ZIP uploaded)
+        # DryRun exercises a Windows publish and required component checks
+        # without creating any downloadable build with the fake identity.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixture = Join-Path $env:RUNNER_TEMP 'filehub-publisher-test-only.json'
+          try {
+            $fake = @{
+              installed = @{
+                client_id = '123456789012-test-desktop.apps.googleusercontent.com'
+                client_secret = 'GOCSPX-synthetic-for-ci-only'
+              }
+            } | ConvertTo-Json -Compress
+            [IO.File]::WriteAllText($fixture, $fake)
+            $result = & 'tools/Build-GoogleDirectLocalPilot.ps1' `
+              -CredentialFile $fixture -DryRun 2>&1 | Out-String
+            if ($result -notmatch 'GOOGLE_PUBLISHER_LOCAL_PILOT_PACKAGE_DRY_RUN_PASS') {
+              throw ('Windows publisher bundle did not pass fake-credential packaging checks: ' + $result)
+            }
+            Write-Output 'GOOGLE_PUBLISHER_LOCAL_PILOT_PACKAGE_DRY_RUN_PASS'
+          }
+          finally { Remove-Item -LiteralPath $fixture -Force -ErrorAction SilentlyContinue }
+
       - name: Check publisher Google OAuth readiness
         id: publisher
         shell: pwsh

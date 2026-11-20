@@ -498,7 +498,10 @@ internal static class Program
             catch (Exception ex)
             {
                 Console.Error.WriteLine("GOOGLE_PUBLISHER_OAUTH_PACKAGED_POLICY_FAILED " +
-                    ex.GetType().Name);
+                    ex.GetType().Name + " configFile=" +
+                    (File.Exists(GoogleOAuthClientFile.PackagedClientPath) ?
+                        "present" : "missing") + " reason=" +
+                    (ex is InvalidDataException ? ex.Message : "not-disclosed"));
                 // WinForms application shutdown can reset ExitCode. A
                 // packaging gate must fail the CI job deterministically.
                 Environment.Exit(1);

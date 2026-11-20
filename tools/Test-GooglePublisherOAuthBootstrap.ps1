@@ -26,7 +26,7 @@ try {
         }
     } | ConvertTo-Json -Compress))
     $script = Join-Path $PSScriptRoot 'Setup-GooglePublisherOAuth.ps1'
-    & $script -CredentialFile $valid | Out-Null
+    & $script -CredentialFile $valid -SkipLocalBundle | Out-Null
     $calls = @(Get-Content -LiteralPath $env:MOCK_GH_LOG)
     if (($calls -join ',') -ne 'auth,secret,workflow') {
         throw 'Publisher setup did not upload the secret and dispatch CI via GitHub CLI.'
@@ -42,7 +42,7 @@ try {
         }
     } | ConvertTo-Json -Compress))
     $rejected = $false
-    try { & $script -CredentialFile $invalid | Out-Null }
+    try { & $script -CredentialFile $invalid -SkipLocalBundle | Out-Null }
     catch { $rejected = $true }
     if (-not $rejected -or
         (@(Get-Content -LiteralPath $env:MOCK_GH_LOG) -join ',') -ne
@@ -70,7 +70,7 @@ try {
         'exit /b 1'
     ))
     Clear-Content -LiteralPath $env:MOCK_GH_LOG
-    & $script -CredentialFile $valid | Out-Null
+    & $script -CredentialFile $valid -SkipLocalBundle | Out-Null
     if ((@(Get-Content -LiteralPath $env:MOCK_GH_LOG) -join ',') -ne
         'auth,secret,workflow,api,api,api,api') {
         throw 'Safe development-branch CI fallback did not use GitHub API as expected.'

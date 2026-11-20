@@ -45,9 +45,15 @@ Google Drive 전체를 Windows 네트워크 드라이브처럼 읽고 쓰려면
 `FILEHUB_GOOGLE_DESKTOP_OAUTH_JSON_BASE64` 저장소 Secret 설정
 → 개발 브랜치 Windows CI 재실행을 순서대로 처리합니다.
 Google 로그인 토큰이나 JSON 전문은 화면에 출력하지 않습니다.
-**GitHub CLI(`gh`)가 없으면** `https://cli.github.com/`에서 설치한 뒤
-명령을 다시 실행하면 됩니다. 다른 계정의 Google OAuth JSON을 임의로
-가져오거나 타사 공개 Client ID를 빌려 쓰지 않습니다.
+**먼저 현재 PC에서 Google 직접 엔진 테스트 ZIP을 로컬 빌드합니다.**
+Downloads 드라이브에 충분한 공간이 있으면 Downloads에 저장하고,
+부족하면 D: 등 여유 있는 고정 드라이브의
+`FileHubAIO-PublisherBuildCache\PublisherTestOutput`에 저장합니다.
+**도구가 ZIP 경로와 SHA-256을 화면에 출력**합니다. GitHub CLI가 없어도
+로컬 ZIP은 만들 수 있습니다.
+GitHub CI 자동 업로드도 사용하려면 `https://cli.github.com/`에서 `gh`를
+설치하고 도구를 다시 실행하면 됩니다. 다른 계정의 Google OAuth JSON을
+임의로 가져오거나 타사 공개 Client ID를 빌려 쓰지 않습니다.
 
 ## 실제 배포까지 필요한 검증
 
@@ -76,3 +82,17 @@ Google 공식 문서(2026년 기준) Personal 모드는 **계정 하나로만** 
 
 현재 안정 브랜치 `pc/windows`는 변경하지 않습니다. 이 단계가 완료되기
 전에는 실사용 가능 Google 직접 엔진 ZIP을 완성본으로 발표하지 않습니다.
+
+## 패키징 검증 기록 (2026-11-21)
+
+- C: 드라이브 여유 공간 353MB로 최초 전체 압축 해제에 실패. 기존
+  사용자 파일은 삭제하지 않았고, 이 작업의 임시 폴더만 정리한 뒤
+  검증된 안정판 ZIP 캐시를 충분한 공간이 있는 D:로 이동.
+- 안정판 ZIP에서 필수 부속 파일 5개만 추출하고 각각 SHA-256 검증.
+- Windows GUI 실행 파일이 PowerShell 호출 후 완료되기 전 반환되는
+  문제를 `Start-Process -Wait` 및 정확한 성공 마커 검사로 수정.
+- PowerShell 5 호환 경로 계산, 표준 ZIP의 `/` 경로 구분, 불완전한
+  ZIP을 최종 파일명으로 남기지 않도록 수정.
+- **임시 가짜 Desktop OAuth JSON만 사용**하여 약 164MB 테스트 ZIP을
+  실제 생성한 뒤 6개 필수 파일 모두 확인: **PASS**. 해당 가짜 ZIP은
+  즉시 삭제했고 Google 실계정 테스트에 사용하지 않음.
