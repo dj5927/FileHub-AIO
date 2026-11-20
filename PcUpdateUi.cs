@@ -162,11 +162,13 @@ internal sealed partial class MainForm
             if (MessageBox.Show(this,
                 "업데이트 파일의 SHA-256과 구성품 검사가 완료됐습니다.\n\n" +
                 "지금 업데이트를 설치할까요?\n\n" +
-                "먼저 연결된 NAS 드라이브를 안전하게 해제합니다. " +
-                "미완료 업로드나 열려 있는 파일로 해제가 실패하면 설치도 취소됩니다.\n" +
+                "예를 누르면 FileHub 소유 드라이브를 강제로 연결 해제하고 설치합니다.\n" +
+                "열린 EXE나 Excel 파일의 잠금 또는 복구 기록이 있어도 진행합니다.\n" +
+                "저장하지 않은 변경 사항과 미완료 업로드는 손실될 수 있습니다.\n" +
+                "복구 캐시/로그는 삭제하지 않고, 다른 프로그램의 드라이브는 건드리지 않습니다.\n\n" +
                 "프로그램 설정은 유지되며 업데이트 후 자동 재실행됩니다.",
-                "FileHub AIO PC 업데이트 설치",
-                MessageBoxButtons.YesNo, MessageBoxIcon.Question) ==
+                "FileHub AIO PC 업데이트 설치 확인",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning) ==
                 DialogResult.Yes)
             {
                 checkingPcUpdate = false;

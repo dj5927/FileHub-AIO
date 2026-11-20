@@ -85,7 +85,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.121 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.122 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -1695,8 +1695,8 @@ internal sealed partial class MainForm : Form
         Process.Start(new ProcessStartInfo("explorer.exe",folder){UseShellExecute=true});
     }
 
-    // Ordinary Exit is an explicit, warned user-authorized force disconnect.
-    // PC update keeps its separate guarded/safe disconnect path.
+    // Both ordinary Exit and update installation require an explicit
+    // user-approved data-loss warning before force-unmounting owned drives.
     private async Task ExitProgramFast()
     {
         await ExitSafely();
@@ -1708,9 +1708,22 @@ internal sealed partial class MainForm : Form
         shutdownRequested = true;
         timer.Stop();
         var heldGates = new List<SemaphoreSlim>();
-        bool forceApproved = false;
+        // The update install dialog already obtained explicit approval,
+        // including the potential loss of unflushed writes. Do not ask again.
+        bool forceApproved = installUpdate is not null;
         try
         {
+            if (forceApproved)
+            {
+                var ownedOrStarting = cfg.Profiles.Where(p =>
+                    p.Protocol != "SMB" &&
+                    (RemoteMount.HasManagedRecord(p) ||
+                     preparingConnections.Contains(p.Id))).ToArray();
+                foreach (var p in ownedOrStarting)
+                    RemoteMount.RequestEmergency(p.Id);
+                AppStore.Log("USER_CONFIRMED_FORCE_UPDATE count=" +
+                    ownedOrStarting.Length + " cachePreserved=true");
+            }
             if (installUpdate is null)
             {
                 var activeOrStarting = cfg.Profiles.Where(p =>
@@ -1743,8 +1756,8 @@ internal sealed partial class MainForm : Form
             // The timer or a user click may already have started connecting.
             // Wait for EACH already-running profile operation. A shared
             // global gate would serialize all startup and shutdown work.
-            // User-approved Exit has a bounded fast-cancel path. An update
-            // remains guarded and may wait up to 45 seconds.
+            // All user-approved force exits, including PC installation, use
+            // a bounded wait rather than hanging on open Office handles.
             status.Text = "자동 연결 중지 · 진행 중인 연결 작업 확인 중...";
             DateTime deadline = DateTime.UtcNow.AddSeconds(
                 forceApproved ? 6 : 45);
@@ -1872,10 +1885,30 @@ internal sealed partial class MainForm : Form
             // another FileHub AIO instance. They may contain dirty VFS data.
             if (installUpdate is not null)
             {
-                // The helper is launched only after every managed remote
-                // volume passes the existing safe-disconnect checks.
-                // An active Office handle or dirty VFS upload must never be
-                // bypassed merely because the user requested an update.
+                // Do not run the updater on top of a still-running owned
+                // mount process. A stale Explorer letter alone is not such
+                // a blocker; it was already handled as best-effort above.
+                // Retry exact in-memory owned processes once if WinFsp did
+                // not acknowledge the first force termination.
+                foreach (var remaining in cfg.Profiles.Where(p =>
+                    p.Protocol != "SMB" && RemoteMount.HasManagedRecord(p)))
+                {
+                    var retryStop = await RemoteMount.ForceDisconnectOwnedAsync(
+                        remaining);
+                    AppStore.Log("PC_UPDATE_FORCE_STOP_RETRY id=" +
+                        remaining.Id + " success=" + retryStop.Success);
+                }
+                if (cfg.Profiles.Any(p =>
+                    p.Protocol != "SMB" && RemoteMount.HasManagedRecord(p)))
+                {
+                    MessageBox.Show(this,
+                        "Windows에서 일부 FileHub 마운트 프로세스의 종료를 확인하지 못했습니다.\n" +
+                        "다른 프로그램의 프로세스는 강제 종료하지 않았습니다.\n" +
+                        "컴퓨터를 재시작한 뒤 업데이트를 다시 실행하세요.",
+                        "PC 업데이트 실행 확인 필요",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
                 try { PcUpdateService.StartHelper(installUpdate); }
                 catch (Exception ex)
                 {
@@ -1896,10 +1929,10 @@ internal sealed partial class MainForm : Form
         catch (Exception e)
         {
             AppStore.Log("SHUTDOWN_EXCEPTION " + e);
-            if (forceApproved && installUpdate is null)
+            if (forceApproved)
             {
-                // Even secondary Shell/UI errors cannot revoke the
-                // user's explicit, warned decision to quit.
+                // User already approved the unmount, including for update.
+                // Attempt a bounded cleanup for owned processes only.
                 foreach (var profile in cfg.Profiles.Where(p =>
                     p.Protocol != "SMB" && RemoteMount.HasManagedRecord(p)))
                 {
@@ -1910,9 +1943,42 @@ internal sealed partial class MainForm : Form
                             profile.Id + " type=" + ex.GetType().Name);
                     }
                 }
-                exiting = true;
-                tray.Visible = false;
-                Close();
+                if (installUpdate is null)
+                {
+                    exiting = true;
+                    tray.Visible = false;
+                    Close();
+                }
+                else
+                {
+                    // Secondary failures must not silently skip installation;
+                    // retry the helper only once every owned process is gone.
+                    if (cfg.Profiles.All(p => p.Protocol == "SMB" ||
+                        !RemoteMount.HasManagedRecord(p)))
+                    {
+                        try
+                        {
+                            PcUpdateService.StartHelper(installUpdate);
+                            exiting = true;
+                            tray.Visible = false;
+                            Close();
+                        }
+                        catch (Exception updateEx)
+                        {
+                            AppStore.Log("PC_UPDATE_HELPER_RETRY_FAILED " +
+                                updateEx.GetType().Name);
+                            MessageBox.Show(this, "업데이트 도우미 실행 실패: " +
+                                updateEx.Message, "PC 업데이트 보류",
+                                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        }
+                    }
+                    else
+                        MessageBox.Show(this,
+                            "일부 FileHub 프로세스가 남아 있어 업데이트를 실행하지 못했습니다.\n" +
+                            "컴퓨터 재시작 후 다시 시도하세요.",
+                            "PC 업데이트 보류", MessageBoxButtons.OK,
+                            MessageBoxIcon.Warning);
+                }
             }
             else
                 MessageBox.Show("안전 종료 처리 중 오류가 발생했습니다.\n" + e.Message +
