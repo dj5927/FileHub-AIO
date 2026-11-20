@@ -69,6 +69,7 @@ jobs:
           $output = & $bridge --direct-google-winfsp-policy-test 2>&1 | Out-String
           foreach ($required in @(
             'GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_READ_PASS',
+            'GOOGLE_DIRECT_WINFSP_COALESCED_RANGE_READ_CACHE_PASS',
             'GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_FOLDER_CREATE_RENAME_PASS',
             'GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_NEW_FILE_UPLOAD_PASS',
             'GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_FILE_RENAME_TRASH_PASS',

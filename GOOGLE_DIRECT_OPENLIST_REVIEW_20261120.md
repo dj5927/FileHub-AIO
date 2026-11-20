@@ -70,6 +70,10 @@ Continue FileHub-native direct Google WinFsp as primary. Do not copy OpenList AG
   NAS. A safe Office write policy and real-account integration are required.
 - The Google file metadata cache now expires its WinFsp name-to-ID lookup
   within 30 seconds instead of retaining stale names indefinitely.
+- FileHub now coalesces many Explorer/image/Office small reads of the same
+  binary Drive file into one 1 MiB Google ranged media request for 30 seconds,
+  with an upper bounded in-memory cache. There is no quota/About call in
+  the read path. Local actual WinFsp test checks coalesced HTTP requests.
 - New real Windows WinFsp integration tests cover reading, Korean folder
   creation/rename, new-file upload, rename, reversible Trash and an injected
   Google 403 error that must preserve local recovery bytes.

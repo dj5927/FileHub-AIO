@@ -14,6 +14,7 @@ internal static class DirectGoogleWinFspPolicyLab
         internal string FolderName = "";
         internal string SourceName = "hello.txt";
         internal bool SourceTrashed;
+        internal int MediaRequests;
         internal byte[]? UploadedContent;
         internal int UploadInitiations;
         internal int UploadCompletions;
@@ -107,6 +108,7 @@ internal static class DirectGoogleWinFspPolicyLab
                     return Task.FromResult(Json(System.Text.Json.JsonSerializer.Serialize(
                         new { id = "file_01", name = SourceName,
                             mimeType = "text/plain", size = "15", version = "1" })));
+                Interlocked.Increment(ref MediaRequests);
                 if (request.Headers.Range is not { } range)
                     throw new InvalidOperationException("Google WinFsp media read lacked range");
                 byte[] data = Encoding.ASCII.GetBytes("Hello from API!");
@@ -184,6 +186,19 @@ internal static class DirectGoogleWinFspPolicyLab
         if (value != "Hello from API!")
             throw new IOException("Google direct range read content mismatch");
         Console.WriteLine("GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_READ_PASS rclone=false");
+        var directEntry = fs.Find("/hello.txt") ??
+            throw new IOException("Direct cached-read file entry missing");
+        IntPtr scratch = System.Runtime.InteropServices.Marshal.AllocHGlobal(4);
+        try
+        {
+            int result = fs.Read(directEntry, directEntry, scratch, 1, 2, out var count1);
+            int second = fs.Read(directEntry, directEntry, scratch, 4, 2, out var count2);
+            if (result != 0 || second != 0 || count1 != 2 || count2 != 2 ||
+                fake.MediaRequests != 1)
+                throw new IOException("Two small WinFsp reads were not coalesced into one API range");
+        }
+        finally { System.Runtime.InteropServices.Marshal.FreeHGlobal(scratch); }
+        Console.WriteLine("GOOGLE_DIRECT_WINFSP_COALESCED_RANGE_READ_CACHE_PASS");
         Directory.CreateDirectory(Path.Combine(root, "새폴더"));
         if (fake.FolderName != "새폴더")
             throw new IOException("Direct folder create did not reach Google API");

@@ -48,6 +48,10 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
     private readonly ConcurrentDictionary<string, DateTimeOffset> _recentUntil = new(
         StringComparer.OrdinalIgnoreCase);
     private static readonly TimeSpan EntryTtl = TimeSpan.FromSeconds(30);
+    private const int ReadBlockSize = 1024 * 1024;
+    private sealed record ReadBlock(byte[] Bytes, DateTimeOffset Expires);
+    private readonly ConcurrentDictionary<string, Lazy<Task<ReadBlock>>> _readCache =
+        new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, DirectGoogleWriteStage> _newFiles = new(
         StringComparer.OrdinalIgnoreCase);
     private sealed record NewFile(Entry Entry, DirectGoogleWriteStage Stage);
@@ -170,6 +174,52 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
     private static FspFileInfo Describe(NewFile staged) =>
         Describe(staged.Entry with { Size = staged.Stage.Length,
             Modified = DateTime.UtcNow });
+
+    // Explorer, image previews and Office perform dozens of small reads
+    // against the same file. Merge them into 1 MiB ranged Google API reads
+    // and reuse each block for 30 seconds. This does not trigger a Drive
+    // About()/quota call and therefore doesn't delay a cold first open.
+    private byte[] ReadCached(Entry entry, long offset, int count)
+    {
+        if (count <= 0) return [];
+        byte[] output = new byte[count];
+        int copied = 0;
+        while (copied < count)
+        {
+            long current = offset + copied;
+            long blockIndex = current / ReadBlockSize;
+            long blockStart = blockIndex * ReadBlockSize;
+            int fetch = (int)Math.Min(ReadBlockSize, entry.Size - blockStart);
+            if (fetch <= 0) break;
+            string key = entry.Id + "|" + entry.Version + "|" + blockIndex;
+            if (_readCache.Count > 64) _readCache.Clear();
+            var factory = _readCache.GetOrAdd(key,
+                _ => new Lazy<Task<ReadBlock>>(async () =>
+                {
+                    byte[] bytes = await _api.ReadRangeAsync(entry.Id,
+                        blockStart, fetch).ConfigureAwait(false);
+                    return new ReadBlock(bytes, DateTimeOffset.UtcNow.AddSeconds(30));
+                }, LazyThreadSafetyMode.ExecutionAndPublication));
+            ReadBlock block;
+            try { block = factory.Value.GetAwaiter().GetResult(); }
+            catch
+            {
+                _readCache.TryRemove(key, out _);
+                throw;
+            }
+            if (block.Expires <= DateTimeOffset.UtcNow)
+            {
+                _readCache.TryRemove(key, out _);
+                continue;
+            }
+            int begin = checked((int)(current - blockStart));
+            if (begin >= block.Bytes.Length) break;
+            int copy = Math.Min(count - copied, block.Bytes.Length - begin);
+            Buffer.BlockCopy(block.Bytes, begin, output, copied, copy);
+            copied += copy;
+        }
+        return copied == output.Length ? output : output[..copied];
+    }
 
     private static int Failure(Exception ex, string operation)
     {
@@ -327,9 +377,9 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
         if (offset >= (ulong)entry.Size) return Eof;
         try
         {
-            var content = _api.ReadRangeAsync(entry.Id, (long)offset,
+            var content = ReadCached(entry, (long)offset,
                 (int)Math.Min((ulong)length, Math.Min((ulong)entry.Size - offset,
-                    8UL * 1024 * 1024))).GetAwaiter().GetResult();
+                    8UL * 1024 * 1024)));
             if (content.Length > 0) Marshal.Copy(content, 0, buffer, content.Length);
             transferred = (uint)content.Length;
             return Ok;
@@ -578,6 +628,7 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
 
     public void Dispose()
     {
+        _readCache.Clear();
         foreach (var stage in _newFiles.Values) stage.Dispose();
         _newFiles.Clear();
         _recent.Clear(); _recentUntil.Clear();
