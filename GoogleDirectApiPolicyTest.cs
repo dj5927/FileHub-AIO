@@ -43,6 +43,55 @@ internal static class GoogleDirectApiPolicyTest
             throw new HttpRequestException("OFFLINE_FAKE_TEST");
         }
     }
+    private sealed class InvalidMetadataFakeServer : HttpMessageHandler
+    {
+        internal int Mode;
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = Mode switch
+            {
+                0 => new HttpResponseMessage(HttpStatusCode.BadGateway)
+                {
+                    Content = new StringContent("<html>proxy error</html>",
+                        Encoding.UTF8, "text/html")
+                },
+                1 => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("not-json",
+                        Encoding.UTF8, "text/html")
+                },
+                2 => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(new byte[8 * 1024 * 1024 + 1])
+                },
+                3 => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"files":[{"id":"missing-name"}]}""",
+                        Encoding.UTF8, "application/json")
+                },
+                4 => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""{"unexpected":true}""",
+                        Encoding.UTF8, "application/json")
+                },
+                5 => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""{"files":{}}""",
+                        Encoding.UTF8, "application/json")
+                },
+                _ => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"files":[],"nextPageToken":123}""",
+                        Encoding.UTF8, "application/json")
+                }
+            };
+            return Task.FromResult(response);
+        }
+    }
+
     private sealed class FakeGoogleServer : HttpMessageHandler
     {
         internal int Lists;
@@ -276,6 +325,33 @@ internal static class GoogleDirectApiPolicyTest
     internal static async Task RunAsync()
     {
         await GoogleDirectBrowserOAuthPolicyLab.RunAsync();
+        using (var bad = new InvalidMetadataFakeServer())
+        using (var badHttp = new HttpClient(bad))
+        {
+            var client = new GoogleDirectApiClient(badHttp,
+                _ => Task.FromResult("TEST_TOKEN"),
+                new Uri("http://127.0.0.1:18220/drive/v3/"),
+                cacheTtl: TimeSpan.Zero, maxRetries: 0);
+            for (int mode = 0; mode <= 6; mode++)
+            {
+                bad.Mode = mode;
+                try
+                {
+                    await client.ListChildrenAsync("root");
+                    throw new InvalidOperationException(
+                        "Google invalid metadata was accepted by WinFsp transport");
+                }
+                catch (IOException ex)
+                {
+                    if (mode == 0 &&
+                        (ex is not GoogleDirectApiClient.GoogleDirectApiException gatewayError ||
+                         gatewayError.HttpStatus != 502))
+                        throw new InvalidOperationException(
+                            "HTML gateway error lost HTTP status", ex);
+                }
+            }
+        }
+        Console.WriteLine("GOOGLE_NATIVE_INVALID_HTTP_JSON_AND_OVERSIZED_METADATA_FAIL_CLOSED_PASS");
         using (var slow = new SlowFakeGoogleServer())
         using (var boundedHttp = new HttpClient(slow))
         {

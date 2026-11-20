@@ -287,3 +287,25 @@ read/write, disconnect/reconnect and Office save tests all pass.
 - No publisher OAuth identity was invented or copied. The final real-account
   Chrome login, sustained I/O, Office saves and working download remain
   blocked and MUST NOT be described as production-ready.
+
+## 2026-11-21 goal continuation: unexpected Google API/proxy replies
+
+- The native metadata transport now buffers at most 8 MiB of response data
+  while maintaining the eight-request concurrency lease. Unlike the prior
+  unbounded `ResponseContentRead`, this avoids runaway memory pressure if
+  a gateway answers metadata calls with a huge HTML page or binary body.
+- HTTP non-2xx responses with missing, invalid or non-JSON bodies are now
+  reported as categorized Google HTTP I/O errors, preserving the status
+  without exposing the response body or crashing WinFsp JSON parsing.
+- A malformed successful response, invalid file item, absent/non-array
+  `files` listing, or invalid page token is no longer treated as an empty
+  Google directory. It fails closed and can use only the prior *verified*
+  stale directory cache under the existing transient-error policy.
+- Fake HTTP regression cases include gateway 502 HTML, HTTP 200 non-JSON,
+  8 MiB+1 oversized body, missing item name, missing `files`, non-array
+  `files`, and numeric page token. Marker:
+  `GOOGLE_NATIVE_INVALID_HTTP_JSON_AND_OVERSIZED_METADATA_FAIL_CLOSED_PASS`.
+- Current local Windows main app and WinFsp bridge builds and all direct
+  fake-API integration tests pass. Publisher OAuth still does not exist in
+  this environment. A successful CI must NOT be described as successful
+  live Google sign-in or an installable ZIP.

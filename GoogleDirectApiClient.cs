@@ -96,13 +96,23 @@ internal sealed class GoogleDirectApiClient
             throw new IOException("Google API request queue is busy; retry later");
         try
         {
-            // Keep the concurrency lease through the ENTIRE response body.
-            // ResponseHeadersRead released it as soon as headers arrived,
-            // allowing unlimited slow streaming responses to occupy WinFsp.
+            // Metadata/API responses must stay bounded even when a broken
+            // proxy returns an HTML error or an unexpectedly huge body.
+            // Keep the concurrency lease until the bounded body is loaded.
             var response = await _http.SendAsync(request,
-                HttpCompletionOption.ResponseContentRead, cancel).ConfigureAwait(false);
-            Interlocked.Exchange(ref _transportFailures, 0);
-            return response;
+                HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+            try
+            {
+                await response.Content.LoadIntoBufferAsync(
+                    8 * 1024 * 1024, cancel).ConfigureAwait(false);
+                Interlocked.Exchange(ref _transportFailures, 0);
+                return response;
+            }
+            catch
+            {
+                response.Dispose();
+                throw;
+            }
         }
         catch (TaskCanceledException ex) when (!cancel.IsCancellationRequested)
         {
@@ -144,13 +154,32 @@ internal sealed class GoogleDirectApiClient
                 request.Content = new StringContent(JsonSerializer.Serialize(body),
                     Encoding.UTF8, "application/json");
             using var response = await SendBoundedAsync(request, cancel).ConfigureAwait(false);
-            using var stream = await response.Content.ReadAsStreamAsync(cancel)
-                .ConfigureAwait(false);
-            using var parsed = await JsonDocument.ParseAsync(stream,
-                cancellationToken: cancel).ConfigureAwait(false);
+            JsonDocument? parsed = null;
+            try
+            {
+                using var stream = await response.Content.ReadAsStreamAsync(cancel)
+                    .ConfigureAwait(false);
+                parsed = await JsonDocument.ParseAsync(stream,
+                    cancellationToken: cancel).ConfigureAwait(false);
+            }
+            catch (JsonException ex) when (response.IsSuccessStatusCode)
+            {
+                throw new IOException("Google API returned malformed metadata", ex);
+            }
+            catch (JsonException) when (!response.IsSuccessStatusCode)
+            {
+                // A proxy or gateway may return HTML/empty error bodies.
+                // Preserve the HTTP status; never parse or log its payload.
+            }
+            using (parsed)
+            {
             if (response.IsSuccessStatusCode)
+            {
+                if (parsed!.RootElement.ValueKind != JsonValueKind.Object)
+                    throw new IOException("Google API response was not a metadata object");
                 return JsonDocument.Parse(parsed.RootElement.GetRawText());
-            string reason = Reason(parsed.RootElement);
+            }
+            string reason = parsed is null ? "unknown" : Reason(parsed.RootElement);
             bool throttled = response.StatusCode == HttpStatusCode.TooManyRequests ||
                 (response.StatusCode == HttpStatusCode.Forbidden &&
                  reason is ("rateLimitExceeded" or "userRateLimitExceeded" or "quotaExceeded"));
@@ -167,11 +196,14 @@ internal sealed class GoogleDirectApiClient
             // content, folder names, email addresses or project identifiers.
             throw new GoogleDirectApiException(
                 (int)response.StatusCode, reason, throttled);
+            }
         }
     }
 
     private static Item ParseItem(JsonElement value)
     {
+        try
+        {
         string id = value.GetProperty("id").GetString() ?? "";
         string name = value.GetProperty("name").GetString() ?? "";
         string mime = value.TryGetProperty("mimeType", out var mt) ?
@@ -189,6 +221,12 @@ internal sealed class GoogleDirectApiClient
                 parsedTime : null;
         return new Item(id, name, mime == FolderMime, size, version,
             modified, mime, md5, head);
+        }
+        catch (Exception ex) when (ex is KeyNotFoundException or
+            InvalidOperationException or FormatException)
+        {
+            throw new IOException("Google API returned invalid file metadata", ex);
+        }
     }
 
     internal async Task<IReadOnlyList<Item>> ListChildrenAsync(
@@ -218,10 +256,19 @@ internal sealed class GoogleDirectApiClient
                         relative += "&pageToken=" + Uri.EscapeDataString(token);
                     using var doc = await SendJsonAsync(HttpMethod.Get, relative, null,
                         cancel).ConfigureAwait(false);
-                    if (doc.RootElement.TryGetProperty("files", out var list))
-                        foreach (var item in list.EnumerateArray()) files.Add(ParseItem(item));
-                    token = doc.RootElement.TryGetProperty("nextPageToken", out var next) ?
-                        next.GetString() : null;
+                    if (!doc.RootElement.TryGetProperty("files", out var list) ||
+                        list.ValueKind != JsonValueKind.Array)
+                        throw new IOException(
+                            "Google directory reply did not contain a valid files list");
+                    foreach (var item in list.EnumerateArray()) files.Add(ParseItem(item));
+                    token = null;
+                    if (doc.RootElement.TryGetProperty("nextPageToken", out var next))
+                    {
+                        if (next.ValueKind == JsonValueKind.String)
+                            token = next.GetString();
+                        else if (next.ValueKind != JsonValueKind.Null)
+                            throw new IOException("Google directory pagination token was invalid");
+                    }
                 } while (!string.IsNullOrWhiteSpace(token));
             }
             catch (IOException ex) when (!cancel.IsCancellationRequested &&
@@ -260,10 +307,17 @@ internal sealed class GoogleDirectApiClient
         if (result.StatusCode == HttpStatusCode.NotFound) return null;
         if (!result.IsSuccessStatusCode)
             throw new IOException("Google file metadata HTTP " + (int)result.StatusCode);
-        using var doc = await JsonDocument.ParseAsync(
-            await result.Content.ReadAsStreamAsync(cancel),
-            cancellationToken: cancel).ConfigureAwait(false);
-        return ParseItem(doc.RootElement);
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(
+                await result.Content.ReadAsStreamAsync(cancel),
+                cancellationToken: cancel).ConfigureAwait(false);
+            return ParseItem(doc.RootElement);
+        }
+        catch (JsonException ex)
+        {
+            throw new IOException("Google file metadata response was malformed", ex);
+        }
     }
 
     internal async Task<byte[]> ReadRangeAsync(string fileId, long offset,
