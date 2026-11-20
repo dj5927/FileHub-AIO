@@ -75,8 +75,8 @@ android {
         applicationId 'com.nasmount.mobile'
         minSdk 26
         targetSdk 35
-        versionCode 103
-        versionName '0.1.102'
+        versionCode 104
+        versionName '0.1.103'
     }
     signingConfigs {
         release {

@@ -15,7 +15,7 @@ An open-source file manager and media/reading app designed for NAS, WebDAV, SMB,
 
 Get the latest signed APK from [GitHub Releases](https://github.com/dj5927/FileHub-AIO/releases/latest). On app launch, FileHub checks the latest published stable release, showing only a short notification when an update exists. You can download and install it manually from **⋮ → 업데이트 확인 (Check for updates)**. Installation always requires Android's confirmation and may require permission to install APKs from this app.
 
-The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.102 the metadata is versionCode: 103 and FileHub-AIO-v0.1.102.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.103 the metadata is versionCode: 104 and FileHub-AIO-v0.1.103.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
 
 ## Build
 

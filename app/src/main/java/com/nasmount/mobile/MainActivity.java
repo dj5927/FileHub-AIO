@@ -3936,6 +3936,7 @@ public class MainActivity extends Activity {
                 page.removeView(loading);
                 siblingSubtitleIndex=SubtitleInventory.fromSiblings(siblings);
                 visibleEpisodeQueue=queue;
+                ImageFolderSequence.showFolder("local", "", items, showHidden);
                 if(items.isEmpty())muted("이 폴더는 비어 있습니다.");
                 indexFullFolderSearch(items,item->()->{
                     File file=item.file;
@@ -4131,6 +4132,7 @@ public class MainActivity extends Activity {
                 if(failure!=null){muted("SD 폴더를 읽지 못했습니다.");return;}
                 siblingSubtitleIndex=SubtitleInventory.fromSiblings(siblings);
                 visibleEpisodeQueue=queue;
+                ImageFolderSequence.showFolder("uri", "", entries, showHidden);
                 if(entries.isEmpty())muted("이 폴더는 비어 있습니다.");
                 indexFullFolderSearch(entries,item->()->{
                     DocumentFile file=item.document;
@@ -4335,6 +4337,16 @@ public class MainActivity extends Activity {
         if(path!=null)view.putExtra(ImageViewerActivity.EXTRA_PATH,path);
         if(uri!=null)view.putExtra(ImageViewerActivity.EXTRA_URI,uri.toString());
         if(profile!=null)view.putExtra(ImageViewerActivity.EXTRA_PROFILE,profile.id);
+        // The sequence is the entire folder snapshot, including images on
+        // not-yet-rendered pagination rows. The token is only valid for the
+        // same item, provider and profile; media-wide lists are excluded.
+        if ("local".equals(currentScreen) || "saf".equals(currentScreen) ||
+                "remote".equals(currentScreen)) {
+            String token=ImageFolderSequence.tokenFor(kind,
+                    profile==null?"":profile.id,
+                    path!=null?path:uri==null?null:uri.toString());
+            if(token!=null)view.putExtra(ImageViewerActivity.EXTRA_SEQUENCE,token);
+        }
         if(uri!=null)view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         startActivity(view);
     }
@@ -5727,6 +5739,7 @@ public class MainActivity extends Activity {
                 page.removeView(loading);
                 siblingSubtitleIndex=SubtitleInventory.fromSiblings(siblings);
                 visibleEpisodeQueue=queue;
+                ImageFolderSequence.showFolder("remote", p.id, sorted, showHidden);
                 if(sorted.isEmpty())muted("이 폴더는 비어 있습니다.");
                 indexFullFolderSearch(sorted,file->()->{
                     if(file.directory)openRemote(p,file.path);
