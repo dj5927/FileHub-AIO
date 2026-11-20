@@ -150,4 +150,42 @@ internal sealed class GoogleDirectOAuthSession
         }
         finally { _refreshGate.Release(); }
     }
+
+    // A network mount can remain idle beyond Google's access-token lifetime.
+    // Renew the already approved grant before the next Explorer callback,
+    // without a second Chrome window or a refresh on every file operation.
+    internal async Task KeepTokenWarmAsync(CancellationToken cancellationToken,
+        TimeSpan? checkInterval = null)
+    {
+        var interval = checkInterval ?? TimeSpan.FromMinutes(1);
+        if (interval <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(checkInterval));
+        using var ticker = new PeriodicTimer(interval);
+        try
+        {
+            while (await ticker.WaitForNextTickAsync(cancellationToken)
+                .ConfigureAwait(false))
+            {
+                try
+                {
+                    // Cached tokens return without network traffic. Only
+                    // the last two minutes of lifetime trigger one renewal.
+                    _ = await AccessTokenAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is IOException or
+                    UnauthorizedAccessException or
+                    System.Security.Cryptography.CryptographicException)
+                {
+                    // A brief outage must not kill the mounted filesystem;
+                    // an unavailable credential store must not do so either.
+                    // A subsequent tick can retry. No tokens are logged.
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Expected clean WinFsp disconnect.
+        }
+    }
 }

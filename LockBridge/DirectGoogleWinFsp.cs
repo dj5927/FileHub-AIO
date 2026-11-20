@@ -737,11 +737,17 @@ internal static class DirectGoogleWinFspHost
         if (status < 0)
             throw new IOException("Direct Google WinFsp mount failed 0x" +
                 status.ToString("X8"));
+        using var refreshShutdown = new CancellationTokenSource();
+        // Keep a previously approved Google OAuth grant fresh while the
+        // drive is idle, rather than stalling the next Explorer file open.
+        Task tokenWarmup = token.KeepTokenWarmAsync(refreshShutdown.Token);
         Console.WriteLine("DIRECT_GOOGLE_WINFSP_PILOT_READY rclone=false letter=" +
             letter + " folders=" + (writeFolders ? "write" : "read"));
         Console.Out.Flush();
         // An isolated pilot pipe avoids terminating a normal Google mount.
         string pipeName = "NASMountDirectGooglePilot_" + profileId.ToString("N");
+        try
+        {
         while (true)
         {
             using var pipe = new NamedPipeServerStream(pipeName,
@@ -763,6 +769,13 @@ internal static class DirectGoogleWinFspHost
             { writer.WriteLine("OK"); break; }
             else writer.WriteLine("BUSY " + provider.OpenedHandles +
                 " PENDING " + provider.PendingRecoveryCount);
+        }
+        }
+        finally
+        {
+            refreshShutdown.Cancel();
+            try { tokenWarmup.GetAwaiter().GetResult(); }
+            catch (OperationCanceledException) { }
         }
         return 0;
     }

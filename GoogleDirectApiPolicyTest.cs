@@ -301,6 +301,7 @@ internal static class GoogleDirectApiPolicyTest
     private sealed class FakeOAuthServer : HttpMessageHandler
     {
         internal int RefreshRequests;
+        internal bool FailFirst;
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -312,7 +313,9 @@ internal static class GoogleDirectApiPolicyTest
             if (!form.Contains("grant_type=refresh_token") ||
                 !form.Contains("client_id=TEST_CLIENT"))
                 throw new InvalidOperationException("Incorrect OAuth refresh form");
-            Interlocked.Increment(ref RefreshRequests);
+            int requestCount = Interlocked.Increment(ref RefreshRequests);
+            if (FailFirst && requestCount == 1)
+                throw new IOException("SYNTHETIC_OAUTH_TRANSIENT_FAILURE");
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(
@@ -570,5 +573,75 @@ internal static class GoogleDirectApiPolicyTest
             throw new InvalidOperationException(
                 "Google direct OAuth refresh was not reused across callers");
         Console.WriteLine("GOOGLE_DIRECT_CUSTOM_OAUTH_SINGLE_REFRESH_NO_RCLONE_PASS");
+        // After a Drive is mounted, a one-hour idle period must NOT make
+        // the very next Explorer read perform a synchronous OAuth refresh.
+        // Run the real periodic logic with a short fake interval and a
+        // loopback-only token endpoint; no browser or Drive account involved.
+        using var idleOAuth = new FakeOAuthServer();
+        using var idleHttp = new HttpClient(idleOAuth);
+        var idleSession = new GoogleDirectOAuthSession(
+            idleHttp, "TEST_CLIENT", "TEST_SECRET", "TEST_REFRESH",
+            "STILL_VALID", DateTimeOffset.UtcNow.AddHours(1),
+            new Uri("http://127.0.0.1:18221/token"));
+        using (var idleCancel = new CancellationTokenSource())
+        {
+            Task idleWarmup = idleSession.KeepTokenWarmAsync(
+                idleCancel.Token, TimeSpan.FromMilliseconds(20));
+            await Task.Delay(90);
+            idleCancel.Cancel();
+            await idleWarmup;
+            if (idleOAuth.RefreshRequests != 0 ||
+                await idleSession.AccessTokenAsync() != "STILL_VALID")
+                throw new InvalidOperationException(
+                    "Google idle keepalive performed an unnecessary token renewal");
+        }
+        var expiringSession = new GoogleDirectOAuthSession(
+            idleHttp, "TEST_CLIENT", "TEST_SECRET", "TEST_REFRESH",
+            "EXPIRING", DateTimeOffset.UtcNow.AddMinutes(1),
+            new Uri("http://127.0.0.1:18221/token"));
+        using (var warmupCancel = new CancellationTokenSource())
+        {
+            Task keepWarm = expiringSession.KeepTokenWarmAsync(
+                warmupCancel.Token, TimeSpan.FromMilliseconds(20));
+            for (int spin = 0; spin < 100 && idleOAuth.RefreshRequests == 0; spin++)
+                await Task.Delay(10);
+            if (idleOAuth.RefreshRequests != 1)
+                throw new InvalidOperationException(
+                    "Google background refresh did not start before Explorer request");
+            // The scheduled request may have begun but not yet committed
+            // its token. Wait through the per-session gate BEFORE canceling
+            // to avoid a timing-dependent false failure in Windows CI.
+            string afterWarmup = await expiringSession.AccessTokenAsync();
+            warmupCancel.Cancel();
+            await keepWarm;
+            if (idleOAuth.RefreshRequests != 1 ||
+                afterWarmup != "REFRESHED_TOKEN")
+                throw new InvalidOperationException(
+                    "Google idle token was not pre-refreshed or was refreshed repeatedly");
+        }
+        Console.WriteLine("GOOGLE_NATIVE_IDLE_PREEMPTIVE_OAUTH_REFRESH_NO_SECOND_LOGIN_PASS");
+        using var flakyOauth = new FakeOAuthServer { FailFirst = true };
+        using var flakyHttp = new HttpClient(flakyOauth);
+        var flakySession = new GoogleDirectOAuthSession(
+            flakyHttp, "TEST_CLIENT", "TEST_SECRET", "TEST_REFRESH",
+            "EXPIRING", DateTimeOffset.UtcNow.AddMinutes(1),
+            new Uri("http://127.0.0.1:18221/token"));
+        using (var flakyCancel = new CancellationTokenSource())
+        {
+            Task keepWarm = flakySession.KeepTokenWarmAsync(
+                flakyCancel.Token, TimeSpan.FromMilliseconds(20));
+            for (int spin = 0; spin < 100 && flakyOauth.RefreshRequests < 2; spin++)
+                await Task.Delay(10);
+            if (flakyOauth.RefreshRequests < 2)
+                throw new InvalidOperationException(
+                    "Google idle token refresh worker died after a brief offline failure");
+            string recovered = await flakySession.AccessTokenAsync();
+            flakyCancel.Cancel();
+            await keepWarm;
+            if (recovered != "REFRESHED_TOKEN" || flakyOauth.RefreshRequests != 2)
+                throw new InvalidOperationException(
+                    "Google OAuth background refresh did not recover without a second login");
+        }
+        Console.WriteLine("GOOGLE_NATIVE_IDLE_OAUTH_REFRESH_TRANSIENT_RETRY_PASS");
     }
 }

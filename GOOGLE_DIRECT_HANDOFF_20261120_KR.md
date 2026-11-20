@@ -357,3 +357,23 @@ read/write, disconnect/reconnect and Office save tests all pass.
 - Stable `pc/windows` remains unaffected. Real Chrome owner consent,
   actual Google Drive performance, repeat Excel saves and long-running
   reconnect checks are still unverified. Never call this a finished product.
+
+## 2026-11-21 follow-up: remove next-Explorer-operation OAuth cold stalls
+
+- `GoogleDirectOAuthSession.KeepTokenWarmAsync` periodically inspects the
+  existing authenticated grant while the WinFsp volume is mounted. Valid
+  cached tokens return immediately with **zero Google network requests**.
+- Only the last two minutes of access-token lifetime trigger an actual
+  refresh (using the existing _refreshGate and encrypted token persistence),
+  even when no Explorer I/O has occurred for an hour. The new task is
+  canceled and awaited during clean WinFsp disconnect; errors do not
+  terminate the mounted provider. It never opens Chrome or requests a
+  new OAuth consent.
+- Fake localhost OAuth regression checks: fresh token remains untouched
+  after multiple timer ticks; an expiring token refreshes before any file
+  operation, exactly once, and the refreshed token is reused afterward.
+  Test marker `GOOGLE_NATIVE_IDLE_PREEMPTIVE_OAUTH_REFRESH_NO_SECOND_LOGIN_PASS`.
+- Windows local main/WinFsp builds and native fake-Drive filesystem tests
+  pass. The new behavior helps eliminate *idle expiry* first-open latency,
+  not the separate first-account registration gate. Live Google sign-in and
+  real user Office saves have not been verified.
