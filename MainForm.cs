@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Diagnostics;
 using System.Collections.Concurrent;
+using System.Text.Json;
 using System.Windows.Forms;
 namespace NASMount;
 
@@ -849,6 +850,43 @@ internal sealed partial class MainForm : Form
         if(p is null || p.Protocol=="SMB")
         {
             MessageBox.Show("SMB가 아닌 연결된 NAS를 선택하세요.");
+            return;
+        }
+        if (p.Protocol == "GoogleDrive" &&
+            GoogleDirectRecovery.PendingCount(p.Id) is int pending && pending > 0)
+        {
+            if (MessageBox.Show(this,
+                "Google 직접 연결의 미완료 로컬 복구 기록 " + pending +
+                "개가 있습니다.\n\n원본 기록은 그대로 두고 별도 폴더에 " +
+                "복구 파일 사본을 내보낼까요?\n이 작업은 Google 파일을 수정하지 않습니다.",
+                "Google 저장 복구", MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning) != DialogResult.Yes) return;
+            using var picker = new FolderBrowserDialog
+            {
+                Description = "Google 복구 파일 사본을 저장할 폴더 선택",
+                UseDescriptionForTitle = true
+            };
+            if (picker.ShowDialog(this) != DialogResult.OK) return;
+            try
+            {
+                int count = GoogleDirectRecovery.Export(p.Id, picker.SelectedPath);
+                MessageBox.Show(this,
+                    "복구 파일 " + count + "개를 내보냈습니다.\n" +
+                    "원본 복구 기록은 삭제하지 않았습니다.",
+                    "Google 복구 내보내기", MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                or JsonException or ArgumentException)
+            {
+                AppStore.Log("GOOGLE_RECOVERY_EXPORT_FAILED type=" +
+                    ex.GetType().Name);
+                MessageBox.Show(this,
+                    "복구 파일 내보내기에 실패했습니다. 원본 기록은 보존했습니다.\n" +
+                    "다른 빈 폴더를 선택해 다시 시도하세요.",
+                    "Google 복구 내보내기", MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
             return;
         }
         var result=await RemoteMount.GetTransferStatus(p);

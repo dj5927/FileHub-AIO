@@ -27,6 +27,7 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
     private readonly GoogleDirectApiClient _api;
     private readonly byte[] _acl;
     private readonly bool _allowFolderMutations;
+    private readonly bool _allowExistingBinaryWrites;
     private readonly string _stageRoot;
     private int _opened;
     internal int OpenedHandles => Volatile.Read(ref _opened);
@@ -61,10 +62,13 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
 
     internal DirectGoogleWinFsp(GoogleDirectApiClient api,
         string localAclDirectory, bool allowFolderMutations,
-        string? stageDirectory = null)
+        string? stageDirectory = null, bool allowExistingBinaryWrites = false)
     {
         _api = api;
         _allowFolderMutations = allowFolderMutations;
+        // This remains false for real accounts. Only the isolated fake API
+        // lab opts in before external-client races are proven recoverable.
+        _allowExistingBinaryWrites = allowExistingBinaryWrites;
         _acl = new DirectoryInfo(localAclDirectory).GetAccessControl()
             .GetSecurityDescriptorBinaryForm();
         _stageRoot = stageDirectory ?? Path.Combine(
@@ -135,6 +139,7 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
         if (!parent.Directory) throw new IOException("Path is not a directory");
         var list = _api.ListChildrenAsync(parent.Id).GetAwaiter().GetResult();
         var items = list.Select(item => FromItem(parent.Path, item))
+            .Where(entry => !_newFiles.ContainsKey(entry.Path))
             .OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var newItems = _newFiles.Where(pair => Parent(pair.Key) == parent.Path)
@@ -303,6 +308,30 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
             }
             var entry = Find(fileName);
             if (entry is null) return Missing;
+            if (!entry.Directory && _allowExistingBinaryWrites &&
+                (grantedAccess & 0x00000016u) != 0 &&
+                !entry.Mime.StartsWith("application/vnd.google-apps.",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                var parent = Find(Parent(entry.Path));
+                if (parent is null || !parent.Directory) return Missing;
+                var remote = _api.GetFileAsync(entry.Id).GetAwaiter().GetResult();
+                if (remote is null) return Missing;
+                var candidate = new DirectGoogleWriteStage(_api, _stageRoot,
+                    parent.Id, entry.Name, remote);
+                if (!_newFiles.TryAdd(entry.Path, candidate))
+                {
+                    candidate.Discard();
+                    if (!_newFiles.TryGetValue(entry.Path, out candidate))
+                        return IoError;
+                }
+                candidate.RegisterHandle();
+                var writable = new NewFile(entry, candidate);
+                fileNode = writable; fileDesc = writable;
+                info = Describe(writable);
+                Interlocked.Increment(ref _opened);
+                return Ok;
+            }
             // No existing-file writes until Drive CAS semantics and
             // recovery journaling have passed two-client regression.
             // DELETE access (0x10000) is needed for a Windows file RENAME.
@@ -605,6 +634,8 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
                 {
                     _newFiles.TryRemove(file.Entry.Path, out _);
                     _recent.TryRemove(file.Entry.Path, out _);
+                    _recentUntil.TryRemove(file.Entry.Path, out _);
+                    _readCache.Clear();
                     // WinFsp Close can be delayed by the Windows cache
                     // manager. The final Cleanup guarantees that no live
                     // handle can write; remove committed recovery bytes now.

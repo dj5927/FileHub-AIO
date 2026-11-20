@@ -4,22 +4,23 @@ using System.Text.Json;
 namespace NASMount.LockBridge;
 
 /// <summary>
-/// Durable local write stage for NEW Google Drive binary files only.
-/// Existing content is never replaced here: Drive files.update does not
-/// document an independently verified atomic content-update CAS contract.
-/// Pre-generated Drive IDs prevent duplicate files after a lost reply.
+/// Durable local stage for new files and explicitly gated existing-binary
+/// pilot writes. Drive files.update has no demonstrated atomic content CAS:
+/// preserve the previous binary revision and local recovery bytes.
 /// </summary>
 internal sealed class DirectGoogleWriteStage : IDisposable
 {
     private sealed record Manifest(string Id, string ParentId, string Name,
         string? DriveId, string Status, long Size, string Md5Hex,
-        DateTimeOffset Created);
+        DateTimeOffset Created, string? OriginalDriveId = null,
+        string? OriginalRevision = null, string? OriginalMd5 = null);
 
     private readonly GoogleDirectApiClient _api;
     private readonly string _dataPath;
     private readonly string _manifestPath;
     private readonly string _parentId;
     private readonly string _name;
+    private GoogleDirectApiClient.Item? _original;
     private readonly DateTimeOffset _created = DateTimeOffset.UtcNow;
     private readonly object _gate = new();
     private string? _driveId;
@@ -33,6 +34,7 @@ internal sealed class DirectGoogleWriteStage : IDisposable
     internal bool Discarded => _discarded;
     internal FileStream Local { get; }
     internal long Length => Local.Length;
+    internal bool EditingExisting => _original is not null;
 
     // Multiple WinFsp handles may write and flush the same new file.
     // Upload only after final Cleanup; release local storage at final Close.
@@ -82,10 +84,60 @@ internal sealed class DirectGoogleWriteStage : IDisposable
         SaveManifest("local", "");
     }
 
+    internal DirectGoogleWriteStage(GoogleDirectApiClient api, string stageDirectory,
+        string parentId, string name, GoogleDirectApiClient.Item original)
+        : this(api, stageDirectory, parentId, name)
+    {
+        if (original.IsFolder || original.Size < 0 ||
+            original.Size > 128L * 1024 * 1024 ||
+            string.IsNullOrWhiteSpace(original.HeadRevisionId) ||
+            string.IsNullOrWhiteSpace(original.Md5Checksum) ||
+            original.MimeType.StartsWith("application/vnd.google-apps.",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            Discard();
+            throw new IOException("Google existing file cannot be safely staged for editing");
+        }
+        _original = original;
+        try
+        {
+            SaveManifest("original-download", "");
+            long downloaded = 0;
+            while (downloaded < original.Size)
+            {
+                int expected = (int)Math.Min(4 * 1024 * 1024,
+                    original.Size - downloaded);
+                var content = api.ReadRangeAsync(original.Id,
+                    downloaded, expected).GetAwaiter().GetResult();
+                if (content.Length != expected)
+                    throw new IOException("Google existing file read was incomplete");
+                Local.Write(content);
+                downloaded += content.Length;
+            }
+            Local.Flush(flushToDisk: true);
+            Local.Position = 0;
+            string md5 = Convert.ToHexString(MD5.HashData(Local)).ToLowerInvariant();
+            var latest = api.GetFileAsync(original.Id).GetAwaiter().GetResult();
+            if (latest?.HeadRevisionId != original.HeadRevisionId ||
+                !string.Equals(latest.Md5Checksum, original.Md5Checksum,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(md5, original.Md5Checksum,
+                    StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Google file changed during staging; refusing edit");
+            SaveManifest("original-verified", md5);
+        }
+        catch
+        {
+            Discard(); // No local edits yet; do not retain incomplete copy.
+            throw;
+        }
+    }
+
     private void SaveManifest(string status, string hash)
     {
         var manifest = new Manifest(Path.GetFileNameWithoutExtension(_dataPath),
-            _parentId, _name, _driveId, status, Local.Length, hash, _created);
+            _parentId, _name, _driveId, status, Local.Length, hash, _created,
+            _original?.Id, _original?.HeadRevisionId, _original?.Md5Checksum);
         string temp = _manifestPath + ".next";
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(manifest);
         using (var file = new FileStream(temp, FileMode.Create, FileAccess.Write,
@@ -152,6 +204,11 @@ internal sealed class DirectGoogleWriteStage : IDisposable
             Local.Position = 0;
             string md5 = Convert.ToHexString(MD5.HashData(Local)).ToLowerInvariant();
             Local.Position = 0;
+            if (_original is not null)
+            {
+                CommitExisting(md5);
+                return;
+            }
             if (string.IsNullOrEmpty(_driveId))
             {
                 _driveId = _api.GenerateUploadIdAsync().GetAwaiter().GetResult();
@@ -196,6 +253,47 @@ internal sealed class DirectGoogleWriteStage : IDisposable
                 throw new IOException(
                     "Google new-file upload unresolved; durable local recovery retained", ex);
             }
+        }
+    }
+
+    private void CommitExisting(string expectedMd5)
+    {
+        var original = _original!;
+        if (Local.Length == original.Size &&
+            string.Equals(expectedMd5, original.Md5Checksum,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            _uploaded = true;
+            SaveManifest("unchanged", expectedMd5);
+            return;
+        }
+        SaveManifest("existing-edit-pending", expectedMd5);
+        try
+        {
+            _api.PinCurrentBinaryRevisionAsync(original.Id,
+                original.HeadRevisionId!, original.Md5Checksum!)
+                .GetAwaiter().GetResult();
+            SaveManifest("original-revision-pinned", expectedMd5);
+            Local.Position = 0;
+            var revised = _api.UploadExistingAsync(original.Id,
+                original.Md5Checksum!, original.HeadRevisionId!, Local)
+                .GetAwaiter().GetResult();
+            var latest = _api.GetFileAsync(original.Id).GetAwaiter().GetResult();
+            if (revised.Id != original.Id || latest is null ||
+                latest.Size != Local.Length ||
+                !string.Equals(latest.Md5Checksum, expectedMd5,
+                    StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Google existing edit upload not verified");
+            _api.InvalidateFolder(_parentId);
+            _uploaded = true;
+            SaveManifest("existing-committed", expectedMd5);
+        }
+        catch (Exception ex) when (ex is IOException or HttpRequestException
+            or TaskCanceledException)
+        {
+            SaveManifest("existing-recovery-required", expectedMd5);
+            throw new IOException(
+                "Google existing file edit unconfirmed; local recovery retained", ex);
         }
     }
 

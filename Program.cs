@@ -454,10 +454,30 @@ internal static class Program
                 GoogleDirectBrowserAuth.PolicyTest();
                 GoogleDirectApiPolicyTest.RunAsync().GetAwaiter().GetResult();
                 GoogleDirectCredentialStore.SelfTest();
+                GoogleDirectRecovery.PolicyTest();
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine("GOOGLE_DIRECT_API_POLICY_FAILED " +
+                    ex.GetType().Name);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
+        if (args.Length == 3 &&
+            args[0].Equals("--google-direct-recovery-export",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (!Guid.TryParse(args[1], out var id) || id == Guid.Empty)
+                    throw new ArgumentException("Invalid Google profile ID");
+                int count = GoogleDirectRecovery.Export(id, args[2]);
+                Console.WriteLine("GOOGLE_DIRECT_RECOVERY_EXPORTED=" + count);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("GOOGLE_DIRECT_RECOVERY_EXPORT_FAILED " +
                     ex.GetType().Name);
                 Environment.ExitCode = 1;
             }

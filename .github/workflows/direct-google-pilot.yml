@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - pc/direct-google-pilot
+      - pc/google-direct-stage-recovery-20261120
   workflow_dispatch:
 
 permissions:
@@ -38,6 +39,7 @@ jobs:
           $out = & $app --google-direct-api-policy-test 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0 -or
               $out -notmatch 'GOOGLE_DIRECT_DPAPI_OAUTH_ROUNDTRIP_AND_BACKUP_PASS' -or
+              $out -notmatch 'GOOGLE_DIRECT_CRASH_JOURNAL_EXPORT_NO_OVERWRITE_PASS' -or
               $out -notmatch 'GOOGLE_DIRECT_API_RANGE_READ_AND_NEW_RESUMABLE_UPLOAD_PASS') {
             throw 'Direct Google API/DPAPI/PKCE policy failed: ' + $out
           }
@@ -72,6 +74,10 @@ jobs:
             'GOOGLE_DIRECT_WINFSP_COALESCED_RANGE_READ_CACHE_PASS',
             'GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_FOLDER_CREATE_RENAME_PASS',
             'GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_NEW_FILE_UPLOAD_PASS',
+            'GOOGLE_DIRECT_WINFSP_MULTIFLUSH_BEFORE_COMMIT_PASS',
+            'GOOGLE_DIRECT_WINFSP_EXISTING_BINARY_EDIT_PIN_VERIFY_PASS',
+            'GOOGLE_DIRECT_WINFSP_EXISTING_BINARY_REPEAT_SAVE_PASS',
+            'GOOGLE_DIRECT_TWO_CLIENT_STALE_WRITE_RECOVERY_PASS',
             'GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_FILE_RENAME_TRASH_PASS',
             'GOOGLE_DIRECT_UPLOAD_403_FAILURE_PRESERVES_LOCAL_RECOVERY_PASS'
           )) {
@@ -81,3 +87,33 @@ jobs:
           }
           if ($LASTEXITCODE -ne 0) { throw 'Google WinFsp native API test failed' }
           Write-Output $output
+
+      - name: Package isolated Google direct pilot (not a stable release)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $app = Join-Path $env:RUNNER_TEMP 'FileHubGoogleDirectPilot'
+          $bridge = Join-Path $env:RUNNER_TEMP 'FileHubGoogleDirectBridge'
+          dotnet publish NASMount.csproj -c Release -r win-x64 --no-restore -o $app
+          if ($LASTEXITCODE -ne 0) { throw 'Main app publish failed' }
+          dotnet publish LockBridge/LockBridge.csproj -c Release -r win-x64 --no-restore -o $bridge
+          if ($LASTEXITCODE -ne 0) { throw 'Bridge publish failed' }
+          New-Item -ItemType Directory -Force -Path (Join-Path $app 'tools') | Out-Null
+          Copy-Item -Recurse -Force (Join-Path $bridge '*') (Join-Path $app 'tools')
+          Copy-Item GOOGLE_DIRECT_HANDOFF_20261120_KR.md (Join-Path $app 'PILOT_STATUS_KR.md')
+          if (!(Test-Path (Join-Path $app 'FileHubAIO.exe')) -or
+              !(Test-Path (Join-Path $app 'tools/NASMountLockBridge.exe'))) {
+            throw 'Direct pilot ZIP is missing its executable or WinFsp bridge'
+          }
+          $output = Join-Path $env:GITHUB_WORKSPACE 'FileHubAIO-GoogleDirect-EXPERIMENTAL.zip'
+          Compress-Archive -Path (Join-Path $app '*') -DestinationPath $output -CompressionLevel Optimal
+          $hash = (Get-FileHash $output -Algorithm SHA256).Hash
+          Write-Output "EXPERIMENTAL_PILOT_ZIP_SHA256=$hash"
+
+      - name: Upload experimental pilot artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: FileHubAIO-PC-GoogleDirect-EXPERIMENTAL
+          path: FileHubAIO-GoogleDirect-EXPERIMENTAL.zip
+          if-no-files-found: error
+          retention-days: 7

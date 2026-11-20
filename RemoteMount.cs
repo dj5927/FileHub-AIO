@@ -21,7 +21,8 @@ internal static partial class RemoteMount
         bool DirectGoogle = false);
     private static readonly ConcurrentDictionary<Guid,string> IntegrityAlerts = new();
     internal static string? GetIntegrityAlert(Guid id) =>
-        IntegrityAlerts.TryGetValue(id, out var message) ? message : null;
+        IntegrityAlerts.TryGetValue(id, out var message)
+            ? message : PersistedGoogleRecoveryAlert(id);
     internal sealed record UploadState(int Queued, int Uploading, int Errors,
         bool OutOfSpace, string? BlockedReason = null)
     {

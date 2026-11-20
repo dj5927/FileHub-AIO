@@ -6,6 +6,21 @@ namespace NASMount;
 
 internal static partial class RemoteMount
 {
+    private static string? PersistedGoogleRecoveryAlert(Guid id)
+    {
+        try
+        {
+            int pending = GoogleDirectRecovery.PendingCount(id);
+            return pending == 0 ? null :
+                "Google 직접 연결에 복구가 필요한 로컬 저장 기록 " +
+                pending + "개가 남아 있습니다. 프로그램 데이터의 " +
+                "google-direct-stages 폴더를 보관하고 확인하세요. " +
+                "임의로 삭제하지 마세요.";
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
     // Enable direct WinFsp ONLY after the user completes FileHub's native
     // browser OAuth flow and has its DPAPI credential store. A historical
     // custom-client rclone .conf is NOT an opt-in to the native mount.

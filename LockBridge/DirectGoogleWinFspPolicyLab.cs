@@ -19,6 +19,21 @@ internal static class DirectGoogleWinFspPolicyLab
         internal int UploadInitiations;
         internal int UploadCompletions;
         internal bool FailGenerateId;
+        internal byte[] SourceContent = Encoding.ASCII.GetBytes("Hello from API!");
+        internal string SourceRevision = "rev_01";
+        internal bool SourcePinned;
+        internal int PinnedRevisions;
+        internal int ExistingCompletions;
+        private object SourceMeta() => new
+        {
+            id = "file_01", name = SourceName, mimeType = "text/plain",
+            size = SourceContent.Length.ToString(),
+            version = SourceRevision,
+            headRevisionId = SourceRevision,
+            md5Checksum = Convert.ToHexString(
+                System.Security.Cryptography.MD5.HashData(SourceContent)).ToLowerInvariant(),
+            modifiedTime = "2026-01-01T00:00:00Z"
+        };
         private static HttpResponseMessage Json(string body, HttpStatusCode code = HttpStatusCode.OK)
             => new(code) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
@@ -35,6 +50,36 @@ internal static class DirectGoogleWinFspPolicyLab
                     ? Json("""{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}""",
                         HttpStatusCode.Forbidden)
                     : Json("""{"ids":["new_drive_01"]}"""));
+            if (request.Method == HttpMethod.Patch &&
+                url.AbsolutePath.Contains("/files/file_01/revisions/", StringComparison.Ordinal))
+            {
+                if (!url.AbsolutePath.EndsWith("/" + SourceRevision,
+                    StringComparison.Ordinal))
+                    return Task.FromResult(Json("{}", HttpStatusCode.Conflict));
+                SourcePinned = true;
+                Interlocked.Increment(ref PinnedRevisions);
+                return Task.FromResult(Json(System.Text.Json.JsonSerializer.Serialize(
+                    new { id = SourceRevision, keepForever = true })));
+            }
+            if (request.Method == HttpMethod.Patch &&
+                url.AbsolutePath.EndsWith("/upload/drive/v3/files/file_01"))
+            {
+                if (!SourcePinned)
+                    throw new InvalidOperationException("Existing Google upload was not backed up");
+                var started = Json("{}");
+                started.Headers.Location = new Uri("http://127.0.0.1:19490/session/existing_file_01");
+                return Task.FromResult(started);
+            }
+            if (request.Method == HttpMethod.Put &&
+                url.AbsolutePath == "/session/existing_file_01")
+            {
+                SourceContent = request.Content!.ReadAsByteArrayAsync(cancellationToken)
+                    .GetAwaiter().GetResult();
+                int next = Interlocked.Increment(ref ExistingCompletions) + 1;
+                SourceRevision = "rev_" + next.ToString("D2");
+                SourcePinned = false;
+                return Task.FromResult(Json(System.Text.Json.JsonSerializer.Serialize(SourceMeta())));
+            }
             if (request.Method == HttpMethod.Get &&
                 url.AbsolutePath.EndsWith("/files/new_drive_01"))
             {
@@ -80,16 +125,14 @@ internal static class DirectGoogleWinFspPolicyLab
                     files = nested ? Array.Empty<object>() :
                         FolderName.Length == 0 ? new object[]
                         {
-                            new { id = "file_01", name = SourceName, mimeType = "text/plain",
-                                size = "15", version = "1", modifiedTime = "2026-01-01T00:00:00Z" }
+                            SourceMeta()
                         }.Where(_ => !SourceTrashed).Concat(UploadedContent is null ? Array.Empty<object>() :
                             [new { id = "new_drive_01", name = "upload-from-pc.txt",
                                 mimeType = "application/octet-stream",
                                 size = UploadedContent.Length.ToString(), version = "1" }]).ToArray()
                         : new object[]
                         {
-                            new { id = "file_01", name = SourceName, mimeType = "text/plain",
-                                size = "15", version = "1", modifiedTime = "2026-01-01T00:00:00Z" },
+                            SourceMeta(),
                             new { id = "folder_01", name = FolderName,
                                 mimeType = GoogleDirectApiClient.FolderMime, version = "1" }
                         }.Where(item => !SourceTrashed ||
@@ -106,12 +149,11 @@ internal static class DirectGoogleWinFspPolicyLab
             {
                 if (!url.Query.Contains("alt=media"))
                     return Task.FromResult(Json(System.Text.Json.JsonSerializer.Serialize(
-                        new { id = "file_01", name = SourceName,
-                            mimeType = "text/plain", size = "15", version = "1" })));
+                        SourceMeta())));
                 Interlocked.Increment(ref MediaRequests);
                 if (request.Headers.Range is not { } range)
                     throw new InvalidOperationException("Google WinFsp media read lacked range");
-                byte[] data = Encoding.ASCII.GetBytes("Hello from API!");
+                byte[] data = SourceContent;
                 var bounds = range.Ranges.First();
                 int first = checked((int)(bounds.From ?? 0));
                 int last = checked((int)Math.Min(bounds.To ?? (data.Length - 1),
@@ -244,6 +286,83 @@ internal static class DirectGoogleWinFspPolicyLab
             throw new IOException("Committed Google stage not released after Close");
         Console.WriteLine("GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_NEW_FILE_UPLOAD_PASS");
         Console.WriteLine("GOOGLE_DIRECT_WINFSP_MULTIFLUSH_BEFORE_COMMIT_PASS");
+        // Existing files require explicit opt-in and must first download
+        // a verified base before replacing content. The production mount
+        // intentionally leaves this switch off until real multi-PC checks.
+        char editLetter = Enumerable.Range('P', 4).Select(n => (char)n)
+            .FirstOrDefault(letter => letter != free &&
+                !Environment.GetLogicalDrives().Any(d => d.StartsWith(letter + ":",
+                    StringComparison.OrdinalIgnoreCase)));
+        if (editLetter == default)
+            throw new IOException("No second free drive for existing-file edit lab");
+        string editDirectory = Path.Combine(Path.GetTempPath(),
+            "FileHubGoogleExistingLab_" + Guid.NewGuid().ToString("N"));
+        using (var editFs = new DirectGoogleWinFsp(api, Path.GetTempPath(),
+            true, editDirectory, allowExistingBinaryWrites: true))
+        using (var editHost = new FileSystemHost(editFs))
+        {
+            editHost.FileSystemName = "NTFS";
+            if (editHost.Mount(editLetter + ":", null, true) < 0)
+                throw new IOException("Existing-file Google WinFsp test could not mount");
+            string existingPath = editLetter + ":\\hello.txt";
+            const string changed = "Edited Google binary from WinFsp";
+            File.WriteAllText(existingPath, changed, Encoding.UTF8);
+            if (fake.ExistingCompletions != 1 || fake.PinnedRevisions != 1 ||
+                Encoding.UTF8.GetString(fake.SourceContent).TrimStart('\uFEFF') != changed)
+                throw new IOException("Existing binary edit did not pin and upload correctly" +
+                    " completion=" + fake.ExistingCompletions +
+                    " pins=" + fake.PinnedRevisions +
+                    " bytes=" + fake.SourceContent.Length +
+                    " stage=" + Directory.GetFiles(editDirectory, "*.json").Length);
+            for (int retry = 0; retry < 50 &&
+                Directory.GetFiles(editDirectory, "*.json").Length != 0; retry++)
+                Thread.Sleep(100);
+            if (Directory.GetFiles(editDirectory, "*.json").Length != 0)
+                throw new IOException("Verified existing upload left stale recovery stage");
+            const string savedAgain = "Second save to the same Google Drive file";
+            File.WriteAllText(existingPath, savedAgain, Encoding.UTF8);
+            if (fake.ExistingCompletions != 2 || fake.PinnedRevisions != 2 ||
+                Encoding.UTF8.GetString(fake.SourceContent).TrimStart('\uFEFF') != savedAgain)
+                throw new IOException("Repeated Google file overwrite failed revision preservation");
+        }
+        Console.WriteLine("GOOGLE_DIRECT_WINFSP_EXISTING_BINARY_EDIT_PIN_VERIFY_PASS");
+        Console.WriteLine("GOOGLE_DIRECT_WINFSP_EXISTING_BINARY_REPEAT_SAVE_PASS");
+
+        // A second client changing the file after stage creation must make
+        // Commit fail WITHOUT overwriting that client's content.
+        string conflictDirectory = Path.Combine(Path.GetTempPath(),
+            "FileHubGoogleConflictLab_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var original = api.GetFileAsync("file_01").GetAwaiter().GetResult()!;
+            using (var conflict = new DirectGoogleWriteStage(api,
+                conflictDirectory, "root", "hello.txt", original))
+            {
+                conflict.SetLength(0);
+                conflict.Write(0, Encoding.UTF8.GetBytes("MY LOCAL UNSAVED EDIT"), false);
+                fake.SourceContent = Encoding.UTF8.GetBytes("SECOND PC SAVED");
+                fake.SourceRevision = "rev_other_pc";
+                try
+                {
+                    conflict.Commit();
+                    throw new IOException("Stale Google existing edit overwrote second PC");
+                }
+                catch (IOException ex) when (ex.Message.Contains(
+                    "local recovery retained", StringComparison.Ordinal)) { }
+            }
+            if (fake.ExistingCompletions != 2 ||
+                Encoding.UTF8.GetString(fake.SourceContent) != "SECOND PC SAVED" ||
+                Directory.GetFiles(conflictDirectory, "*.data").Length != 1 ||
+                File.ReadAllText(Directory.GetFiles(conflictDirectory, "*.data").Single())
+                    != "MY LOCAL UNSAVED EDIT")
+                throw new IOException("Google conflict lost local or second-PC contents");
+            Console.WriteLine("GOOGLE_DIRECT_TWO_CLIENT_STALE_WRITE_RECOVERY_PASS");
+        }
+        finally
+        {
+            if (Directory.Exists(conflictDirectory))
+                Directory.Delete(conflictDirectory, recursive: true);
+        }
         File.Move(Path.Combine(root, "hello.txt"),
             Path.Combine(root, "hello-renamed.txt"));
         if (fake.SourceName != "hello-renamed.txt")

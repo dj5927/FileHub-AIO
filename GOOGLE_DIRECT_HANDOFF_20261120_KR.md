@@ -28,3 +28,36 @@
 3. Implement safe existing Office/Excel repeat-save policy. An API version check plus pinned revision is **not** a cross-PC atomic write lock. Existing content writes remain denied in WinFsp until verified conflict handling and recovery are complete.
 4. Google-native Docs export, Drive Changes API invalidation, multi-client conflicts, crash/restart recovery/replay and locked Excel temp/rename behavior require live integration.
 5. Do not publish a general-release ZIP based solely on this offline pilot; stable `pc/windows` remains unaffected.
+
+## Continuation: existing file save laboratory and persistent recovery
+
+- The native WinFsp driver now has an **explicitly gated** existing binary
+  write mode (`allowExistingBinaryWrites`). It downloads and verifies the
+  previous bytes (up to 128 MiB for this pilot), stages all writes locally,
+  pins the old binary revision, updates the original Drive file ID, and
+  verifies size plus MD5 before removing the local recovery journal.
+- Real Windows WinFsp + isolated fake Google API tests now prove **two
+  consecutive saves to the same existing file** and a stale-write rejection
+  when another client changes the revision first. The second client's data
+  remains intact; the uncommitted local edit remains in the recovery folder.
+- This test **does not establish atomic cross-client compare-and-swap**.
+  A different Google client could still race between revision preflight and
+  the last upload bytes. Therefore the real-account host keeps existing
+  binary writes **OFF by default** until production conflict contracts and
+  live tests are established. Do not advertise Excel overwrite parity yet.
+- Existing native file read/write stages expose incomplete journals after
+  restart via `RemoteMount.GetIntegrityAlert` and the dashboard's
+  `업로드 상태 확인`. Users can export local recovery copies to an explicitly
+  selected folder without deleting the original journal or altering Drive.
+  `FileHubAIO.exe --google-direct-recovery-export PROFILE_GUID DEST_FOLDER`
+  also supports a manual offline rescue.
+- Repeated Flush and delayed Close are handled with per-handle staging.
+  Old read-cache blocks are dropped after confirmed edits.
+- The publisher OAuth JSON remains **absent**: regular one-click Google
+  login cannot become functional for all users without the publisher's own
+  Google Cloud Desktop OAuth application. The app already supports browser
+  account-picker/PKCE; do not bundle placeholder or third-party OAuth IDs.
+- New validation markers:
+  `GOOGLE_DIRECT_WINFSP_EXISTING_BINARY_REPEAT_SAVE_PASS`,
+  `GOOGLE_DIRECT_TWO_CLIENT_STALE_WRITE_RECOVERY_PASS`,
+  `GOOGLE_DIRECT_CRASH_JOURNAL_EXPORT_NO_OVERWRITE_PASS`.

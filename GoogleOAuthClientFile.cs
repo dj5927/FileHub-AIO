@@ -15,7 +15,7 @@ internal static class GoogleOAuthClientFile
     internal const string GoogleCloudClientsUrl =
         "https://console.cloud.google.com/auth/clients";
     internal const string GoogleSetupUrl =
-        "https://rclone.org/drive/#making-your-own-client-id";
+        "https://console.cloud.google.com/auth/clients";
     internal const int MaxFileSize = 256 * 1024;
 
     // Publisher-owned Google Desktop OAuth credentials are bundled ONCE.
