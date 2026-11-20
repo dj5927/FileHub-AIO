@@ -968,6 +968,7 @@ internal static class Program
                 Application.DoEvents();
                 dashboard.VerifyCardMenuLifetimeForUiTest();
                 dashboard.VerifyProtocolIconsForUiTest();
+                dashboard.VerifyCardDoubleClickForUiTest();
                 dashboard.VerifyNoFlickerCardRefreshForUiTest();
                 dashboard.VerifyManualReconnectPauseForUiTest();
                 dashboard.VerifyParallelGatesForUiTest();

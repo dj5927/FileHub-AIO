@@ -87,7 +87,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.109 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.110 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -1659,6 +1659,10 @@ internal sealed partial class MainForm : Form
     void OpenDrive()
     {
         var p=Selected();if(p is null)return;
+        OpenDrive(p);
+    }
+    void OpenDrive(NasProfile p)
+    {
         if(!IsConnected(p)){MessageBox.Show("먼저 연결하세요.");return;}
         Process.Start(new ProcessStartInfo("explorer.exe",p.Letter+":\\") { UseShellExecute=true });
     }

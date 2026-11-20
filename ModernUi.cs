@@ -344,13 +344,14 @@ internal sealed partial class MainForm
         internal bool Running;
     }
     private readonly Dictionary<Guid, ModernCardView> modernCardViews = new();
+    private Guid? uiSmokeDoubleClickOpenedProfile;
     private static string CardVisualKey(NasProfile p) =>
         string.Join("\u001f", p.Protocol, p.DisplayName,
             p.Letter, p.Host, p.Share, p.RemoteDisplay);
 
     private void InitializeModernUi(bool minimized)
     {
-        Text = "FileHub AIO v1.3.109  |  PC 드라이브";
+        Text = "FileHub AIO v1.3.110  |  PC 드라이브";
         FormBorderStyle = FormBorderStyle.None;
         ControlBox = false;
         MaximizeBox = false;
@@ -390,7 +391,7 @@ internal sealed partial class MainForm
             headerIcon.Image = badge.ToBitmap();
         } catch { /* A missing icon must never block connection controls. */ }
         header.Controls.Add(headerIcon);
-        var brand = ModernTheme.Label("FileHub AIO  v1.3.109", 9.3f, true);
+        var brand = ModernTheme.Label("FileHub AIO  v1.3.110", 9.3f, true);
         brand.SetBounds(35, 1, 215, 31);
         header.Controls.Add(brand);
         var actions = new FlowLayoutPanel
@@ -487,10 +488,10 @@ internal sealed partial class MainForm
 
         tray = new NotifyIcon
         {
-            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.109",
+            Icon = Icon ?? SystemIcons.Application, Text = "FileHub AIO v1.3.110",
             Visible = true, ContextMenuStrip = new ContextMenuStrip()
         };
-        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.109 열기", null, (_, _) => ShowWindow());
+        tray.ContextMenuStrip.Items.Add("FileHub AIO v1.3.110 열기", null, (_, _) => ShowWindow());
         tray.ContextMenuStrip.Items.Add("모두 연결", null, async (_, _) => await ConnectAll(true));
         tray.ContextMenuStrip.Items.Add("프로그램 종료", null, async (_, _) => await ExitProgramFast());
         tray.BalloonTipClicked += async (_, _) =>
@@ -822,11 +823,27 @@ internal sealed partial class MainForm
         info.Click += SelectCard;
         badge.Click += SelectCard;
         letter.Click += SelectCard;
-        card.DoubleClick += (_, _) => {
+        // Each label/icon is a real child WinForms control, so double-click
+        // does not bubble to the outer card. Attach to the *entire* passive
+        // content region while leaving connect/settings/folder/more buttons
+        // with their existing single-click actions.
+        void OpenCardFolder(object? sender, EventArgs e)
+        {
             selectedId = p.Id;
+            foreach (Control c in cards.Controls) c.Invalidate();
             RefreshSelectedTransferStatus();
-            OpenDrive();
-        };
+            // UI smoke-test only: do not launch Explorer or touch a NAS.
+            if (Environment.GetEnvironmentVariable("NASMOUNT_UI_SMOKE") == "1")
+            {
+                uiSmokeDoubleClickOpenedProfile = p.Id;
+                return;
+            }
+            OpenDrive(p);
+        }
+        foreach (Control passive in new Control[] {
+            card, content, protocolIcon, nameRow, name, letter, info, badge
+        })
+            passive.DoubleClick += OpenCardFolder;
         card.ContextMenuStrip = MakeCardMenu(p);
         var view = new ModernCardView
         {
@@ -837,6 +854,44 @@ internal sealed partial class MainForm
         card.Tag = view;
         modernCardViews[p.Id] = view;
         return card;
+    }
+
+    internal void VerifyCardDoubleClickForUiTest()
+    {
+        if (Environment.GetEnvironmentVariable("NASMOUNT_UI_SMOKE") != "1")
+            throw new InvalidOperationException("UI card event test is test-only");
+        var method = typeof(Control).GetMethod("OnDoubleClick",
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.NonPublic) ??
+            throw new InvalidOperationException("Control.DoubleClick entrypoint missing");
+        foreach (var view in modernCardViews.Values)
+        {
+            var grid = view.Card.Controls.OfType<TableLayoutPanel>().Single();
+            var targets = new List<Control> { view.Card, grid };
+            void Gather(Control root)
+            {
+                foreach (Control child in root.Controls)
+                {
+                    targets.Add(child);
+                    Gather(child);
+                }
+            }
+            Gather(grid);
+            foreach (Control target in targets)
+            {
+                uiSmokeDoubleClickOpenedProfile = null;
+                method.Invoke(target, [EventArgs.Empty]);
+                if (uiSmokeDoubleClickOpenedProfile != view.Profile.Id)
+                    throw new InvalidOperationException(
+                        "A card label/icon did not open the correct drive: " +
+                        target.GetType().Name + " " + view.Profile.DisplayName);
+            }
+            // Action buttons must retain independent click behavior.
+            if (view.Card.Controls.OfType<FlowLayoutPanel>().Single()
+                    .Controls.OfType<DriveActionButton>().Count() != 4)
+                throw new InvalidOperationException("Card action buttons changed");
+        }
+        Console.WriteLine("CARD_PASSIVE_AREA_DOUBLECLICK_OPENS_CORRECT_DRIVE_PASS");
     }
 
     internal void VerifyNoFlickerCardRefreshForUiTest()

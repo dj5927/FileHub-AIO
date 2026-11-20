@@ -4,8 +4,8 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 버전과 업데이트
 
-- PC 버전: v1.3.109, 이후 v1.3.110 / v1.3.111...
-- PC 전용 GitHub 릴리즈 태그: pc-v1.3.109 / pc-v1.3.110 ...
+- PC 버전: v1.3.110, 이후 v1.3.111 / v1.3.112...
+- PC 전용 GitHub 릴리즈 태그: pc-v1.3.110 / pc-v1.3.111 ...
 - Android 버전: v0.1.x — Windows 업데이트와 별개로 운영
 - 프로그램 실행 시 트레이 업데이트 알림 / 환경 설정 → PC 업데이트 확인
 - 새 PC 버전을 받으면 GitHub 릴리즈 ZIP SHA-256 검증 → 사용자의 설치 승인 → 원격 드라이브 안전 해제 → 프로그램 업데이트 후 재실행
@@ -13,7 +13,7 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 설치
 
-GitHub Releases에서 FileHub-AIO-PC-1.3.109-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.109를 설치할 수 있습니다.
+GitHub Releases에서 FileHub-AIO-PC-1.3.110-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.110을 설치할 수 있습니다.
 
 업데이트 설치 전에는 Excel/Word 등 열린 문서를 모두 저장하고 닫아야 합니다. 안전하게 해제하지 못한 NAS 드라이브가 있으면 프로그램 교체를 중단합니다. 이전 버전은 사용자 백업 폴더에 보관합니다.
 
@@ -32,6 +32,18 @@ GitHub Actions는 공식 릴리즈 파일과 컴파일된 실행 파일의 SHA-2
 PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj -c Release -r win-x64 --self-contained true -o publish, dotnet publish LockBridge/LockBridge.csproj -c Release -r win-x64 --self-contained true -o bridge 를 순서대로 실행합니다.
 
 두 프로젝트를 컴파일하는 것만으로 전체 배포본이 완성되는 것은 아닙니다. rclone, 확장 엔진, WinFsp 배포 파일은 GitHub Actions에서 공식 릴리즈로부터 수집합니다.
+
+## v1.3.110 연결 카드 전체 더블클릭으로 드라이브 열기
+
+- FileHub의 연결 목록에서 연결 아이콘, 이름, 문자, 주소,
+  상태 및 카드의 빈 공간을 더블클릭하면 해당 드라이브의
+  파일 탐색기 폴더를 엽니다.
+- 카드 표면과 별도 WinForms 자식 컨트롤에 각각
+  더블클릭을 등록하여 어느 위치를 누르든 동일하게 처리합니다.
+- 연결 해제, 설정, 폴더 열기, 더보기 버튼은 기존
+  클릭 동작을 유지합니다. 연결되지 않은 드라이브는
+  폴더를 강제로 마운트하지 않고 연결 안내를 표시합니다.
+- 탐색기 실행은 기존 검증된 OpenDrive 경로를 공유합니다.
 
 ## v1.3.109 DDNS 별칭 WebDAV TLS 및 Excel 잠금 오류 분리
 
