@@ -7,7 +7,10 @@ namespace NASMount;
 /// </summary>
 internal sealed class ShellArrivalBatch : IDisposable
 {
-    private readonly System.Windows.Forms.Timer deadline = new() { Interval = 9000 };
+    // A Google cold mount can take 20-75 seconds. Do not split the Shell
+    // publication before the independent profile connections have settled.
+    internal const int WatchdogMilliseconds = 120000;
+    private readonly System.Windows.Forms.Timer deadline = new() { Interval = WatchdogMilliseconds };
     private readonly System.Windows.Forms.Timer settled = new() { Interval = 650 };
     private readonly Action<IReadOnlyList<NasProfile>, string> dispatch;
     private readonly HashSet<Guid> expected = [];
@@ -76,6 +79,9 @@ internal sealed class ShellArrivalBatch : IDisposable
 
     internal static void PolicyTest()
     {
+        if (WatchdogMilliseconds <=
+            StartupReadinessPolicy.MountWait("GoogleDrive").TotalMilliseconds)
+            throw new InvalidOperationException("Shell batch watchdog is shorter than Google startup");
         var events = new List<(int Count, string Cause)>();
         using var test = new ShellArrivalBatch((p, reason) =>
             events.Add((p.Count, reason)));

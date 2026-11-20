@@ -49,6 +49,11 @@ internal sealed partial class MainForm : Form
         shellRefresh = new ExplorerRefreshCoalescer(cause =>
         {
             if (shutdownRequested || exiting || IsDisposed || Disposing) return;
+            if (batchArrivals?.Active == true)
+            {
+                AppStore.Log("EXPLORER_BURST_SUPPRESSED_DURING_CONNECT_BATCH");
+                return;
+            }
             ExplorerDriveIcon.NotifyComputerChanged();
             ExplorerLiveViewRefresh.RefreshThisPc("BATCHED_" + cause);
             AppStore.Log("EXPLORER_BURST_REFRESH_DONE " + cause);
@@ -87,7 +92,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.112 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.113 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
