@@ -84,7 +84,8 @@ internal static class Program
                     Environment.GetEnvironmentVariable("NASMOUNT_LAB_REMOTE_POLL") == "1";
                 using var monitor = testPolling
                     ? new RemoteDirectoryChangeMonitor(labFs, p, "", args[1],
-                        testRcPort, labRcUser, labRcPass)
+                        testRcPort, labRcUser, labRcPass,
+                        labBackend.InvalidateExecutableMetadata)
                     : null;
                 labBackend.DirectoryMonitor = monitor;
                 Console.WriteLine("LOCAL_ATOMIC_BRIDGE_READY " + args[2]);
@@ -236,6 +237,9 @@ internal static class Program
             }
             if (args.Length == 1 && args[0] == "--self-test")
             {
+                Ptfs.ExecutableOpenPolicyTest();
+                ExecutableSecurityMetadataCache.PolicyTest();
+                MissingMuiLookupCache.PolicyTest();
                 WebDavTlsPolicy.SelfTest();
                 if (LockingPassthrough.LeaseFailureStatus(
                         new HttpRequestException("TLS certificate mismatch")) ==
@@ -590,7 +594,8 @@ internal static class Program
                 throw new IOException($"WinFsp lock bridge mount failed status=0x{mounted:X8}");
             using var directoryMonitor = profile.Protocol == "WebDAV"
                 ? new RemoteDirectoryChangeMonitor(fs, profile, password,
-                    source, rcPort, rcUser, rcPass)
+                    source, rcPort, rcUser, rcPass,
+                    passthrough.InvalidateExecutableMetadata)
                 : null;
             passthrough.DirectoryMonitor = directoryMonitor;
             AppStore.Log("LOCKBRIDGE READY " + id + " " + target);
@@ -675,7 +680,17 @@ internal sealed class LockingPassthrough : Ptfs
         new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<object, string> _executableReads =
         new(ReferenceEqualityComparer.Instance);
+    private readonly ExecutableSecurityMetadataCache _exeMetadata = new();
+    private readonly MissingMuiLookupCache _muiCache = new();
     private readonly object _sync = new();
+    internal void InvalidateExecutableMetadata(string fileName) =>
+        InvalidateBothExecutableCaches(fileName);
+
+    private void InvalidateBothExecutableCaches(string name)
+    {
+        _exeMetadata.Invalidate(name);
+        _muiCache.Invalidate(name);
+    }
     internal LockingPassthrough(string source, LeaseCoordinator coordinator,
         ExcelAtomicBridge? atomic = null, string displayLabel = "NAS Mount") : base(source)
     {
@@ -699,9 +714,94 @@ internal sealed class LockingPassthrough : Ptfs
     public override int GetSecurityByName(string fileName, out uint fileAttributes,
         ref byte[] securityDescriptor)
     {
-        int status = base.GetSecurityByName(fileName, out fileAttributes, ref securityDescriptor);
+        bool mui = MissingMuiLookupCache.IsMui(fileName);
+        string muiParent = mui ? (Path.GetDirectoryName(fileName) ?? "") : "";
+        if (mui)
+        {
+            // The PE resource loader probes nonexistent locale directories
+            // several times per EXE. Never send every .mui lookup across a
+            // second WinFsp mount once the lower folder is proven absent.
+            if (_muiCache.IsMissing(fileName) || _muiCache.IsMissing(muiParent))
+            {
+                fileAttributes = 0;
+                return unchecked((int)0xC000003A); // STATUS_OBJECT_PATH_NOT_FOUND
+            }
+            if (muiParent.Length > 0 &&
+                !_muiCache.IsKnownPresentParent(muiParent))
+            {
+                try
+                {
+                    var attrs = File.GetAttributes(ConcatPath(muiParent));
+                    if ((attrs & FileAttributes.Directory) == 0)
+                    {
+                        _muiCache.Missing(muiParent);
+                        fileAttributes = 0;
+                        return unchecked((int)0xC000003A);
+                    }
+                    _muiCache.ParentExists(muiParent);
+                }
+                catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+                {
+                    _muiCache.Missing(muiParent);
+                    fileAttributes = 0;
+                    return unchecked((int)0xC000003A);
+                }
+            }
+        }
+        bool executable = fileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
+            fileName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
+        bool needAcl = securityDescriptor is not null;
+        if (executable && _exeMetadata.TryGet(fileName, needAcl,
+                out fileAttributes, out var cachedAcl))
+        {
+            if (needAcl) securityDescriptor = cachedAcl!;
+            return STATUS_SUCCESS;
+        }
+        long started = executable ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        int status;
+        try { status = base.GetSecurityByName(fileName, out fileAttributes, ref securityDescriptor); }
+        catch (FileNotFoundException) when (mui)
+        {
+            _muiCache.Missing(fileName);
+            fileAttributes = 0;
+            return unchecked((int)0xC0000034); // STATUS_OBJECT_NAME_NOT_FOUND
+        }
+        catch (DirectoryNotFoundException) when (mui)
+        {
+            _muiCache.Missing(muiParent);
+            fileAttributes = 0;
+            return unchecked((int)0xC000003A);
+        }
+        if (executable && status >= 0)
+            _exeMetadata.Store(fileName, fileAttributes, securityDescriptor);
+        if (executable)
+        {
+            double ms = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            if (ms >= 300)
+                AppStore.Log("EXECUTABLE_LOWER_SECURITY_METADATA_SLOW path=" + fileName +
+                    " elapsedMs=" + ms.ToString("F1") + " status=" + status);
+        }
         if (status >= 0) fileAttributes = VisibleOwnerAttributes(fileName, fileAttributes);
         return status;
+    }
+
+    public override int GetSecurity(object fileNode, object fileDesc,
+        ref byte[] securityDescriptor)
+    {
+        string? name;
+        lock (_sync)
+            name = fileDesc is not null && _executableReads.TryGetValue(fileDesc, out var n)
+                ? n : null;
+        if (name is not null)
+        {
+            // A local EXE snapshot must expose the NAS ACL, not the ACL of
+            // the local cache file. Name-based ACL lookups are coalesced.
+            byte[] acl = Array.Empty<byte>();
+            int result = GetSecurityByName(name, out _, ref acl);
+            if (result >= 0) securityDescriptor = acl;
+            return result;
+        }
+        return base.GetSecurity(fileNode, fileDesc, ref securityDescriptor);
     }
 
     public override bool ReadDirectoryEntry(object fileNode, object fileDesc,
@@ -821,6 +921,7 @@ internal sealed class LockingPassthrough : Ptfs
         uint fileAttributes, byte[] securityDescriptor, ulong allocationSize,
         out object fileNode, out object fileDesc, out FspFileInfo info, out string normalizedName)
     {
+        InvalidateExecutableMetadata(fileName);
         AppStore.Log("TRACE CREATE " + fileName + " access=0x" + grantedAccess.ToString("X"));
         string key = WriteIntent.IsDocument(fileName) ?
             fileName.TrimStart('\\').Replace('\\', '/') : "";
@@ -871,6 +972,8 @@ internal sealed class LockingPassthrough : Ptfs
     public override int Rename(object fileNode, object fileDesc, string fileName,
         string newFileName, bool replaceIfExists)
     {
+        InvalidateExecutableMetadata(fileName);
+        InvalidateExecutableMetadata(newFileName);
         AppStore.Log("TRACE RENAME " + fileName + " -> " + newFileName + " overwrite=" + replaceIfExists);
         if (Environment.GetEnvironmentVariable("NASMOUNT_FSP_TRACE") == "1")
             Console.Error.WriteLine("SAVELAB RENAME " + fileName + " -> " + newFileName +
@@ -1034,6 +1137,7 @@ internal sealed class LockingPassthrough : Ptfs
 
     public override void Cleanup(object fileNode, object fileDesc, string fileName, uint flags)
     {
+        if ((flags & CleanupDelete) != 0) InvalidateExecutableMetadata(fileName);
         if ((flags & CleanupDelete) != 0) AppStore.Log("TRACE CLEANUP_DELETE " + fileName);
         // Single-writer rclone mode must not fake successful deletion of the
         // original. That previously left dirty virtual objects for a second

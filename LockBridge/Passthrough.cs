@@ -61,6 +61,11 @@ namespace passthrough
             public FileStream Stream;
             public DirectoryInfo DirInfo;
             public DictionaryEntry[] FileSystemInfos;
+            // Read-only EXE/DLL image handles are stable snapshots. Caching
+            // their already-provided metadata avoids repeated nested WinFsp
+            // metadata calls for every Windows loader page fault.
+            public UInt64? StableExecutableLength;
+            public FileInfo? StableExecutableInfo;
 
             public FileDesc(FileStream Stream)
             {
@@ -300,6 +305,28 @@ namespace passthrough
             return _Path + FileName;
         }
 
+        // EXE/DLL icon extraction repeatedly opens a KNOWN file on the outer
+        // WinFsp bridge. Checking Directory.Exists first triggers an extra
+        // remote metadata round trip through the private rclone WinFsp mount.
+        // Keep explicit directory opens and all Office paths unchanged.
+        internal static bool IsKnownExecutableFileOpen(String name, UInt32 createOptions)
+        {
+            if (0 != (createOptions & FILE_DIRECTORY_FILE)) return false;
+            return name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
+                name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal static void ExecutableOpenPolicyTest()
+        {
+            if (!IsKnownExecutableFileOpen("\\apps\\MultiDownloader.exe", 0) ||
+                !IsKnownExecutableFileOpen("\\apps\\LIBRARY.DLL", 0) ||
+                IsKnownExecutableFileOpen("\\apps\\some-dir.exe", FILE_DIRECTORY_FILE) ||
+                IsKnownExecutableFileOpen("\\apps\\11.xlsx", 0) ||
+                IsKnownExecutableFileOpen("\\apps\\folder", 0))
+                throw new InvalidOperationException("Executable direct-open policy regressed");
+            Console.WriteLine("EXE_DIRECT_OPEN_SKIPS_SECOND_WINFSP_DIRECTORY_PROBE_PASS");
+        }
+
         public override Int32 ExceptionHandler(Exception ex)
         {
             if (Environment.GetEnvironmentVariable("NASMOUNT_FSP_TRACE") == "1")
@@ -467,8 +494,10 @@ namespace passthrough
             FileDesc FileDesc = null;
             try
             {
+                bool exeHotPath = IsKnownExecutableFileOpen(FileName, CreateOptions);
+                long started = exeHotPath ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
                 FileName = ConcatPath(FileName);
-                if (!Directory.Exists(FileName))
+                if (exeHotPath || !Directory.Exists(FileName))
                 {
                     FileDesc = new FileDesc(
                         new FileStream(
@@ -478,6 +507,13 @@ namespace passthrough
                             FileShare.Read | FileShare.Write | FileShare.Delete,
                             4096,
                             FileOptions.None));
+                    if (exeHotPath)
+                    {
+                        double ms = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+                        if (ms >= 300)
+                            NASMount.AppStore.Log("EXECUTABLE_LOWER_FILESTREAM_OPEN_SLOW path=" + FileName +
+                                " elapsedMs=" + ms.ToString("F1"));
+                    }
                 }
                 else
                 {
@@ -487,7 +523,20 @@ namespace passthrough
                 FileNode = default(Object);
                 FileDesc0 = FileDesc;
                 NormalizedName = default(String);
-                return FileDesc.GetFileInfo(out FileInfo);
+                Int32 status = FileDesc.GetFileInfo(out FileInfo);
+                if (exeHotPath && 0 == (GrantedAccess & 0x00000116))
+                {
+                    FileDesc.StableExecutableLength = FileInfo.FileSize;
+                    FileDesc.StableExecutableInfo = FileInfo;
+                }
+                if (exeHotPath)
+                {
+                    double ms = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+                    if (ms >= 300)
+                        NASMount.AppStore.Log("EXECUTABLE_LOWER_TOTAL_OPEN_SLOW path=" + FileName +
+                            " elapsedMs=" + ms.ToString("F1"));
+                }
+                return status;
             }
             catch
             {
@@ -572,7 +621,7 @@ namespace passthrough
             out UInt32 PBytesTransferred)
         {
             FileDesc FileDesc = (FileDesc)FileDesc0;
-            if (Offset >= (UInt64)FileDesc.Stream.Length)
+            if (Offset >= (FileDesc.StableExecutableLength ?? (UInt64)FileDesc.Stream.Length))
                 ThrowIoExceptionWithNtStatus(STATUS_END_OF_FILE);
             Byte[] Bytes = new byte[Length];
             FileDesc.Stream.Seek((Int64)Offset, SeekOrigin.Begin);
@@ -632,6 +681,11 @@ namespace passthrough
             out FileInfo FileInfo)
         {
             FileDesc FileDesc = (FileDesc)FileDesc0;
+            if (FileDesc.StableExecutableInfo is FileInfo stable)
+            {
+                FileInfo = stable;
+                return STATUS_SUCCESS;
+            }
             return FileDesc.GetFileInfo(out FileInfo);
         }
         public override Int32 SetBasicInfo(
@@ -645,6 +699,8 @@ namespace passthrough
             out FileInfo FileInfo)
         {
             FileDesc FileDesc = (FileDesc)FileDesc0;
+            FileDesc.StableExecutableInfo = null;
+            FileDesc.StableExecutableLength = null;
             FileDesc.SetBasicInfo(FileAttributes, CreationTime, LastAccessTime, LastWriteTime);
             return FileDesc.GetFileInfo(out FileInfo);
         }
@@ -656,6 +712,8 @@ namespace passthrough
             out FileInfo FileInfo)
         {
             FileDesc FileDesc = (FileDesc)FileDesc0;
+            FileDesc.StableExecutableInfo = null;
+            FileDesc.StableExecutableLength = null;
             if (!SetAllocationSize || (UInt64)FileDesc.Stream.Length > NewSize)
             {
                 /*

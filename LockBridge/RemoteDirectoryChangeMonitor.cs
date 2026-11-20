@@ -37,6 +37,7 @@ internal sealed class RemoteDirectoryChangeMonitor : IDisposable
     private readonly CancellationTokenSource _stop = new();
     private readonly Task _worker;
     private readonly LocalWorkbookSaveNotificationGuard _localSaves = new();
+    private readonly Action<string>? _invalidateExecutableMetadata;
     // SHA-256 proof is bounded to avoid downloading enormous Office files.
     private const long MaxProofBytes = 128L * 1024 * 1024;
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(2);
@@ -45,8 +46,10 @@ internal sealed class RemoteDirectoryChangeMonitor : IDisposable
     private static bool Trace => Environment.GetEnvironmentVariable("NASMOUNT_FSP_TRACE") == "1";
 
     internal RemoteDirectoryChangeMonitor(FileSystemHost host, NasProfile profile,
-        string password, string lowerRoot, int rcPort, string rcUser, string rcPass)
+        string password, string lowerRoot, int rcPort, string rcUser, string rcPass,
+        Action<string>? invalidateExecutableMetadata = null)
     {
+        _invalidateExecutableMetadata = invalidateExecutableMetadata;
         _host = host;
         _backendRoot = Path.GetFullPath(lowerRoot).TrimEnd('\\') + "\\";
         _remoteRoot = ExcelAtomicBridge.ProfileRoot(profile);
@@ -209,6 +212,8 @@ internal sealed class RemoteDirectoryChangeMonitor : IDisposable
                         }
                         if (external.Count > 0)
                         {
+                            foreach (var change in external)
+                                _invalidateExecutableMetadata?.Invoke(change.FileName);
                             if (Trace) Console.Error.WriteLine("DIRWATCH CHANGE " +
                                 name + " changes=" + string.Join(",", external.Select(x =>
                                     x.Action + ":" + x.FileName)));

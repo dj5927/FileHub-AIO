@@ -4,8 +4,8 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 버전과 업데이트
 
-- PC 버전: v1.3.115, 이후 v1.3.116 / v1.3.117...
-- PC 전용 GitHub 릴리즈 태그: pc-v1.3.115 / pc-v1.3.116 ...
+- PC 버전: v1.3.116, 이후 v1.3.117 / v1.3.118...
+- PC 전용 GitHub 릴리즈 태그: pc-v1.3.116 / pc-v1.3.117 ...
 - Android 버전: v0.1.x — Windows 업데이트와 별개로 운영
 - 프로그램 실행 시 트레이 업데이트 알림 / 환경 설정 → PC 업데이트 확인
 - 새 PC 버전을 받으면 GitHub 릴리즈 ZIP SHA-256 검증 → 사용자의 설치 승인 → 원격 드라이브 안전 해제 → 프로그램 업데이트 후 재실행
@@ -13,7 +13,7 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 설치
 
-GitHub Releases에서 FileHub-AIO-PC-1.3.115-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.115를 설치할 수 있습니다.
+GitHub Releases에서 FileHub-AIO-PC-1.3.116-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.116를 설치할 수 있습니다.
 
 업데이트 설치 전에는 Excel/Word 등 열린 문서를 모두 저장하고 닫아야 합니다. 안전하게 해제하지 못한 NAS 드라이브가 있으면 프로그램 교체를 중단합니다. 이전 버전은 사용자 백업 폴더에 보관합니다.
 
@@ -32,6 +32,15 @@ GitHub Actions는 공식 릴리즈 파일과 컴파일된 실행 파일의 SHA-2
 PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj -c Release -r win-x64 --self-contained true -o publish, dotnet publish LockBridge/LockBridge.csproj -c Release -r win-x64 --self-contained true -o bridge 를 순서대로 실행합니다.
 
 두 프로젝트를 컴파일하는 것만으로 전체 배포본이 완성되는 것은 아닙니다. rclone, 확장 엔진, WinFsp 배포 파일은 GitHub Actions에서 공식 릴리즈로부터 수집합니다.
+
+## v1.3.116 Fast executable icon/version lookup on WebDAV LockBridge
+
+- Root cause reproduced in an isolated WinFsp-over-rclone loopback lab: Windows PE/icon/version extraction repeatedly probes absent `ko`, `ko-KR`, `en`, and `en-US` `.exe.mui` locale resources. The outer LockBridge forwarded repeated absent-path security queries through the second WinFsp filesystem, taking several seconds per EXE even though actual file reads were fast.
+- Cache only proven missing `.mui` file/parent paths for 20 seconds and invalidate upon an independently observed remote creation/removal; cache exact returned EXE/DLL security attributes/ACL for three seconds without inventing permissions.
+- Skip redundant lower WinFsp `Directory.Exists` for known EXE/DLL file opens, and reuse a read-only EXE handle's actual file metadata for repeated image-page/metadata callbacks. Office documents remain on the original path.
+- In the isolated test, outer-bridge EXE version lookup improved from up to 4.4 seconds to roughly 0.1-0.23 seconds without introducing a sidecar snapshot. Direct lower WinFsp was around 0.03-0.15 seconds. Real NAS verification is still required.
+- A proposed infinite WinFsp kernel data cache was **rejected** after it caused a third-save Excel regression in a lab. Sidecar executable snapshot code was also **not shipped**, to avoid stale executables or permission changes. Excel and cross-client change detection remain prioritized.
+- Local verification includes native Windows EXE metadata lookup, repeated Excel saves, WinFsp file-name case policy, and external directory change notification regression tests.
 
 ## v1.3.115 WinFsp WebDAV executable/DLL launch responsiveness
 
