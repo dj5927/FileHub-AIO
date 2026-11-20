@@ -13,7 +13,7 @@
          ArgumentException (path) before the filesystem can be mounted. -->
     <PublishSingleFile>false</PublishSingleFile>
     <AssemblyName>NASMountLockBridge</AssemblyName>
-    <Version>1.3.108</Version>
+    <Version>1.3.109</Version>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="winfsp.net" />
@@ -22,6 +22,7 @@
     <Compile Include="..\Core.cs" Link="Shared\Core.cs"/>
     <Compile Include="..\MountPresentation.cs" Link="Shared\MountPresentation.cs"/>
     <Compile Include="..\CooperativeLocks.cs" Link="Shared\CooperativeLocks.cs"/>
+    <Compile Include="..\WebDavTlsPolicy.cs" Link="Shared\WebDavTlsPolicy.cs"/>
     <Compile Include="..\OfficeUseMarker.cs" Link="Shared\OfficeUseMarker.cs"/>
     <Compile Include="..\OfficeMarkerWorkbook.cs" Link="Shared\OfficeMarkerWorkbook.cs"/>
   </ItemGroup>

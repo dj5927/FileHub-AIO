@@ -40,11 +40,14 @@ internal sealed class ExcelAtomicBridge : IDisposable
 
     internal ExcelAtomicBridge(string lowerRoot, Uri remoteRoot,
         string? basicUser = null, string? basicPassword = null,
-        (int port, string user, string password)? rc = null)
+        (int port, string user, string password)? rc = null,
+        NASMount.NasProfile? profile = null)
     {
         _lowerRoot = lowerRoot.TrimEnd('\\');
         _remoteRoot = remoteRoot.AbsoluteUri.EndsWith('/') ? remoteRoot : new Uri(remoteRoot.AbsoluteUri + "/");
-        _http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+        _http = profile is null
+            ? new HttpClient { Timeout = TimeSpan.FromMinutes(5) }
+            : WebDavTlsPolicy.CreateClient(profile, TimeSpan.FromMinutes(5));
         if (basicUser is not null)
             _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic",
                 Convert.ToBase64String(Encoding.UTF8.GetBytes(basicUser + ":" + basicPassword)));

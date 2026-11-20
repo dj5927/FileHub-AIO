@@ -22,6 +22,29 @@ internal static class Program
     {
         try
         {
+            if (args.Length == 2 && args[0] == "--webdav-tls-readonly-probe")
+            {
+                // A diagnostic for the exact user-supplied HTTPS endpoint.
+                // Send only a credential-free HTTP OPTIONS, never WebDAV
+                // MKCOL/PUT/DELETE/LOCK. Any HTTP status means TLS succeeded.
+                if (!Uri.TryCreate(args[1], UriKind.Absolute, out Uri? url) ||
+                    url.Scheme != Uri.UriSchemeHttps ||
+                    url.UserInfo.Length > 0 || url.Host.Length == 0)
+                    throw new ArgumentException("An HTTPS WebDAV URL is required");
+                var probeProfile = new NasProfile
+                {
+                    Protocol = "WebDAV", Host = url.Host, Port = url.Port
+                };
+                using var http = WebDavTlsPolicy.CreateClient(probeProfile,
+                    TimeSpan.FromSeconds(16), allowRedirect: false);
+                using var response = http.Send(
+                    new HttpRequestMessage(HttpMethod.Options, url));
+                Console.WriteLine("WEBDAV_TLS_READONLY_PROBE_PASS " +
+                    "host=" + url.Host + " port=" + url.Port +
+                    " httpStatus=" + (int)response.StatusCode +
+                    " noCredentials=true noWrites=true");
+                return 0;
+            }
             if (args.Length == 4 && args[0] == "--local-bridge-test")
             {
                 if (!Uri.TryCreate(args[3], UriKind.Absolute, out var uri) ||
@@ -213,6 +236,16 @@ internal static class Program
             }
             if (args.Length == 1 && args[0] == "--self-test")
             {
+                WebDavTlsPolicy.SelfTest();
+                if (LockingPassthrough.LeaseFailureStatus(
+                        new HttpRequestException("TLS certificate mismatch")) ==
+                        LockingPassthrough.STATUS_SHARING_VIOLATION ||
+                    LockingPassthrough.LeaseFailureStatus(
+                        new CooperativeLocks.LockConflictException("proven lock")) !=
+                        LockingPassthrough.STATUS_SHARING_VIOLATION)
+                    throw new IOException(
+                        "Lock conflict and WebDAV transport failure must have distinct statuses");
+                Console.WriteLine("LOCKBRIDGE_LOCK_CONFLICT_VS_TLS_ERROR_POLICY_PASS");
                 var plain = new NasProfile
                 {
                     Protocol = "WebDAV", Host = "localhost", Port = 5000,
@@ -540,7 +573,8 @@ internal static class Program
             using var atomic = profile.Protocol == "WebDAV"
                 ? new ExcelAtomicBridge(source, ExcelAtomicBridge.ProfileRoot(profile),
                     profile.IsAnonymous ? null : profile.Username,
-                    profile.IsAnonymous ? "" : password, (rcPort, rcUser, rcPass)) : null;
+                    profile.IsAnonymous ? "" : password, (rcPort, rcUser, rcPass),
+                    profile) : null;
             var passthrough = new LockingPassthrough(source, leases, atomic,
                 MountPresentation.SafeLabel(profile.DisplayName));
             using var fs = new FileSystemHost(passthrough);
@@ -623,6 +657,12 @@ internal static class WriteIntent
 // except document opens/creates/renames/closes, which gain server-side leases.
 internal sealed class LockingPassthrough : Ptfs
 {
+    // Only a proven lease conflict is an Excel "another user has it open"
+    // situation. TLS, DNS, network and server errors are I/O failures,
+    // NOT sharing violations.
+    internal static int LeaseFailureStatus(Exception failure) =>
+        failure is CooperativeLocks.LockConflictException
+            ? STATUS_SHARING_VIOLATION : STATUS_UNEXPECTED_IO_ERROR;
     internal RemoteDirectoryChangeMonitor? DirectoryMonitor;
     private readonly LeaseCoordinator _coordinator;
     private readonly ExcelAtomicBridge? _atomic;
@@ -705,11 +745,14 @@ internal sealed class LockingPassthrough : Ptfs
             try { _coordinator.AddHandle(key); leased = true; }
             catch (Exception ex)
             {
-                AppStore.Log("LOCKBRIDGE OPEN DENIED " + key + " " + ex.Message);
+                AppStore.Log("LOCKBRIDGE OPEN DENIED " + key +
+                    " kind=" + (ex is CooperativeLocks.LockConflictException
+                        ? "LOCK_CONFLICT" : "REMOTE_IO_ERROR") +
+                    " error=" + ex.Message);
                 fileNode = fileDesc = null;
                 info = default;
                 normalizedName = null;
-                return STATUS_SHARING_VIOLATION;
+                return LeaseFailureStatus(ex);
             }
         }
         try
@@ -746,11 +789,14 @@ internal sealed class LockingPassthrough : Ptfs
             try { _coordinator.AddHandle(key); leased = true; }
             catch (Exception ex)
             {
-                AppStore.Log("LOCKBRIDGE CREATE DENIED " + key + " " + ex.Message);
+                AppStore.Log("LOCKBRIDGE CREATE DENIED " + key +
+                    " kind=" + (ex is CooperativeLocks.LockConflictException
+                        ? "LOCK_CONFLICT" : "REMOTE_IO_ERROR") +
+                    " error=" + ex.Message);
                 fileNode = fileDesc = null;
                 info = default;
                 normalizedName = null;
-                return STATUS_SHARING_VIOLATION;
+                return LeaseFailureStatus(ex);
             }
         }
         try
@@ -862,20 +908,22 @@ internal sealed class LockingPassthrough : Ptfs
             !string.Equals(sourceKey, key, StringComparison.OrdinalIgnoreCase))
         {
             try { _coordinator.AddHandle(sourceKey); sourceLocked = true; }
-            catch
+            catch (Exception ex)
             {
-                AppStore.Log("LOCKBRIDGE SOURCE RENAME DENIED " + sourceKey);
-                return STATUS_SHARING_VIOLATION;
+                AppStore.Log("LOCKBRIDGE SOURCE RENAME DENIED " + sourceKey +
+                    " kind=" + ex.GetType().Name);
+                return LeaseFailureStatus(ex);
             }
         }
         if (key.Length != 0)
         {
             try { _coordinator.AddHandle(key); }
-            catch
+            catch (Exception ex)
             {
                 if (sourceLocked) _coordinator.ReleaseHandle(sourceKey);
-                AppStore.Log("LOCKBRIDGE RENAME DENIED " + key);
-                return STATUS_SHARING_VIOLATION;
+                AppStore.Log("LOCKBRIDGE RENAME DENIED " + key +
+                    " kind=" + ex.GetType().Name);
+                return LeaseFailureStatus(ex);
             }
         }
         // Capture the stored spelling while the existing file is present.

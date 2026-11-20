@@ -14,6 +14,8 @@ namespace NASMount;
 // does not protect Office documents from concurrent writes.
 internal static class CooperativeLocks
 {
+    internal sealed class LockConflictException(string message)
+        : IOException(message);
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool>
         FtpExclusiveMkdirVerified = new(StringComparer.OrdinalIgnoreCase);
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool>
@@ -56,7 +58,28 @@ internal static class CooperativeLocks
                     using var create = new HttpRequestMessage(new HttpMethod("MKCOL"), uri);
                     using var response = client.Send(create);
                     if (response.StatusCode != HttpStatusCode.Created)
-                        throw new IOException($"WebDAV 파일 잠금 충돌/오류: HTTP {(int)response.StatusCode}. 편집을 시작하지 마세요.");
+                    {
+                        // 423 is an explicit server-side lock conflict.
+                        // 405 can mean either an existing lock directory OR
+                        // an unsupported MKCOL verb, so verify owner.json
+                        // before claiming another editor has the file open.
+                        if (response.StatusCode == HttpStatusCode.Locked)
+                            throw new LockConflictException(
+                                "WebDAV 파일이 서버에서 잠겨 있습니다. HTTP " +
+                                (int)response.StatusCode);
+                        if (response.StatusCode == HttpStatusCode.MethodNotAllowed)
+                        {
+                            using var ownerProbe = client.Send(
+                                new HttpRequestMessage(HttpMethod.Head,
+                                    uri.TrimEnd('/') + "/owner.json"));
+                            if (ownerProbe.IsSuccessStatusCode)
+                                throw new LockConflictException(
+                                    "WebDAV 잠금 소유자 기록이 이미 있습니다. HTTP 405");
+                        }
+                        throw new IOException(
+                            "WebDAV 파일 잠금 요청이 거절됐습니다(다른 사용자 점유 여부 미확인): HTTP " +
+                            (int)response.StatusCode);
+                    }
                     // If metadata upload fails, keep the lock directory to fail closed.
                     using var put = new HttpRequestMessage(HttpMethod.Put, uri.TrimEnd('/') + "/owner.json");
                     put.Content = new StringContent(json, Encoding.UTF8, "application/json");
@@ -97,7 +120,7 @@ internal static class CooperativeLocks
                 {
                     EnsureExclusiveSftpMkdir(profile, client);
                     if (client.Exists(lockFolder))
-                        throw new IOException(
+                        throw new LockConflictException(
                             "SFTP 파일잠금 충돌: 이미 다른 FileHub AIO에서 사용 중입니다.");
                     client.CreateDirectory(lockFolder); // atomic server-side mkdir, never ignore failure
                     using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
@@ -116,7 +139,7 @@ internal static class CooperativeLocks
                     // case. Servers without exclusive MKD semantics require
                     // a separate atomic-lock capability check (fail closed).
                     if (client.DirectoryExists(lockFolder))
-                        throw new IOException(
+                        throw new LockConflictException(
                             "FTP 파일잠금 충돌: 이미 다른 FileHub AIO에서 사용 중입니다.");
                     // Raw MKD avoids an existence-then-create race in convenience methods.
                     var reply = client.Execute("MKD " + lockFolder);
@@ -377,7 +400,8 @@ internal static class CooperativeLocks
 
     private static HttpClient WebDav(NasProfile profile, string password)
     {
-        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        var client = WebDavTlsPolicy.CreateClient(profile,
+            TimeSpan.FromSeconds(15));
         if (!profile.IsAnonymous)
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic",
                 Convert.ToBase64String(Encoding.UTF8.GetBytes(profile.Username + ":" + password)));

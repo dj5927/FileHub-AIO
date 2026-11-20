@@ -35,15 +35,16 @@ internal static class WebDavLockProbe
     {
         if (profile.Protocol != "WebDAV")
             return new(false, false, false, false, true, "WebDAV 연결만 검사할 수 있습니다.");
-        using var first = CreateClient(profile.IsAnonymous ? null : profile.Username, password);
-        using var second = CreateClient(profile.IsAnonymous ? null : profile.Username, password);
+        using var first = CreateClient(profile, profile.IsAnonymous ? null : profile.Username, password);
+        using var second = CreateClient(profile, profile.IsAnonymous ? null : profile.Username, password);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         return await Test(first, second, WebDavSaveProbe.RootUri(profile), deadline.Token);
     }
 
-    private static HttpClient CreateClient(string? username, string password)
+    private static HttpClient CreateClient(NasProfile profile, string? username, string password)
     {
-        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(18) };
+        var client = WebDavTlsPolicy.CreateClient(profile,
+            TimeSpan.FromSeconds(18));
         if (username is not null)
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
                 "Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(username + ":" + password)));

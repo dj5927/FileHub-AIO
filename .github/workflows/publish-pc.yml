@@ -69,8 +69,13 @@ jobs:
       - name: Verify LockBridge local-save provenance policy
         shell: pwsh
         run: |
-          & ./bridge/NASMountLockBridge.exe --self-test
-          if ($LASTEXITCODE -ne 0) { throw 'LockBridge local-save provenance test failed' }
+          $output = & ./bridge/NASMountLockBridge.exe --self-test 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or
+              $output -notmatch 'WEBDAV_DDNS_ALIAS_TLS_POLICY_PASS' -or
+              $output -notmatch 'LOCKBRIDGE_LOCK_CONFLICT_VS_TLS_ERROR_POLICY_PASS' -or
+              $output -notmatch 'LOCAL_EXCEL_SAVE_NOTIFICATION_PROVENANCE_PASS') {
+            throw 'LockBridge DDNS TLS / Excel lock safety regression: ' + $output
+          }
 
       - name: Fetch SHA-256 pinned upstream engines
         shell: pwsh
@@ -195,6 +200,8 @@ jobs:
           @"
           ## FileHub AIO PC ${{ steps.version.outputs.tag }}
           - Windows PC 전용 릴리즈. Android APK 및 Android 최신 릴리즈는 변경하지 않습니다.
+          - WebDAV 입력 주소가 어떤 업체 DDNS여도 NAS 제조사 추정 없이 사용하며, 유효한 HTTPS 인증서의 별칭 이름 불일치만 WebDAV 잠금 브리지에서 허용합니다.
+          - Excel 파일 점유 충돌과 HTTPS 인증서·네트워크 오류를 별도로 처리하며, 실제 잠금 소유권을 확인하지 않고 파일을 삭제하지 않습니다.
           - Google Drive 전용 OAuth Client ID 전환 지원: 데스크톱 OAuth JSON 가져오기, 공용/전용 인증 모드 표시, 공용 인증 명시 동의.
           - 새 Google 인증 검증 시 불필요한 폴더 목록 조회를 없애고 rclone about --json으로 접근 여부만 확인. 이전 인증 백업과 복원 유지.
           - 공용 Client ID의 403 API 제한으로 인한 30~35초 연결 지연은 전용 OAuth 재인증 후 실제 재측정이 필요합니다.

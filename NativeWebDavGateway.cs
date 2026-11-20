@@ -56,10 +56,11 @@ internal sealed class NativeWebDavGateway : IDisposable
             throw new ArgumentException("Expected an HTTP(S) WebDAV server root");
         remoteRoot = remote;
         shareRoot = share.Replace('\\', '/').Trim('/');
-        var handler = fakeUpstream ?? new HttpClientHandler {
-            AllowAutoRedirect = false, AutomaticDecompression =
-                System.Net.DecompressionMethods.None
-        };
+        var handler = fakeUpstream ??
+            WebDavTlsPolicy.CreateHandler(new NasProfile {
+                Protocol = "WebDAV", Host = remote.Host, Port = remote.Port,
+                WebDavUseHttp = remote.Scheme == "http"
+            }, allowRedirect: false);
         upstream = new HttpClient(handler, disposeHandler: true)
             { Timeout = Timeout.InfiniteTimeSpan };
         if (!string.IsNullOrEmpty(user))

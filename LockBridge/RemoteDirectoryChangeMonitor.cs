@@ -55,8 +55,10 @@ internal sealed class RemoteDirectoryChangeMonitor : IDisposable
         _rcPort = rcPort;
         _rcUser = rcUser;
         _rcPassword = rcPass;
-        _webdav = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
-        _proofHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(24) };
+        _webdav = WebDavTlsPolicy.CreateClient(profile,
+            TimeSpan.FromSeconds(6));
+        _proofHttp = WebDavTlsPolicy.CreateClient(profile,
+            TimeSpan.FromSeconds(24));
         if (!profile.IsAnonymous)
         {
             var auth = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(
