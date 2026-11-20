@@ -71,18 +71,80 @@ The full read-only lab passed:
 Measurements are from a local loopback WebDAV test server, not the user's
 actual Synology NAS. Do not advertise equivalent end-user performance yet.
 
+## Writable single-WinFsp development progress — 2026-11-20
+
+- `LockBridge/DirectWebDavWriteStore.cs`: uses a durable, local, fsynced
+  JSON+data journal per write handle; writes only via WebDAV with strong
+  `If-Match` / `If-None-Match` preconditions. Before any document writes, the
+  client proves that its server actually rejects duplicate creations and
+  mismatched ETags. Fails closed otherwise. Upload verification checks the
+  remote length/ETag and file checksum for the tested small files.
+- `LockBridge/DirectWebDavWritableFileSystem.cs`: Windows WinFsp Create/Open,
+  Read/Write/Flush/SetFileSize, Cleanup/Close, server MOVE with `Overwrite:F`,
+  guarded DELETE, directory create, local dirty-file overlay, hide internal
+  `.nasmount.lock` markers. Single WinFsp layer; no rclone mount underneath.
+- Existing `CooperativeLocks` / `LeaseCoordinator` is reused for Office
+  ownership on WinFsp document Open/Create, and document rename edges.
+  Server must also prove that duplicate `MKCOL` is rejected; otherwise it
+  cannot safely arbitrate between two FileHub writers.
+- In an actual Excel COM application on a mounted loopback WinFsp WebDAV
+  drive, SaveAs + two later Save calls completed and the third saved workbook
+  was reopened from the server with the exact last cell value.
+- While the Excel workbook was still open, an independent FileHub instance
+  attempting the same document lock was rejected. Independent clients could
+  reacquire a cleanly released lease in a separate two-client test.
+- Copy-to-drive EXE contents matched the source SHA256; its version info
+  loaded in ~36-65ms in loopback tests. File create, three text saves,
+  safe MOVE, conditional DELETE passed.
+- `DirectWebDavWriteStore.RecoverPending`: local manifest is parsed after
+  restart and a write is retried only if the server's current strong ETag
+  still matches the previously edited revision. If the PUT committed just
+  before a lost response, remote SHA256 matching can confirm the commit.
+  The recovery file is retained on conflict, not overwritten. Documents
+  require an actual document lease before automatic recovery.
+- The development branch includes opt-in pilot modes in the LockBridge EXE:
+  `--direct-webdav-profile-readonly-pilot <saved-profile-guid> Z:` and
+  `--direct-webdav-profile-writable-pilot <saved-profile-guid> Z:`. Only a
+  previously saved WebDAV profile may authorize the remote endpoint. Both
+  modes use its exact hostname, port, share path and existing TLS validation.
+  The password comes from Windows Credential Manager or an inherited
+  `NASMOUNT_BRIDGE_PASSWORD` field, never the command line. A free drive
+  letter is required; existing FileHub mounts and GUI connections are not
+  redirected. No production profile was modified.
+- The actual saved WebDAV profile on the development PC has no remembered
+  password; a read-only live-NAS pilot was rejected before mounting. This is
+  an authorization blocker, not a measured failure of the direct engine.
+- A local, interactive **read-only** tester is included at
+  `tests/start_direct_webdav_readonly_pilot.ps1`: it prompts for a missing
+  password using Windows SecureString and inherits it only into a new child
+  process. This test does not write to NAS, replace an existing drive or store
+  the plaintext secret. The user can explicitly run it when ready; it was not
+  run automatically because no credentials were supplied to this session.
+- `tests/direct_webdav_write_store_lab.ps1` and
+  `tests/direct_webdav_writable_winfsp_lab.ps1` use a disposable loopback
+  WebDAV server. `tests/strict_webdav_conditional_proxy.py` is test-only:
+  it enforces conditional PUT/MOVE/DELETE and exclusive MKCOL semantics,
+  which the stock rclone test WebDAV server **did not** enforce. Never
+  assume a production NAS supports these features without the same probe.
+
 ## Remaining blockers before any production switch
 
-1. **Write lifecycle:** implement WinFsp `Create`, `Write`, `Flush`, `Cleanup`,
-   `Rename`, `Delete`, `SetFileSize` and atomic WebDAV `PUT`/`MOVE`.
-2. **Office:** preserve case and real Excel filename; repeated-save semantics,
-   safe temporary rename, server commit proof, visible owner files, and
-   cross-PC lease behavior without reintroducing a second WinFsp layer.
-3. **Recovery:** durable local upload journal, re-open after crash, writeback
-   retries and no data loss on network outage.
-4. **Cache coherency:** validate concurrent edits, ETag/mtime change, file
+1. **Production UI and lifecycle:** authenticated HTTPS WebDAV exists in the
+   opt-in pilot CLI, but normal GUI Connect, status/OTA, graceful reconnect,
+   pending-write-safe disconnect and real-NAS field verification are NOT yet
+   integrated. The current saved WebDAV profile has no remembered credential,
+   so the pilot cannot authenticate without an interactive credential.
+2. **Office cross-client field tests:** verify real Synology/QNAP/WebDAV
+   servers actually enforce conditional writes and exclusive `MKCOL`, then
+   test two real Windows PCs with Excel, third-party readers and clients.
+3. **Recovery UX:** local journal and guarded replay work in a controlled
+   failure lab; manual conflict-copy selection, abandoned lease cleanup,
+   outage timeouts, and complete crash/kill/reboot scenarios still require
+   real-device proof. There is no safe user-facing recovery dialog yet.
+4. **Cache coherency:** expand tests for concurrent edits, ETag/mtime change, file
    deletion and same-name replacement while handles remain open; no invented
-   permissions, ACLs, file content or stale data.
+   permissions, ACLs, file content or stale data. ACLs and time-set behavior
+   must reflect actual NAS capabilities, not simulated local ACLs.
 5. **Production NAS field test:** compare the same WebDAV endpoint and EXEs
    against RaiDrive with cold/warm folder entry, icon extraction, EXE launch,
    running-app DLL access, and Excel multi-save plus a second PC.

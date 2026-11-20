@@ -39,17 +39,42 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
     private const long MaxCachedExecutableSize = 64L * 1024 * 1024;
 
     internal DirectWebDavReadOnlyBackend(Uri root)
+        : this(root, null, "", requireLoopback: true)
     {
-        if (!root.IsLoopback || root.Scheme != Uri.UriSchemeHttp ||
+    }
+
+    // Only a persisted, user-configured WebDAV profile may authorize a
+    // non-loopback host. The command-line test URI never gains this ability.
+    internal DirectWebDavReadOnlyBackend(NasProfile profile, string password)
+        : this(ExcelAtomicBridge.ProfileRoot(profile), profile, password,
+            requireLoopback: false)
+    {
+    }
+
+    private DirectWebDavReadOnlyBackend(Uri root, NasProfile? profile,
+        string password, bool requireLoopback)
+    {
+        if ((requireLoopback && (!root.IsLoopback || root.Scheme != Uri.UriSchemeHttp)) ||
             root.UserInfo.Length > 0 || root.Query.Length > 0 ||
-            root.Fragment.Length > 0)
-            throw new ArgumentException("Direct WebDAV lab only accepts loopback HTTP");
+            root.Fragment.Length > 0 ||
+            (profile is not null && (profile.Protocol != "WebDAV" ||
+                profile.Host.Length == 0 ||
+                (profile.IsAnonymous == false && password.Length == 0))))
+            throw new ArgumentException("Unsafe direct WebDAV endpoint or credentials");
         _root = new Uri(root.AbsoluteUri.TrimEnd('/') + "/");
-        _http = new HttpClient(new HttpClientHandler {
-            AllowAutoRedirect = false,
-            UseCookies = false,
-            AutomaticDecompression = DecompressionMethods.None
-        }) { Timeout = TimeSpan.FromSeconds(25) };
+        _http = profile is not null
+            ? WebDavTlsPolicy.CreateClient(profile, TimeSpan.FromSeconds(25),
+                allowRedirect: false)
+            : new HttpClient(new HttpClientHandler {
+                AllowAutoRedirect = false,
+                UseCookies = false,
+                AutomaticDecompression = DecompressionMethods.None
+            }) { Timeout = TimeSpan.FromSeconds(25) };
+        if (profile is { IsAnonymous: false })
+            _http.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Basic",
+                    Convert.ToBase64String(Encoding.UTF8.GetBytes(
+                        profile.Username + ":" + password)));
         _localCache = Path.Combine(Path.GetTempPath(),
             "FileHubDirectWebDavLab_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_localCache);

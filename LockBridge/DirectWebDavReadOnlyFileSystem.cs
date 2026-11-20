@@ -13,14 +13,14 @@ namespace NASMount.LockBridge;
 /// production mount: Office writes, rename, multi-PC locks and provider
 /// synchronization must be implemented before selecting it for real profiles.
 /// </summary>
-internal sealed class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposable
+internal class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposable
 {
     private const int Success = 0;
     private const int NotFound = unchecked((int)0xC0000034);
     private const int AccessDenied = unchecked((int)0xC0000022);
     private const int EndOfFile = unchecked((int)0xC0000011);
-    private readonly DirectWebDavReadOnlyBackend _backend;
-    private readonly byte[] _security;
+    protected readonly DirectWebDavReadOnlyBackend _backend;
+    protected readonly byte[] _security;
     private readonly ConcurrentDictionary<string, DirectWebDavReadOnlyBackend.Entry[]>
         _watchedFolders = new(StringComparer.OrdinalIgnoreCase);
     private FileSystemHost? _host;
@@ -163,12 +163,12 @@ internal sealed class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposab
         return Success;
     }
 
-    private static FileInfo Describe(DirectWebDavReadOnlyBackend.Entry entry)
+    protected static FileInfo Describe(DirectWebDavReadOnlyBackend.Entry entry)
     {
         FileInfo info = default;
         info.FileAttributes = (uint)(entry.IsDirectory
             ? System.IO.FileAttributes.Directory
-            : System.IO.FileAttributes.ReadOnly | System.IO.FileAttributes.Normal);
+            : System.IO.FileAttributes.ReadOnly);
         info.FileSize = entry.IsDirectory ? 0 : (ulong)entry.Size;
         info.AllocationSize = (info.FileSize + 4095) / 4096 * 4096;
         ulong when = (ulong)entry.ModifiedUtc.ToFileTimeUtc();
@@ -179,12 +179,15 @@ internal sealed class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposab
         return info;
     }
 
+    protected virtual FileInfo DescribeEntry(
+        DirectWebDavReadOnlyBackend.Entry entry) => Describe(entry);
+
     public override int GetSecurityByName(string fileName, out uint attributes,
         ref byte[] securityDescriptor)
     {
         var stat = _backend.Stat(fileName);
         if (stat is null) { attributes = 0; return NotFound; }
-        attributes = Describe(stat).FileAttributes;
+        attributes = DescribeEntry(stat).FileAttributes;
         if (securityDescriptor is not null)
             securityDescriptor = (byte[])_security.Clone();
         return Success;
@@ -204,13 +207,13 @@ internal sealed class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposab
         if (stat is null) return NotFound;
         fileNode = stat;
         fileDesc = stat;
-        info = Describe(stat);
+        info = DescribeEntry(stat);
         return Success;
     }
 
     public override int GetFileInfo(object fileNode, object fileDesc, out FileInfo info)
     {
-        info = Describe((DirectWebDavReadOnlyBackend.Entry)fileDesc);
+        info = DescribeEntry((DirectWebDavReadOnlyBackend.Entry)fileDesc);
         return Success;
     }
 
@@ -235,7 +238,7 @@ internal sealed class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposab
         if (context is not DirectoryCursor cursor)
         {
             Watch(directory.Path);
-            var entries = _backend.List(directory.Path).Where(entry =>
+            var entries = ListForDirectory(directory.Path).Where(entry =>
                 string.IsNullOrEmpty(pattern) ||
                 FileSystemName.MatchesSimpleExpression(
                     pattern.Replace('<', '*').Replace('>', '?').Replace('"', '.'),
@@ -260,9 +263,12 @@ internal sealed class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposab
         }
         var item = cursor.Items[cursor.Index++];
         name = item.Name;
-        info = Describe(item);
+        info = DescribeEntry(item);
         return true;
     }
+
+    protected virtual DirectWebDavReadOnlyBackend.Entry[] ListForDirectory(
+        string directory) => _backend.List(directory);
 
     public override int GetSecurity(object fileNode, object fileDesc,
         ref byte[] securityDescriptor)

@@ -22,6 +22,132 @@ internal static class Program
     {
         try
         {
+            if (args.Length == 3 && (args[0] == "--direct-webdav-profile-readonly-pilot" ||
+                                     args[0] == "--direct-webdav-profile-writable-pilot"))
+            {
+                // Explicit, isolated pilot: use a saved user profile, NOT a
+                // hostname/password supplied through the process command line.
+                // The normal FileHub GUI still follows its old mount path.
+                bool writable = args[0] == "--direct-webdav-profile-writable-pilot";
+                if (!Guid.TryParse(args[1], out var profileId) ||
+                    args[2].Length != 2 || args[2][1] != ':' ||
+                    args[2][0] is < 'D' or > 'Z' ||
+                    Environment.GetLogicalDrives().Any(d =>
+                        d.StartsWith(args[2] + "\\", StringComparison.OrdinalIgnoreCase)))
+                    throw new ArgumentException("Pilot requires saved profile GUID and a free drive letter");
+                var directProfile = AppStore.Load().Profiles.SingleOrDefault(p => p.Id == profileId);
+                if (directProfile is null || directProfile.Protocol != "WebDAV" ||
+                    (writable && !directProfile.UseLockBridge))
+                    throw new ArgumentException("Pilot requires a saved WebDAV profile; writable requires FileHub locks");
+                // An interactive FileHub connection can supply its password
+                // through the same inherited environment field already used
+                // by the existing lock bridge. Do not put secrets in argv,
+                // logs or persisted profile JSON.
+                string? inheritedPassword = Environment.GetEnvironmentVariable(
+                    "NASMOUNT_BRIDGE_PASSWORD");
+                Environment.SetEnvironmentVariable("NASMOUNT_BRIDGE_PASSWORD", null);
+                string credential = directProfile.IsAnonymous ? "" :
+                    !string.IsNullOrEmpty(inheritedPassword) ? inheritedPassword :
+                    WindowsCredentials.Read(directProfile.Id) ??
+                    throw new IOException("Saved WebDAV credential unavailable; cannot start pilot");
+                using var direct = new DirectWebDavReadOnlyBackend(directProfile, credential);
+                // Authenticate and validate the exact endpoint BEFORE the
+                // drive is exposed to Explorer; never infer a NAS vendor.
+                _ = direct.List("/");
+                using var writes = writable ? new DirectWebDavWriteStore(directProfile,
+                    credential, direct, Path.Combine(AppStore.DirectoryPath,
+                        "direct-journals", directProfile.Id.ToString("N"))) : null;
+                if (writable)
+                {
+                    writes!.RequireVerifiedConditionalWrites();
+                    writes.RequireExclusiveLockDirectory();
+                }
+                var coordinator = writable ? new LeaseCoordinator(directProfile,
+                    credential, TimeSpan.FromSeconds(5), uploadSafe: () => true) : null;
+                if (writable) writes!.RecoverPending(coordinator);
+                using DirectWebDavReadOnlyFileSystem provider = writable
+                    ? new DirectWebDavWritableFileSystem(direct, writes!,
+                        Path.GetTempPath(), coordinator)
+                    : new DirectWebDavReadOnlyFileSystem(direct, Path.GetTempPath());
+                using var host = new FileSystemHost(provider);
+                host.FileSystemName = "NTFS";
+                if (!directProfile.UseFixedDriveMode)
+                    host.Prefix = MountPresentation.WinFspPrefix(directProfile);
+                int status = host.Mount(args[2], null, true);
+                if (status < 0)
+                    throw new IOException("Direct WebDAV pilot mount failed 0x" + status.ToString("X8"));
+                provider.StartWatching(host);
+                Console.WriteLine("DIRECT_WEBDAV_PILOT_READY mode=" +
+                    (writable ? "guarded-write" : "read-only") +
+                    " letter=" + args[2] + " noSecondWinFspMount=true");
+                Console.Out.Flush();
+                Thread.Sleep(Timeout.Infinite);
+                return 0;
+            }
+            if (args.Length == 3 && args[0] == "--direct-webdav-assert-live-excel-lock")
+            {
+                if (!Uri.TryCreate(args[1], UriKind.Absolute, out var url) ||
+                    !url.IsLoopback || url.Scheme != Uri.UriSchemeHttp)
+                    throw new ArgumentException("Live Excel lock test requires loopback WebDAV");
+                DirectWebDavLeaseLab.AssertOfficeEditBlocked(url, args[2]);
+                return 0;
+            }
+            if (args.Length == 2 && args[0] == "--direct-webdav-two-client-lease-lab")
+            {
+                if (!Uri.TryCreate(args[1], UriKind.Absolute, out var endpoint) ||
+                    !endpoint.IsLoopback || endpoint.Scheme != Uri.UriSchemeHttp)
+                    throw new ArgumentException("Lease lab requires loopback WebDAV");
+                DirectWebDavLeaseLab.Run(endpoint);
+                return 0;
+            }
+            if (args.Length == 4 && args[0] == "--direct-webdav-writable-lab")
+            {
+                if (!Uri.TryCreate(args[1], UriKind.Absolute, out var url) ||
+                    !url.IsLoopback || url.Scheme != Uri.UriSchemeHttp ||
+                    args[2].Length != 2 || args[2][1] != ':' ||
+                    args[2][0] is < 'D' or > 'Z' ||
+                    Environment.GetLogicalDrives().Any(d =>
+                        d.StartsWith(args[2] + "\\", StringComparison.OrdinalIgnoreCase)))
+                    throw new ArgumentException("Writable lab requires loopback HTTP and free drive");
+                bool profilePipeline = Environment.GetEnvironmentVariable(
+                    "FILEHUB_LAB_PROFILE_PIPELINE") == "1";
+                var localProfile = new NasProfile {
+                    Protocol = "WebDAV", Host = url.Host, Port = url.Port,
+                    Share = "", WebDavUseHttp = true, IsAnonymous = true,
+                    UseLockBridge = true
+                };
+                using var direct = profilePipeline
+                    ? new DirectWebDavReadOnlyBackend(localProfile, "")
+                    : new DirectWebDavReadOnlyBackend(url);
+                using var writes = profilePipeline
+                    ? new DirectWebDavWriteStore(localProfile, "", direct, args[3])
+                    : new DirectWebDavWriteStore(url, direct, args[3]);
+                writes.RequireVerifiedConditionalWrites();
+                writes.RequireExclusiveLockDirectory();
+                var lockProfile = localProfile;
+                var directLeaseCoordinator = new LeaseCoordinator(lockProfile, "",
+                    TimeSpan.FromSeconds(5), uploadSafe: () => true);
+                writes.RecoverPending(directLeaseCoordinator);
+                using var directProvider = new DirectWebDavWritableFileSystem(
+                    direct, writes, Path.GetTempPath(), directLeaseCoordinator);
+                using var filesystem = new FileSystemHost(directProvider);
+                filesystem.FileSystemName = "NTFS";
+                int result = filesystem.Mount(args[2], null, true);
+                if (result < 0) throw new IOException("Direct writable WinFsp mount failed 0x" + result.ToString("X8"));
+                directProvider.StartWatching(filesystem);
+                Console.WriteLine("DIRECT_WEBDAV_SINGLE_WINFSP_WRITABLE_LAB_READY " + args[2]);
+                Console.Out.Flush();
+                Thread.Sleep(Timeout.Infinite);
+                return 0;
+            }
+            if (args.Length == 3 && args[0] == "--direct-webdav-write-store-lab")
+            {
+                if (!Uri.TryCreate(args[1], UriKind.Absolute, out var endpoint) ||
+                    !endpoint.IsLoopback || endpoint.Scheme != Uri.UriSchemeHttp)
+                    throw new ArgumentException("Write store lab requires loopback WebDAV");
+                DirectWebDavWriteStore.IntegrationTest(endpoint, args[2]);
+                return 0;
+            }
             if (args.Length == 3 && args[0] == "--direct-webdav-readonly-lab")
             {
                 // Development-only 1-layer prototype. It cannot write,
@@ -264,6 +390,7 @@ internal static class Program
             {
                 DirectWebDavReadOnlyBackend.PolicyTest();
                 DirectWebDavReadOnlyFileSystem.PolicyTest();
+                DirectWebDavWriteStore.PolicyTest();
                 Ptfs.ExecutableOpenPolicyTest();
                 ExecutableSecurityMetadataCache.PolicyTest();
                 MissingMuiLookupCache.PolicyTest();
