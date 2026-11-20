@@ -455,6 +455,7 @@ internal static class Program
                 GoogleDirectApiPolicyTest.RunAsync().GetAwaiter().GetResult();
                 GoogleDirectCredentialStore.SelfTest();
                 GoogleDirectRecovery.PolicyTest();
+                RemoteMount.DirectOnlyRoutingPolicyTest();
             }
             catch (Exception ex)
             {

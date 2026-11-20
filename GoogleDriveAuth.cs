@@ -481,7 +481,7 @@ internal sealed class GoogleDriveLoginDialog : Form
         Caption(mode switch
         {
             "custom" => "현재 인증: 전용 Google OAuth Client ID 사용 중",
-            "shared" => "현재 인증: rclone 공용 Client ID (API 제한 및 연결 지연 위험)",
+            "shared" => "기존 rclone 공용 인증 발견 · 직접 API 연결을 위해 새 Chrome 승인이 필요합니다.",
             _ => "현재 인증: 계정 미연결"
         }, 53, 28);
         Caption("Google Cloud에서 '데스크톱 앱'용 OAuth JSON을 발급받아 가져오세요.", 83, 27);
@@ -502,14 +502,15 @@ internal sealed class GoogleDriveLoginDialog : Form
             ShowOAuthInstructions, height: 33);
         guide.SetBounds(211, 291, 150, 33);
         Controls.Add(guide);
-        sharedClientConsent.Text = "공용 rclone 인증으로 계속 (403 제한·연결 지연 위험, 권장하지 않음)";
+        sharedClientConsent.Text = "공용 rclone 인증은 직접 엔진에서 지원하지 않습니다.";
         sharedClientConsent.AutoSize = false;
         sharedClientConsent.SetBounds(24, 334, 615, 28);
         sharedClientConsent.ForeColor = ModernTheme.Text;
         sharedClientConsent.BackColor = ModernTheme.Background;
+        sharedClientConsent.Visible = false;
         Controls.Add(sharedClientConsent);
         state.ForeColor = ModernTheme.Muted;
-        state.Text = "전용 Client ID와 Secret을 입력하거나 OAuth JSON을 가져오세요.";
+        state.Text = "FileHub 전용 데스크톱 OAuth JSON을 가져오면 Chrome 계정 승인만 진행합니다.";
         state.SetBounds(24, 367, 617, 45);
         Controls.Add(state);
         login = ModernTheme.Button("Google 계정 연결", 166, () => _ = BeginAuthAsync(), accent: true, height: 34);
@@ -569,9 +570,7 @@ internal sealed class GoogleDriveLoginDialog : Form
         if (login is null) return;
         bool hasId = !string.IsNullOrWhiteSpace(idBox.Text);
         bool hasSecret = !string.IsNullOrWhiteSpace(secretBox.Text);
-        login.Enabled = !busy &&
-            ((hasId && hasSecret) ||
-             (!hasId && !hasSecret && sharedClientConsent.Checked));
+        login.Enabled = !busy && hasId && hasSecret;
     }
 
     private void ImportOAuthJson()
@@ -636,21 +635,11 @@ internal sealed class GoogleDriveLoginDialog : Form
                         catch (Exception ex) { state.Text = "브라우저를 열지 못했습니다: " + ex.Message; }
                     });
             };
-            if (!string.IsNullOrWhiteSpace(idBox.Text))
-            {
-                string token = await GoogleDirectBrowserAuth.AuthorizeAsync(
-                    idBox.Text.Trim(), secretBox.Text.Trim(),
-                    update, browser, cts.Token);
-                await GoogleDriveAuth.SaveNativeBrowserAuthorizationAsync(
-                    profile, token, idBox.Text.Trim(), secretBox.Text.Trim(), cts.Token);
-            }
-            else
-            {
-                // Existing shared-client option remains explicitly opt-in.
-                // Native OAuth requires an app-owned Desktop OAuth client.
-                await GoogleDriveAuth.AuthorizeAsync(profile, "", "",
-                    update, browser, cts.Token);
-            }
+            string token = await GoogleDirectBrowserAuth.AuthorizeAsync(
+                idBox.Text.Trim(), secretBox.Text.Trim(),
+                update, browser, cts.Token);
+            await GoogleDriveAuth.SaveNativeBrowserAuthorizationAsync(
+                profile, token, idBox.Text.Trim(), secretBox.Text.Trim(), cts.Token);
             // Clear busy BEFORE Close(): FormClosing cancels a close while
             // OAuth is still running. The token is already persisted here.
             busy = false;

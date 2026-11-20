@@ -714,10 +714,12 @@ internal static class DirectGoogleWinFspHost
         var profile = AppStore.Load().Profiles.SingleOrDefault(p => p.Id == profileId);
         if (profile is null || profile.Protocol != "GoogleDrive")
             throw new ArgumentException("Saved Google profile required");
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
+        // Bound network stalls: Explorer callbacks must not wait 30+ seconds
+        // on each failed Google request. The native engine uses no rclone.
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
         var token = GoogleDirectOAuthSession.ImportCustomProfile(http, profile);
         var api = new GoogleDirectApiClient(http, token.AccessTokenAsync,
-            cacheTtl: TimeSpan.FromSeconds(30), maxRetries: 2);
+            cacheTtl: TimeSpan.FromSeconds(30), maxRetries: 0);
         // The direct pilot must prove the root is usable before occupying
         // a drive letter. Avoid reporting a mounted-but-unusable drive.
         _ = api.ListChildrenAsync("root").GetAwaiter().GetResult();

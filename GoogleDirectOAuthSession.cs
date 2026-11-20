@@ -64,29 +64,11 @@ internal sealed class GoogleDirectOAuthSession
                     GoogleDirectCredentialStore.SaveRefresh(
                         profile, access, refresh, expiration));
         }
-        // Direct engine never invokes rclone, including for OAuth refresh.
-        // Read-only import of an existing profile is an interim bridge to
-        // a proper FileHub-owned browser PKCE onboarding flow.
-        string path = Path.Combine(AppStore.DirectoryPath, "google-auth",
-            profile.Id.ToString("N") + ".conf");
-        string raw = File.ReadAllText(path, Encoding.UTF8);
-        static string Property(string source, string name) =>
-            Regex.Match(source, @"(?m)^\s*" + Regex.Escape(name) +
-                @"\s*=\s*([^\r\n]+)").Groups[1].Value.Trim();
-        string clientId = Property(raw, "client_id");
-        string clientSecret = Property(raw, "client_secret");
-        if (string.IsNullOrWhiteSpace(clientId))
-            throw new InvalidOperationException(
-                "Google direct engine requires a dedicated OAuth Desktop client");
-        string tokenJson = Property(raw, "token");
-        using var json = JsonDocument.Parse(tokenJson);
-        var token = json.RootElement;
-        var expiry = token.TryGetProperty("expiry", out var expiryField) &&
-            DateTimeOffset.TryParse(expiryField.GetString(), out var timestamp)
-                ? timestamp : DateTimeOffset.MinValue;
-        return new GoogleDirectOAuthSession(http, clientId, clientSecret,
-            token.GetProperty("refresh_token").GetString() ?? "",
-            token.GetProperty("access_token").GetString() ?? "", expiry);
+        // Never silently borrow any rclone .conf or its shared OAuth client.
+        // A browser grant issued to the FileHub Desktop OAuth client is
+        // required. Legacy account files remain untouched for recovery.
+        throw new InvalidOperationException(
+            "Google 직접 API 인증이 없습니다. Chrome에서 FileHub 전용 OAuth 승인이 필요합니다.");
     }
 
     internal async Task<string> AccessTokenAsync(

@@ -87,3 +87,37 @@
   overwrite/collision design, and true Excel Office lock/rename verification.
   Do not claim general-release completion or switch `pc/windows` to this
   experimental native client until those external gates pass.
+
+## 21:34 KST observed rclone regression and direct-only correction
+
+- Real user log from 2026-11-20 21:31 showed `mode=shared`, then
+  `rclone-filehub-goog has been started`, then 35,333ms until Windows
+  mount visible. This proves the previous experimental ZIP *did not*
+  choose the newly implemented native engine for that existing Google
+  profile. Root cause: GUI and mount dispatcher silently fell back to
+  historical rclone when no FileHub-native DPAPI grant existed.
+- **Corrected Google mount policy:** `GoogleDrive` routes only to
+  `ConnectDirectGoogleAsync`. There is now NO legacy Google rclone
+  fallback, whether credentials are missing or the old shared OAuth
+  remains present. On first explicit connect a browser PKCE consent is
+  requested. Auto-connect without this grant waits without opening Chrome.
+- Removed the direct engine's interim reading of `google-auth/*.conf`.
+  The old rclone OAuth and files are preserved as recovery/backups, but
+  can no longer be misinterpreted as authorization for the FileHub app.
+- Browser consent requires a **publisher-owned Google Desktop OAuth
+  client**, via the packaged `tools/google-oauth-desktop.json` or one-time
+  Desktop JSON import. The publisher file is still NOT in this tree.
+  An OAuth client cannot be generated or borrowed from another app
+  automatically; the connection is intentionally blocked until issued.
+  This is a prerequisite, not evidence of a successful live connection.
+- Google REST file operations use a 12-second HTTP timeout, no HTTP
+  retry on the real WinFsp host and an 8-request concurrency cap with
+  2-second queue admission, preventing unlimited WinFsp request buildup.
+- Google direct experimental CI ZIP explicitly omits
+  `tools/rclone-filehub-google.exe`; regular rclone/terabox stay because
+  **non-Google** providers still require them. CI requires
+  `GOOGLE_NATIVE_ONLY_NO_RCLONE_FALLBACK_POLICY_PASS` and the original
+  fake-Google real Windows WinFsp regression suite.
+- Mandatory future live gates: actual browser grant, first-directory
+  latency, one-hour read/reconnect stability, and safe native Office
+  overwrite. Never describe these as completed on a fake API test alone.

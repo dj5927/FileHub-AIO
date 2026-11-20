@@ -6,6 +6,38 @@ namespace NASMount;
 
 internal static partial class RemoteMount
 {
+    internal enum GoogleEngineRoute
+    {
+        OtherProtocol,
+        NativeGoogleNeedsBrowserGrant,
+        NativeGoogleReady
+    }
+
+    // Google is NOT permitted to choose a legacy rclone backend. The route
+    // is decided before looking up any executable or VFS arguments.
+    internal static GoogleEngineRoute GoogleRouteFor(NasProfile p) =>
+        p.Protocol != "GoogleDrive" ? GoogleEngineRoute.OtherProtocol :
+        GoogleDirectCredentialStore.HasNative(p) ?
+            GoogleEngineRoute.NativeGoogleReady :
+            GoogleEngineRoute.NativeGoogleNeedsBrowserGrant;
+
+    internal static void DirectOnlyRoutingPolicyTest()
+    {
+        var google = new NasProfile
+        {
+            Id = Guid.NewGuid(), Protocol = "GoogleDrive"
+        };
+        var webdav = new NasProfile
+        {
+            Id = Guid.NewGuid(), Protocol = "WebDAV"
+        };
+        if (GoogleRouteFor(google) !=
+                GoogleEngineRoute.NativeGoogleNeedsBrowserGrant ||
+            GoogleRouteFor(webdav) != GoogleEngineRoute.OtherProtocol)
+            throw new InvalidOperationException("Google mount silently fell back to rclone");
+        Console.WriteLine("GOOGLE_NATIVE_ONLY_NO_RCLONE_FALLBACK_POLICY_PASS");
+    }
+
     private static string? PersistedGoogleRecoveryAlert(Guid id)
     {
         try
@@ -113,7 +145,7 @@ internal static partial class RemoteMount
             };
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(18));
             try
             {
                 while (!ready.Task.IsCompleted && !timeout.IsCancellationRequested)
@@ -133,7 +165,7 @@ internal static partial class RemoteMount
                         Running[p.Id] = new Instance(process, 0, "", "", null,
                             DirectProfileId: p.Id, DirectGoogle: true);
                     return OperationResult.Fail(
-                        "Google 직접 엔진 준비가 25초를 초과했습니다. " +
+                        "Google 직접 엔진 준비가 18초를 초과했습니다. " +
                         "중복 연결을 방지하기 위해 기존 프로세스를 유지합니다.");
                 }
                 int exit = process.ExitCode;

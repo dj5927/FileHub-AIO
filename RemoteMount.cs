@@ -1369,8 +1369,12 @@ internal static partial class RemoteMount
                 return OperationResult.Fail("MYBOX API 인증/목록 조회 실패: " + e.Message);
             }
         }
-        if (UsesDirectGoogle(p))
+        if (GoogleRouteFor(p) != GoogleEngineRoute.OtherProtocol)
         {
+            if (GoogleRouteFor(p) != GoogleEngineRoute.NativeGoogleReady)
+                return OperationResult.Fail(
+                    "Google 직접 API 인증이 없습니다. Chrome에서 Google 계정을 다시 승인하세요. " +
+                    "구형 rclone 인증으로 자동 전환하지 않습니다.");
             try
             {
                 using var http = new HttpClient
@@ -1547,8 +1551,17 @@ internal static partial class RemoteMount
         if (Environment.GetLogicalDrives().Any(d =>
                 d.StartsWith(p.Letter.ToUpperInvariant() + ":", StringComparison.OrdinalIgnoreCase)))
             return OperationResult.Fail(p.Letter + ": 드라이브가 다른 프로그램에서 사용 중입니다.");
-        if (UsesDirectGoogle(p))
+        // Google is direct-only. Never silently fall through to rclone
+        // when a legacy/shared client or missing dedicated OAuth is found.
+        // That fallback was the reason the user continued to see 35-second
+        // startup stalls despite the native engine being implemented.
+        if (GoogleRouteFor(p) != GoogleEngineRoute.OtherProtocol)
+        {
+            AppStore.Log("GOOGLE_ENGINE_ROUTE_DIRECT_ONLY profile=" + p.Id +
+                " route=" + GoogleRouteFor(p) +
+                " rcloneFallback=false");
             return await ConnectDirectGoogleAsync(p);
+        }
         if (UsesDirectWebDav(p))
         {
             var direct = await ConnectDirectWebDavAsync(p, password);

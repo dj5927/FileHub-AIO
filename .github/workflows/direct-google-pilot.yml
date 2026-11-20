@@ -38,6 +38,7 @@ jobs:
           $app = 'bin/Release/net10.0-windows/win-x64/FileHubAIO.exe'
           $out = & $app --google-direct-api-policy-test 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0 -or
+              $out -notmatch 'GOOGLE_NATIVE_ONLY_NO_RCLONE_FALLBACK_POLICY_PASS' -or
               $out -notmatch 'GOOGLE_DIRECT_DPAPI_OAUTH_ROUNDTRIP_AND_BACKUP_PASS' -or
               $out -notmatch 'GOOGLE_DIRECT_CRASH_JOURNAL_EXPORT_NO_OVERWRITE_PASS' -or
               $out -notmatch 'GOOGLE_DIRECT_API_RANGE_READ_AND_NEW_RESUMABLE_UPLOAD_PASS') {
@@ -104,10 +105,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Bridge publish failed' }
           New-Item -ItemType Directory -Force -Path (Join-Path $app 'tools') | Out-Null
           Copy-Item -Recurse -Force (Join-Path $bridge '*') (Join-Path $app 'tools')
-          # Existing WebDAV/FTP/SFTP/TeraBox and legacy Google profiles still
-          # use rclone. The native Google pilot MUST preserve the complete
-          # pinned backend toolset from the last verified stable PC release.
-          # Never ship a partial ZIP with a GUI that cannot connect.
+          # WebDAV/FTP/SFTP and TeraBox still depend on rclone. Google MUST
+          # use the direct API only, and must never ship its old patched
+          # Google rclone backend as a silent fallback.
           $stable = Join-Path $env:RUNNER_TEMP 'FileHubPCStable126'
           New-Item -ItemType Directory -Force -Path $stable | Out-Null
           gh release download 'pc-v1.3.126' --repo 'dj5927/FileHub-AIO' `
@@ -132,7 +132,6 @@ jobs:
           $stableTools = Join-Path $stableFiles 'tools'
           $required = @(
             'rclone.exe', 'rclone.sha256',
-            'rclone-filehub-google.exe', 'rclone-filehub-google.sha256',
             'rclone-terabox.exe', 'rclone-terabox.sha256',
             'winfsp-2.1.25156.msi'
           )
@@ -141,7 +140,7 @@ jobs:
             if (!(Test-Path $src)) { throw ('Stable release missing ' + $name) }
             Copy-Item $src (Join-Path (Join-Path $app 'tools') $name) -Force
           }
-          foreach ($name in @('rclone.exe','rclone-filehub-google.exe','rclone-terabox.exe')) {
+          foreach ($name in @('rclone.exe','rclone-terabox.exe')) {
             $binary = Join-Path (Join-Path $app 'tools') $name
             $manifest = [IO.Path]::ChangeExtension($binary, '.sha256')
             $expected = ((Get-Content $manifest -Raw).Trim() -split '\s+')[0]
@@ -166,9 +165,11 @@ jobs:
           }
           $coldPolicy = & (Join-Path $app 'FileHubAIO.exe') --google-cold-start-policy-test 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0 -or
-              $coldPolicy -notmatch 'RCLONE_THREE_ENGINE_DISTINCT_MANIFEST_POLICY_PASS' -or
-              $coldPolicy -notmatch 'GOOGLE_ASYNC_QUOTA_BUNDLED_BINARY_SHA256_PASS') {
+              $coldPolicy -notmatch 'RCLONE_THREE_ENGINE_DISTINCT_MANIFEST_POLICY_PASS') {
             throw ('Packaged Google fallback integrity check failed: ' + $coldPolicy)
+          }
+          if (Test-Path (Join-Path $app 'tools/rclone-filehub-google.exe')) {
+            throw 'Google experimental ZIP must not include the legacy Google rclone executable'
           }
           $route = & (Join-Path $app 'FileHubAIO.exe') --direct-webdav-routing-policy-test 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0 -or $route -notmatch 'DIRECT_WEBDAV_ONLY_PROVIDER_ROUTING_POLICY_PASS') {

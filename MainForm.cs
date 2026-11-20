@@ -536,31 +536,30 @@ internal sealed partial class MainForm : Form
                 return;
             }
         }
-        // When the publisher provided FileHub's own OAuth Desktop client,
-        // migrate a legacy shared-rclone account via the SAME one-click
-        // browser login UX. No API key entry for ordinary users.
-        // Never pop a surprise Chrome consent window during autoconnect.
-        if (p.Protocol == "GoogleDrive" &&
-            GoogleDriveAuth.ClientMode(p) != "custom" &&
-            GoogleOAuthClientFile.TryReadPackagedClient(out _, out _))
+        // Native Google API is the ONLY Google mount engine. A legacy
+        // shared-rclone credential is not authorization for the new client.
+        // Never auto-launch Chrome during Windows startup.
+        if (RemoteMount.GoogleRouteFor(p) ==
+            RemoteMount.GoogleEngineRoute.NativeGoogleNeedsBrowserGrant)
         {
             if (!explicitRequest)
             {
                 retry[p.Id] = DateTime.UtcNow.AddMinutes(5);
                 return;
             }
+            status.Text = "Google 직접 API 연결을 위한 Chrome 계정 승인이 필요합니다.";
             using var directLogin = new GoogleDriveLoginDialog(p);
             if (directLogin.ShowDialog(this) != DialogResult.OK) return;
-        }
-        if (p.Protocol == "GoogleDrive" && !GoogleDriveAuth.IsAuthorized(p))
-        {
-            if (!explicitRequest)
+            if (RemoteMount.GoogleRouteFor(p) !=
+                RemoteMount.GoogleEngineRoute.NativeGoogleReady)
             {
-                retry[p.Id] = DateTime.UtcNow.AddMinutes(5);
-                return; // No unsolicited Google login window on Windows startup.
+                MessageBox.Show(this,
+                    "Google 직접 엔진 인증이 완료되지 않았습니다. " +
+                    "기존 rclone 인증으로 자동 연결하지 않습니다.",
+                    "Google 직접 API", MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
             }
-            using var login = new GoogleDriveLoginDialog(p);
-            if (login.ShowDialog(this) != DialogResult.OK) return;
         }
         if (p.Protocol == "OneDrive" && !OneDriveAuth.IsAuthorized(p))
         {

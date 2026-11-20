@@ -29,6 +29,10 @@ internal sealed class GoogleDirectApiClient
     private readonly TimeSpan _cacheTtl;
     private readonly int _maxRetries;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    // WinFsp shares its callback pool with Explorer and Office.
+    // Bound network concurrency so a slow Drive response cannot queue
+    // hundreds of simultaneous callbacks and stall the whole desktop.
+    private readonly SemaphoreSlim _requestSlots = new(8, 8);
 
     internal sealed record Item(string Id, string Name, bool IsFolder,
         long Size, string? Version, DateTimeOffset? Modified,
@@ -85,6 +89,24 @@ internal sealed class GoogleDirectApiClient
         return "unknown";
     }
 
+    private async Task<HttpResponseMessage> SendBoundedAsync(
+        HttpRequestMessage request, CancellationToken cancel)
+    {
+        if (!await _requestSlots.WaitAsync(TimeSpan.FromSeconds(2), cancel)
+            .ConfigureAwait(false))
+            throw new IOException("Google API request queue is busy; retry later");
+        try
+        {
+            return await _http.SendAsync(request,
+                HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+        }
+        catch (TaskCanceledException ex) when (!cancel.IsCancellationRequested)
+        {
+            throw new IOException("Google API response timed out", ex);
+        }
+        finally { _requestSlots.Release(); }
+    }
+
     private async Task<JsonDocument> SendJsonAsync(HttpMethod method,
         string relative, object? body, CancellationToken cancel)
     {
@@ -100,8 +122,7 @@ internal sealed class GoogleDirectApiClient
             if (body is not null)
                 request.Content = new StringContent(JsonSerializer.Serialize(body),
                     Encoding.UTF8, "application/json");
-            using var response = await _http.SendAsync(request,
-                HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+            using var response = await SendBoundedAsync(request, cancel).ConfigureAwait(false);
             using var stream = await response.Content.ReadAsStreamAsync(cancel)
                 .ConfigureAwait(false);
             using var parsed = await JsonDocument.ParseAsync(stream,
@@ -199,8 +220,7 @@ internal sealed class GoogleDirectApiClient
                 "?fields=id,name,mimeType,size,modifiedTime,version,md5Checksum,headRevisionId&supportsAllDrives=true"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer",
             await _accessToken(cancel).ConfigureAwait(false));
-        using var result = await _http.SendAsync(request,
-            HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+        using var result = await SendBoundedAsync(request, cancel).ConfigureAwait(false);
         if (result.StatusCode == HttpStatusCode.NotFound) return null;
         if (!result.IsSuccessStatusCode)
             throw new IOException("Google file metadata HTTP " + (int)result.StatusCode);
@@ -222,8 +242,7 @@ internal sealed class GoogleDirectApiClient
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer",
             await _accessToken(cancel).ConfigureAwait(false));
         request.Headers.Range = new RangeHeaderValue(offset, offset + length - 1);
-        using var result = await _http.SendAsync(request,
-            HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+        using var result = await SendBoundedAsync(request, cancel).ConfigureAwait(false);
         if (result.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
             return [];
         // Never serve a 200 full file body for an offset read. This could
@@ -287,8 +306,7 @@ internal sealed class GoogleDirectApiClient
             "application/octet-stream");
         start.Headers.TryAddWithoutValidation("X-Upload-Content-Length",
             data.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        using var accepted = await _http.SendAsync(start,
-            HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+        using var accepted = await SendBoundedAsync(start, cancel).ConfigureAwait(false);
         if (!accepted.IsSuccessStatusCode || accepted.Headers.Location is not { } location)
             throw new IOException("Google resumable create initiation HTTP " +
                 (int)accepted.StatusCode);
@@ -327,8 +345,7 @@ internal sealed class GoogleDirectApiClient
             put.Content.Headers.ContentRange = data.Length == 0
                 ? new ContentRangeHeaderValue(0)
                 : new ContentRangeHeaderValue(sent, sent + size - 1, data.Length);
-            using var result = await _http.SendAsync(put,
-                HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+            using var result = await SendBoundedAsync(put, cancel).ConfigureAwait(false);
             if (result.IsSuccessStatusCode)
             {
                 using var doc = await JsonDocument.ParseAsync(
@@ -424,8 +441,7 @@ internal sealed class GoogleDirectApiClient
             "application/octet-stream");
         request.Headers.TryAddWithoutValidation("X-Upload-Content-Length",
             data.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        using var initiated = await _http.SendAsync(request,
-            HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+        using var initiated = await SendBoundedAsync(request, cancel).ConfigureAwait(false);
         if (!initiated.IsSuccessStatusCode || initiated.Headers.Location is not { } location)
             throw new IOException("Google existing revision session failed HTTP " +
                 (int)initiated.StatusCode);
@@ -467,8 +483,7 @@ internal sealed class GoogleDirectApiClient
             put.Content.Headers.ContentRange = empty
                 ? new ContentRangeHeaderValue(0)
                 : new ContentRangeHeaderValue(sent, sent + size - 1, data.Length);
-            using var response = await _http.SendAsync(put,
-                HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+            using var response = await SendBoundedAsync(put, cancel).ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
             {
                 using var doc = await JsonDocument.ParseAsync(
