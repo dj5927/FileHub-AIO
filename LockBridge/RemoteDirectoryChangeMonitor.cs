@@ -162,25 +162,49 @@ internal sealed class RemoteDirectoryChangeMonitor : IDisposable
                         if (!BridgeUploadGate.Check(_rcPort, _rcUser, _rcPassword))
                             continue;
                         var external = new List<NotifyInfo>(changes.Length);
+                        // When the server exposes an intermediate Excel
+                        // remove/re-add, retain the LAST stable snapshot for
+                        // only a bounded time instead of lying to Excel that
+                        // someone else deleted or replaced its open workbook.
+                        // Other files in this folder still notify normally.
+                        var nextBaseline = new Dictionary<string, string>(
+                            current, StringComparer.OrdinalIgnoreCase);
                         foreach (var change in changes)
                         {
                             string key = change.FileName.TrimStart('\\')
                                 .Replace('\\', '/');
                             string basename = Path.GetFileName(key);
-                            if (change.Action == NotifyAction.Modified &&
-                                previous.TryGetValue(basename, out var oldVersion) &&
-                                current.TryGetValue(basename, out var newVersion) &&
-                                _localSaves.MayBeOurSave(key, oldVersion, newVersion,
-                                    out var receipt) &&
-                                await RemoteMatchesLocalSaveAsync(key, receipt, _stop.Token) &&
-                                _localSaves.Acknowledge(key, receipt))
+                            previous.TryGetValue(basename, out var oldVersion);
+                            current.TryGetValue(basename, out var newVersion);
+                            var candidates = _localSaves.Candidates(
+                                key, oldVersion, newVersion);
+                            var matching = candidates.Count > 0
+                                ? await RemoteMatchesLocalSaveAsync(
+                                    key, candidates, _stop.Token)
+                                : null;
+                            if (matching is not null &&
+                                _localSaves.Acknowledge(key, matching))
                             {
                                 AppStore.Log("REMOTE_DIR_LOCAL_EXCEL_SAVE_ACK " +
-                                    key + " bytes=" + receipt.Length);
+                                    key + " bytes=" + matching.Length +
+                                    " candidates=" + candidates.Count);
                                 if (Trace) Console.Error.WriteLine(
                                     "DIRWATCH OWN_SAVE_RECONCILED " + key);
                                 continue;
                             }
+                            if (_localSaves.ShouldDeferUnverified(key))
+                            {
+                                PreserveBaselineForDeferredChange(
+                                    nextBaseline, previous, basename);
+                                if (Trace) Console.Error.WriteLine(
+                                    "DIRWATCH OWN_SAVE_TRANSIENT_DELAY " + key +
+                                    " action=" + change.Action);
+                                continue;
+                            }
+                            if (WriteIntent.IsDocument("\\" + key))
+                                AppStore.Log("REMOTE_DIR_EXTERNAL_WORKBOOK_CHANGE " +
+                                    key + " action=" + change.Action +
+                                    " localReceiptCandidates=" + candidates.Count);
                             external.Add(change);
                         }
                         if (external.Count > 0)
@@ -191,7 +215,7 @@ internal sealed class RemoteDirectoryChangeMonitor : IDisposable
                             await RefreshRcloneAsync(name, _stop.Token);
                             Notify(external.ToArray());
                         }
-                        watch.Previous = current;
+                        watch.Previous = nextBaseline;
                     }
                     catch (OperationCanceledException) when (_stop.IsCancellationRequested)
                     { return; }
@@ -215,11 +239,25 @@ internal sealed class RemoteDirectoryChangeMonitor : IDisposable
             .Select(Uri.EscapeDataString)) + "/");
     }
 
-    private async Task<bool> RemoteMatchesLocalSaveAsync(string relative,
-        LocalWorkbookSaveNotificationGuard.Receipt receipt,
+    internal static void PreserveBaselineForDeferredChange(
+        Dictionary<string, string> next,
+        IReadOnlyDictionary<string, string> before, string basename)
+    {
+        if (before.TryGetValue(basename, out var previous))
+            next[basename] = previous;
+        else next.Remove(basename);
+    }
+
+    private async Task<LocalWorkbookSaveNotificationGuard.Receipt?>
+        RemoteMatchesLocalSaveAsync(string relative,
+        IReadOnlyList<LocalWorkbookSaveNotificationGuard.Receipt> candidates,
         CancellationToken token)
     {
-        if (receipt.Length > MaxProofBytes) return false;
+        // One GET per server revision even when Ctrl+S happened five times.
+        // Never trust ETag or file length alone as evidence of our own save.
+        if (candidates.Count == 0 || candidates[0].Length > MaxProofBytes)
+            return null;
+        long expectedLength = candidates[0].Length;
         try
         {
             Uri file = new(_remoteRoot, string.Join("/", relative.Split('/')
@@ -229,8 +267,8 @@ internal sealed class RemoteDirectoryChangeMonitor : IDisposable
                 HttpCompletionOption.ResponseHeadersRead, token);
             if (response.StatusCode != HttpStatusCode.OK ||
                 (response.Content.Headers.ContentLength is long size &&
-                 size != receipt.Length))
-                return false;
+                 size != expectedLength))
+                return null;
             using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             await using var body = await response.Content.ReadAsStreamAsync(token);
             byte[] block = new byte[128 * 1024];
@@ -240,16 +278,18 @@ internal sealed class RemoteDirectoryChangeMonitor : IDisposable
                 int bytes = await body.ReadAsync(block.AsMemory(), token);
                 if (bytes == 0) break;
                 total += bytes;
-                if (total > receipt.Length || total > MaxProofBytes) return false;
+                if (total > expectedLength || total > MaxProofBytes) return null;
                 sha.AppendData(block.AsSpan(0, bytes));
             }
             string remoteHash = Convert.ToHexString(sha.GetHashAndReset());
-            bool matched = total == receipt.Length &&
-                remoteHash.Equals(receipt.Sha256, StringComparison.OrdinalIgnoreCase);
-            if (!matched && Trace)
+            var matching = total == expectedLength
+                ? candidates.FirstOrDefault(x => x.Length == total &&
+                    remoteHash.Equals(x.Sha256, StringComparison.OrdinalIgnoreCase))
+                : null;
+            if (matching is null && Trace)
                 Console.Error.WriteLine("DIRWATCH REMOTE_MISMATCH " + relative +
-                    " expectedBytes=" + receipt.Length + " actualBytes=" + total);
-            return matched;
+                    " expectedBytes=" + expectedLength + " actualBytes=" + total);
+            return matching;
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
@@ -260,7 +300,7 @@ internal sealed class RemoteDirectoryChangeMonitor : IDisposable
             // Fail closed: a failed proof must not mask a real remote edit.
             AppStore.Log("REMOTE_DIR_LOCAL_SAVE_PROOF_FAILED " + relative +
                 " " + ex.GetType().Name);
-            return false;
+            return null;
         }
     }
 

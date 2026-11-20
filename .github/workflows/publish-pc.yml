@@ -73,8 +73,9 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or
               $output -notmatch 'WEBDAV_DDNS_ALIAS_TLS_POLICY_PASS' -or
               $output -notmatch 'LOCKBRIDGE_LOCK_CONFLICT_VS_TLS_ERROR_POLICY_PASS' -or
+              $output -notmatch 'LOCAL_EXCEL_REPEAT_SAVE_ECHO_POLICY_PASS' -or
               $output -notmatch 'LOCAL_EXCEL_SAVE_NOTIFICATION_PROVENANCE_PASS') {
-            throw 'LockBridge DDNS TLS / Excel lock safety regression: ' + $output
+            throw 'LockBridge DDNS TLS / Excel multiple-save provenance regression: ' + $output
           }
 
       - name: Fetch SHA-256 pinned upstream engines
