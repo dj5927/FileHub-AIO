@@ -22,6 +22,31 @@ internal static class Program
     {
         try
         {
+            if (args.Length == 3 && args[0] == "--direct-webdav-readonly-lab")
+            {
+                // Development-only 1-layer prototype. It cannot write,
+                // rename or acquire cross-PC Office locks; never use it as
+                // the default FileHub mount until these features are proven.
+                if (!Uri.TryCreate(args[1], UriKind.Absolute, out var url) ||
+                    !url.IsLoopback || url.Scheme != Uri.UriSchemeHttp ||
+                    args[2].Length != 2 || args[2][1] != ':' ||
+                    args[2][0] is < 'D' or > 'Z' ||
+                    Environment.GetLogicalDrives().Any(d =>
+                        d.StartsWith(args[2] + "\\", StringComparison.OrdinalIgnoreCase)))
+                    throw new ArgumentException("Direct WebDAV lab requires loopback HTTP and a free drive");
+                using var direct = new DirectWebDavReadOnlyBackend(url);
+                using var directProvider = new DirectWebDavReadOnlyFileSystem(
+                    direct, Path.GetTempPath());
+                using var filesystem = new FileSystemHost(directProvider);
+                filesystem.FileSystemName = "NTFS";
+                int mount = filesystem.Mount(args[2], null, true);
+                if (mount < 0) throw new IOException("Direct WinFsp mount failed 0x" + mount.ToString("X8"));
+                directProvider.StartWatching(filesystem);
+                Console.WriteLine("DIRECT_WEBDAV_SINGLE_WINFSP_READONLY_LAB_READY " + args[2]);
+                Console.Out.Flush();
+                Thread.Sleep(Timeout.Infinite);
+                return 0;
+            }
             if (args.Length == 2 && args[0] == "--webdav-tls-readonly-probe")
             {
                 // A diagnostic for the exact user-supplied HTTPS endpoint.
@@ -237,6 +262,8 @@ internal static class Program
             }
             if (args.Length == 1 && args[0] == "--self-test")
             {
+                DirectWebDavReadOnlyBackend.PolicyTest();
+                DirectWebDavReadOnlyFileSystem.PolicyTest();
                 Ptfs.ExecutableOpenPolicyTest();
                 ExecutableSecurityMetadataCache.PolicyTest();
                 MissingMuiLookupCache.PolicyTest();
