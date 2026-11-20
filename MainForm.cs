@@ -855,6 +855,17 @@ internal sealed partial class MainForm : Form
         if (p.Protocol == "GoogleDrive" &&
             GoogleDirectRecovery.PendingCount(p.Id) is int pending && pending > 0)
         {
+            var connectionState = await RemoteMount.GetTransferStatus(p);
+            if (connectionState.Message.Contains("열린 Google 파일",
+                StringComparison.Ordinal))
+            {
+                MessageBox.Show(this,
+                    "Google 파일을 사용 중입니다. 파일을 닫은 뒤 " +
+                    "복구 상태를 다시 확인하세요.",
+                    "Google 저장 진행 중", MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
             if (MessageBox.Show(this,
                 "Google 직접 연결의 미완료 로컬 복구 기록 " + pending +
                 "개가 있습니다.\n\n원본 기록은 그대로 두고 별도 폴더에 " +

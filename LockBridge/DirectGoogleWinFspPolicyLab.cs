@@ -23,6 +23,7 @@ internal static class DirectGoogleWinFspPolicyLab
         internal string SourceRevision = "rev_01";
         internal bool SourcePinned;
         internal int PinnedRevisions;
+        internal bool FailPin;
         internal int ExistingCompletions;
         private object SourceMeta() => new
         {
@@ -53,6 +54,10 @@ internal static class DirectGoogleWinFspPolicyLab
             if (request.Method == HttpMethod.Patch &&
                 url.AbsolutePath.Contains("/files/file_01/revisions/", StringComparison.Ordinal))
             {
+                if (FailPin)
+                    return Task.FromResult(Json(
+                        """{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}""",
+                        HttpStatusCode.Forbidden));
                 if (!url.AbsolutePath.EndsWith("/" + SourceRevision,
                     StringComparison.Ordinal))
                     return Task.FromResult(Json("{}", HttpStatusCode.Conflict));
@@ -209,6 +214,22 @@ internal static class DirectGoogleWinFspPolicyLab
         string isolated = Path.Combine(Path.GetTempPath(),
             "FileHubGoogleStageLab_" + Guid.NewGuid().ToString("N"));
         using var fs = new DirectGoogleWinFsp(api, Path.GetTempPath(), true, isolated);
+        var networkProfile = new NasProfile
+        {
+            Id = Guid.NewGuid(), Protocol = "GoogleDrive",
+            DisplayName = "Google 검증용 드라이브"
+        };
+        MountPresentation.BeginNetworkMountAttempt(networkProfile);
+        string ownedPrefix = MountPresentation.WinFspPrefix(networkProfile);
+        if (DirectGoogleWinFspHost.ValidateNetworkPrefix(networkProfile,
+                ownedPrefix) != ownedPrefix)
+            throw new IOException("Direct Google owned network prefix was not accepted");
+        bool foreignDenied = false;
+        try { DirectGoogleWinFspHost.ValidateNetworkPrefix(networkProfile,
+            @"\ThirdParty\Google Drive"); }
+        catch (ArgumentException) { foreignDenied = true; }
+        if (!foreignDenied)
+            throw new IOException("Direct Google accepted a foreign network prefix");
         char free = Enumerable.Range('T', 7).Select(n => (char)n)
             .FirstOrDefault(letter =>
                 !Environment.GetLogicalDrives().Any(d => d.StartsWith(letter + ":",
@@ -218,9 +239,13 @@ internal static class DirectGoogleWinFspPolicyLab
         string letterPath = free + ":";
         using var host = new FileSystemHost(fs);
         host.FileSystemName = "NTFS";
+        host.Prefix = ownedPrefix;
         if (host.Mount(letterPath, null, true) < 0)
             throw new IOException("Google direct WinFsp mock could not mount");
         string root = letterPath + "\\";
+        if (new DriveInfo(letterPath).DriveType != DriveType.Network)
+            throw new IOException("Google direct WinFsp should appear as a network drive");
+        Console.WriteLine("GOOGLE_DIRECT_WINFSP_OWNED_NETWORK_DRIVE_PASS");
         if (!Directory.EnumerateFileSystemEntries(root)
             .Any(path => Path.GetFileName(path) == "hello.txt"))
             throw new IOException("Google direct root listing missing content");
@@ -302,6 +327,7 @@ internal static class DirectGoogleWinFspPolicyLab
         using (var editHost = new FileSystemHost(editFs))
         {
             editHost.FileSystemName = "NTFS";
+            editHost.Prefix = @"\FileHubGoogle\" + Guid.NewGuid().ToString("N");
             if (editHost.Mount(editLetter + ":", null, true) < 0)
                 throw new IOException("Existing-file Google WinFsp test could not mount");
             string existingPath = editLetter + ":\\hello.txt";
@@ -362,6 +388,39 @@ internal static class DirectGoogleWinFspPolicyLab
         {
             if (Directory.Exists(conflictDirectory))
                 Directory.Delete(conflictDirectory, recursive: true);
+        }
+        string pinFailureDirectory = Path.Combine(Path.GetTempPath(),
+            "FileHubGooglePinFailureLab_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var baseline = api.GetFileAsync("file_01").GetAwaiter().GetResult()!;
+            using (var failure = new DirectGoogleWriteStage(api,
+                pinFailureDirectory, "root", "hello.txt", baseline))
+            {
+                failure.SetLength(0);
+                failure.Write(0, Encoding.UTF8.GetBytes("SAVE AFTER LIMIT ERROR"), false);
+                fake.FailPin = true;
+                try
+                {
+                    failure.Commit();
+                    throw new IOException("Google 403 during revision backup was ignored");
+                }
+                catch (IOException ex) when (ex.Message.Contains(
+                    "local recovery retained", StringComparison.Ordinal)) { }
+            }
+            if (fake.ExistingCompletions != 2 ||
+                Encoding.UTF8.GetString(fake.SourceContent) != "SECOND PC SAVED" ||
+                Directory.GetFiles(pinFailureDirectory, "*.data").Length != 1 ||
+                File.ReadAllText(Directory.GetFiles(pinFailureDirectory, "*.data").Single())
+                    != "SAVE AFTER LIMIT ERROR")
+                throw new IOException("Backup 403 failure lost the existing edit or source");
+            Console.WriteLine("GOOGLE_DIRECT_EXISTING_PIN_403_LOCAL_RECOVERY_PASS");
+        }
+        finally
+        {
+            fake.FailPin = false;
+            if (Directory.Exists(pinFailureDirectory))
+                Directory.Delete(pinFailureDirectory, recursive: true);
         }
         File.Move(Path.Combine(root, "hello.txt"),
             Path.Combine(root, "hello-renamed.txt"));

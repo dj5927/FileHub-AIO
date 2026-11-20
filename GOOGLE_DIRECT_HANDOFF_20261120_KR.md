@@ -61,3 +61,29 @@
   `GOOGLE_DIRECT_WINFSP_EXISTING_BINARY_REPEAT_SAVE_PASS`,
   `GOOGLE_DIRECT_TWO_CLIENT_STALE_WRITE_RECOVERY_PASS`,
   `GOOGLE_DIRECT_CRASH_JOURNAL_EXPORT_NO_OVERWRITE_PASS`.
+
+## Final isolated pilot integration and network presentation
+
+- The original Windows CI run `44730985257` on the Google direct experiment
+  branch succeeded end-to-end, including a real WinFsp fake-API drive and
+  uploading the separate EXPERIMENTAL ZIP artifact. This is NOT a signed or
+  production-ready release.
+- The native Google host now mounts as a **Windows network drive** using
+  `FileSystemHost.Prefix`. The main GUI supplies a per-connection, GUID-owned
+  random `NASMount-<id8>-<session>` network server and the configured friendly
+  share name to its child bridge. The child validates ownership before
+  mounting. This ensures Explorer icon and MountPoints2 label handling see
+  the same server name as the GUI and avoids recycling a stale UNC server.
+  Verified through actual Windows WinFsp mock integration.
+- Added revision-pinning HTTP 403 failure test: the older Google object and
+  unsaved local edit must both survive; no update PUT can run if pinning fails.
+- An active native WinFsp writer's live staging JSON is not confused with
+  a crash record; the manual recovery dialog refuses to export an active
+  writer's stage until that writer closes.
+- Main/bridge native policy suite pass; additionally run the full Windows CI
+  on each pilot branch commit before recommending experimental binaries.
+- Unresolved for production: publisher-issued Google Desktop OAuth client,
+  live Google Drive consent, read/write latency benchmarks, cross-PC atomic
+  overwrite/collision design, and true Excel Office lock/rename verification.
+  Do not claim general-release completion or switch `pc/windows` to this
+  experimental native client until those external gates pass.

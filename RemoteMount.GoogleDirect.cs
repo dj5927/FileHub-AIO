@@ -10,6 +10,13 @@ internal static partial class RemoteMount
     {
         try
         {
+            // A running WinFsp writer normally has a local .json stage.
+            // Do not confuse ordinary in-progress writes with a crash
+            // recovery warning on the quiet dashboard.
+            lock (Guard)
+                if (Running.TryGetValue(id, out var active) &&
+                    active.DirectGoogle && !active.Process.HasExited)
+                    return null;
             int pending = GoogleDirectRecovery.PendingCount(id);
             return pending == 0 ? null :
                 "Google 직접 연결에 복구가 필요한 로컬 저장 기록 " +
@@ -54,6 +61,11 @@ internal static partial class RemoteMount
             "tools", "NASMountLockBridge.exe");
         if (!File.Exists(bridge))
             return OperationResult.Fail("Google 직접 WinFsp 엔진이 설치되지 않았습니다.");
+        // The UI process owns the session name. Pass the exact prefix to
+        // the child; otherwise its separate MountPresentation static state
+        // would generate a different server and Explorer labels would drift.
+        MountPresentation.BeginNetworkMountAttempt(p);
+        string prefix = MountPresentation.WinFspPrefix(p);
         var psi = new ProcessStartInfo(bridge)
         {
             UseShellExecute = false, CreateNoWindow = true,
@@ -62,16 +74,21 @@ internal static partial class RemoteMount
         foreach (string argument in new[]
         {
             "--direct-google-profile-folder-pilot", p.Id.ToString("D"),
-            p.Letter.ToUpperInvariant() + ":"
+            p.Letter.ToUpperInvariant() + ":", prefix
         }) psi.ArgumentList.Add(argument);
 
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        bool started = false;
         var ready = new TaskCompletionSource<bool>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
             if (!process.Start())
+            {
+                MountPresentation.ForgetNetworkMountAttempt(p);
                 return OperationResult.Fail("Google 직접 WinFsp 엔진 실행에 실패했습니다.");
+            }
+            started = true;
             process.OutputDataReceived += (_, e) =>
             {
                 if (e.Data?.StartsWith("DIRECT_GOOGLE_WINFSP_PILOT_READY ",
@@ -121,6 +138,7 @@ internal static partial class RemoteMount
                 }
                 int exit = process.ExitCode;
                 process.Dispose();
+                MountPresentation.ForgetNetworkMountAttempt(p);
                 return OperationResult.Fail("Google 직접 엔진 시작 실패 (" +
                     exit + "). Google 인증·API 응답을 확인하세요.");
             }
@@ -132,6 +150,8 @@ internal static partial class RemoteMount
         }
         catch (Exception ex)
         {
+            if (!started || process.HasExited)
+                MountPresentation.ForgetNetworkMountAttempt(p);
             AppStore.Log("GOOGLE_DIRECT_CONNECT_FAILED profile=" + p.Id +
                 " type=" + ex.GetType().Name);
             return OperationResult.Fail("Google 직접 연결 실패: " +
@@ -171,6 +191,7 @@ internal static partial class RemoteMount
             BrowseVerified.Remove(p.Id);
         }
         instance.Process.Dispose();
+        MountPresentation.ForgetNetworkMountAttempt(p);
         return OperationResult.Ok("Google 직접 WinFsp 드라이브가 안전하게 해제됐습니다.");
     }
 }

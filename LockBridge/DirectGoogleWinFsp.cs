@@ -685,7 +685,26 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
 
 internal static class DirectGoogleWinFspHost
 {
-    internal static int Run(Guid profileId, string letter, bool writeFolders)
+    internal static string ValidateNetworkPrefix(NasProfile profile,
+        string? proposed)
+    {
+        string defaultPrefix = MountPresentation.WinFspPrefix(profile);
+        string selected = proposed ?? defaultPrefix;
+        string baseName = @"\NASMount-" + profile.Id.ToString("N")[..8];
+        string share = @"\" + MountPresentation.SafeLabel(profile.DisplayName);
+        if (selected == baseName + share) return selected;
+        if (!selected.StartsWith(baseName + "-", StringComparison.Ordinal) ||
+            !selected.EndsWith(share, StringComparison.Ordinal))
+            throw new ArgumentException("Google network prefix must belong to this FileHub profile");
+        string session = selected[(baseName.Length + 1)..^share.Length];
+        if (session.Length != 8 || session.Any(ch =>
+            !char.IsAsciiHexDigit(ch) || char.IsUpper(ch)))
+            throw new ArgumentException("Invalid Google WinFsp network session name");
+        return selected;
+    }
+
+    internal static int Run(Guid profileId, string letter, bool writeFolders,
+        string? networkPrefix = null)
     {
         if (letter.Length != 2 || letter[1] != ':' ||
             letter[0] is < 'D' or > 'Z' ||
@@ -708,7 +727,10 @@ internal static class DirectGoogleWinFspHost
             writeFolders, recovery);
         using var host = new FileSystemHost(provider);
         host.FileSystemName = "NTFS";
-        // Pilot is local fixed volume; no synthetic NASMount UNC name.
+        // A true network drive, matching the GUI-owned one-session WinFsp
+        // UNC. Unlike the old fixed-volume pilot this appears under
+        // Explorer's Network locations and gets the configured friendly name.
+        host.Prefix = ValidateNetworkPrefix(profile, networkPrefix);
         int status = host.Mount(letter, null, true);
         if (status < 0)
             throw new IOException("Direct Google WinFsp mount failed 0x" +

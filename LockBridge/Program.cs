@@ -27,7 +27,7 @@ internal static class Program
                 DirectGoogleWinFspPolicyLab.Run();
                 return 0;
             }
-            if (args.Length == 3 &&
+            if (args.Length is 3 or 4 &&
                 args[0] is ("--direct-google-profile-readonly-pilot" or
                             "--direct-google-profile-folder-pilot"))
             {
@@ -35,7 +35,8 @@ internal static class Program
                     throw new ArgumentException("A saved Google profile ID is required");
                 return DirectGoogleWinFspHost.Run(googleId,
                     args[2].ToUpperInvariant(),
-                    args[0] == "--direct-google-profile-folder-pilot");
+                    args[0] == "--direct-google-profile-folder-pilot",
+                    args.Length == 4 ? args[3] : null);
             }
             if (args.Length == 4 && args[0] == "--direct-webdav-managed")
             {
