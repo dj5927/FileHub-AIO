@@ -445,24 +445,25 @@ internal static class GoogleDriveAuth
     }
 }
 
-/// <summary>First-time user-controlled OAuth consent. No sign-in on app startup.</summary>
+/// <summary>
+/// One-click Google account selection. Publisher-owned OAuth settings are
+/// supplied by the application package, never by end users.
+/// </summary>
 internal sealed class GoogleDriveLoginDialog : Form
 {
     private readonly NasProfile profile;
-    private readonly TextBox idBox = new();
-    private readonly TextBox secretBox = new() { UseSystemPasswordChar = true };
-    private readonly CheckBox sharedClientConsent = new();
     private readonly Label state = new();
     private readonly Button login;
     private readonly CancellationTokenSource cts = new();
+    private readonly string clientId = "";
+    private readonly string clientSecret = "";
     private bool busy;
 
     internal GoogleDriveLoginDialog(NasProfile p)
     {
         profile = p;
         Text = "Google Drive 계정 연결";
-        ClientSize = new Size(670, 474);
-        MinimumSize = MaximumSize = Size;
+        ClientSize = new Size(515, 260);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;
         StartPosition = FormStartPosition.CenterParent;
@@ -471,191 +472,174 @@ internal sealed class GoogleDriveLoginDialog : Form
         ForeColor = ModernTheme.Text;
         Font = new Font("Malgun Gothic", 9f);
         ModernTheme.EnableDarkTitleBar(this);
-        void Caption(string value, int top, int height, bool bold = false) {
-            var label = ModernTheme.Label(value, bold ? 11f : 9f, bold);
-            label.SetBounds(24, top, 620, height);
-            Controls.Add(label);
-        }
-        Caption("Google Drive 전용 OAuth 연결", 18, 30, true);
-        string mode = GoogleDriveAuth.ClientMode(p);
-        Caption(mode switch
-        {
-            "custom" => "현재 인증: 전용 Google OAuth Client ID 사용 중",
-            "shared" => "기존 rclone 공용 인증 발견 · 직접 API 연결을 위해 새 Chrome 승인이 필요합니다.",
-            _ => "현재 인증: 계정 미연결"
-        }, 53, 28);
-        Caption("Google Cloud에서 '데스크톱 앱'용 OAuth JSON을 발급받아 가져오세요.", 83, 27);
-        Caption("전용 인증은 API 요청 제한을 줄일 수 있으나 연결 속도를 보장하지는 않습니다.", 111, 27);
-        Caption("Google OAuth Client ID", 167, 24);
-        idBox.SetBounds(24, 193, 618, 27);
-        idBox.BackColor = ModernTheme.Field; idBox.ForeColor = ModernTheme.Text;
-        Controls.Add(idBox);
-        Caption("Client Secret (직접 입력 또는 JSON 가져오기)", 225, 24);
-        secretBox.SetBounds(24, 252, 618, 27);
-        secretBox.BackColor = ModernTheme.Field; secretBox.ForeColor = ModernTheme.Text;
-        Controls.Add(secretBox);
-        var import = ModernTheme.Button("OAuth JSON 가져오기", 178,
-            ImportOAuthJson, height: 33);
-        import.SetBounds(24, 291, 178, 33);
-        Controls.Add(import);
-        var guide = ModernTheme.Button("Google 발급 안내", 150,
-            ShowOAuthInstructions, height: 33);
-        guide.SetBounds(211, 291, 150, 33);
-        Controls.Add(guide);
-        sharedClientConsent.Text = "공용 rclone 인증은 직접 엔진에서 지원하지 않습니다.";
-        sharedClientConsent.AutoSize = false;
-        sharedClientConsent.SetBounds(24, 334, 615, 28);
-        sharedClientConsent.ForeColor = ModernTheme.Text;
-        sharedClientConsent.BackColor = ModernTheme.Background;
-        sharedClientConsent.Visible = false;
-        Controls.Add(sharedClientConsent);
+
+        var title = ModernTheme.Label("Google Drive 계정 연결", 14f, true);
+        title.SetBounds(25, 24, 465, 36);
+        Controls.Add(title);
+
+        var hint = ModernTheme.Label(
+            "Google 계정 연결을 누르면 Chrome에서 계정을 선택하고" +
+            "\nFileHub AIO의 Google Drive 접근을 승인합니다.",
+            10f, false);
+        hint.SetBounds(25, 72, 470, 62);
+        Controls.Add(hint);
+
         state.ForeColor = ModernTheme.Muted;
-        state.Text = "FileHub 전용 데스크톱 OAuth JSON을 가져오면 Chrome 계정 승인만 진행합니다.";
-        state.SetBounds(24, 367, 617, 45);
+        state.SetBounds(25, 145, 460, 48);
         Controls.Add(state);
-        login = ModernTheme.Button("Google 계정 연결", 166, () => _ = BeginAuthAsync(), accent: true, height: 34);
-        login.SetBounds(346, 423, 166, 34);
+
+        login = ModernTheme.Button("Google 계정 연결", 180,
+            () => _ = BeginAuthAsync(), accent: true, height: 36);
+        login.SetBounds(210, 209, 180, 36);
         Controls.Add(login);
-        var cancel = ModernTheme.Button("취소", 114, () => {
+
+        var cancel = ModernTheme.Button("취소", 90, () =>
+        {
             cts.Cancel();
-            if (!busy) { DialogResult = DialogResult.Cancel; Close(); }
-        }, height: 34);
-        cancel.SetBounds(520, 423, 114, 34);
+            if (!busy)
+            {
+                DialogResult = DialogResult.Cancel;
+                Close();
+            }
+        }, height: 36);
+        cancel.SetBounds(399, 209, 90, 36);
         Controls.Add(cancel);
-        // Publisher-owned OAuth credentials are configured once when the
-        // application is built. End users only click the browser login.
+
         try
         {
             if (GoogleOAuthClientFile.TryReadPackagedClient(
                 out string bundledId, out string bundledSecret))
             {
-                idBox.Text = bundledId;
-                secretBox.Text = bundledSecret;
-                sharedClientConsent.Checked = false;
-                idBox.Visible = false;
-                secretBox.Visible = false;
-                sharedClientConsent.Visible = false;
-                var cover = new Panel { BackColor = ModernTheme.Background };
-                cover.SetBounds(20, 78, 630, 280);
-                Controls.Add(cover);
-                var heading = ModernTheme.Label("Google 계정 연결", 13f, true);
-                heading.SetBounds(10, 42, 600, 40);
-                cover.Controls.Add(heading);
-                var instructions = ModernTheme.Label(
-                    "아래 [Google 계정 연결] 버튼을 누르면 기본 브라우저가 열립니다." +
-                    "\nGoogle 계정 선택 → 접근 승인으로 인증이 완료됩니다." +
-                    "\n별도의 API 키나 Client ID 입력은 필요하지 않습니다.",
-                    10f, false);
-                instructions.SetBounds(10, 110, 605, 112);
-                cover.Controls.Add(instructions);
-                cover.BringToFront();
-                state.Text = "Google 계정 연결을 누르면 브라우저 인증이 시작됩니다.";
+                clientId = bundledId;
+                clientSecret = bundledSecret;
+                state.Text = "계정 선택과 승인만 진행합니다. 별도 설정은 필요하지 않습니다.";
+            }
+            else if (GoogleDirectCredentialStore.HasNative(profile))
+            {
+                // Existing native grants can reauthorize with the same app ID
+                // without an end-user JSON picker.
+                var saved = GoogleDirectCredentialStore.Load(profile);
+                clientId = saved.ClientId;
+                clientSecret = saved.ClientSecret;
+                state.Text = "기존 FileHub 인증으로 Chrome 계정 선택을 진행합니다.";
+            }
+            else
+            {
+                state.Text = "이 배포판에 Google 로그인 설정이 빠져 있습니다." +
+                    "\n프로그램 배포 구성 오류이며 사용자 설정으로 해결할 문제가 아닙니다.";
             }
         }
         catch (Exception ex) when (ex is IOException or ArgumentException)
         {
-            AppStore.Log("GOOGLE_PACKAGED_OAUTH_CONFIG_INVALID type=" +
+            AppStore.Log("GOOGLE_PUBLISHER_OAUTH_CONFIG_INVALID type=" +
                 ex.GetType().Name);
-            state.Text = "앱에 포함된 Google 인증 설정을 확인해야 합니다.";
+            state.Text = "프로그램의 Google 인증 설정을 확인할 수 없습니다." +
+                "\n프로그램 배포 구성 오류입니다.";
         }
-        idBox.TextChanged += (_, _) => RefreshLoginAvailability();
-        secretBox.TextChanged += (_, _) => RefreshLoginAvailability();
-        sharedClientConsent.CheckedChanged += (_, _) => RefreshLoginAvailability();
         RefreshLoginAvailability();
-        FormClosing += (_, e) => { if (busy) { cts.Cancel(); e.Cancel = true; } };
-    }
-
-    private void RefreshLoginAvailability()
-    {
-        if (login is null) return;
-        bool hasId = !string.IsNullOrWhiteSpace(idBox.Text);
-        bool hasSecret = !string.IsNullOrWhiteSpace(secretBox.Text);
-        login.Enabled = !busy && hasId && hasSecret;
-    }
-
-    private void ImportOAuthJson()
-    {
-        using var picker = new OpenFileDialog
+        FormClosing += (_, e) =>
         {
-            Title = "Google Cloud 데스크톱 OAuth JSON 선택",
-            Filter = "Google OAuth JSON (*.json)|*.json",
-            CheckFileExists = true,
-            Multiselect = false,
-            RestoreDirectory = true
+            if (busy)
+            {
+                cts.Cancel();
+                e.Cancel = true;
+            }
         };
-        if (picker.ShowDialog(this) != DialogResult.OK) return;
-        try
-        {
-            var (clientId, clientSecret) =
-                GoogleOAuthClientFile.ReadDesktopFile(picker.FileName);
-            idBox.Text = clientId;
-            secretBox.Text = clientSecret;
-            sharedClientConsent.Checked = false;
-            state.Text = "전용 OAuth 설정을 가져왔습니다. 계정 연결을 누르면 브라우저에서 승인합니다.";
-        }
-        catch (Exception ex) when (ex is IOException or ArgumentException or
-                                  UnauthorizedAccessException)
-        {
-            state.Text = "Google Cloud에서 발급한 데스크톱 앱 JSON을 선택하세요.";
-            MessageBox.Show(this, ex.Message, "Google OAuth JSON 오류",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        }
     }
 
-    private void ShowOAuthInstructions()
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo(
-                GoogleOAuthClientFile.GoogleSetupUrl)
-            { UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(this, ex.Message, "Google OAuth 발급 안내",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        }
-    }
+    // Regression check: regular users must never get ID/Secret/JSON inputs.
+    internal bool BrowserOnlyUi =>
+        !Controls.OfType<TextBox>().Any() &&
+        !Controls.OfType<CheckBox>().Any() &&
+        !Controls.OfType<LinkLabel>().Any();
+
+    internal bool PublisherConfigured =>
+        !string.IsNullOrWhiteSpace(clientId) &&
+        !string.IsNullOrWhiteSpace(clientSecret);
+
+    internal bool LoginEnabled => login.Enabled;
+
+    private void RefreshLoginAvailability() =>
+        login.Enabled = !busy &&
+            !string.IsNullOrWhiteSpace(clientId) &&
+            !string.IsNullOrWhiteSpace(clientSecret);
 
     private async Task BeginAuthAsync()
     {
-        if (busy) return;
+        if (busy || !login.Enabled) return;
         busy = true;
-        login.Enabled = false;
+        RefreshLoginAvailability();
         try
         {
-            state.Text = "구글 인증 주소를 준비 중입니다...";
-            Action<string> update = message => {
-                if (!IsDisposed) BeginInvoke(() => state.Text = message);
+            state.Text = "Chrome에서 Google 계정 선택 화면을 여는 중...";
+            Action<string> update = message =>
+            {
+                if (!IsDisposed && IsHandleCreated)
+                    BeginInvoke(() => state.Text = message);
             };
-            Action<string> browser = url => {
-                    if (IsDisposed) return;
-                    BeginInvoke(() => {
-                        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
-                        catch (Exception ex) { state.Text = "브라우저를 열지 못했습니다: " + ex.Message; }
-                    });
+            Action<string> browser = url =>
+            {
+                if (IsDisposed || !IsHandleCreated) return;
+                BeginInvoke(() =>
+                {
+                    try
+                    {
+                        // Prefer Chrome as requested; retain the system
+                        // browser as a fallback on PCs without Chrome.
+                        try
+                        {
+                            var chrome = new ProcessStartInfo("chrome.exe")
+                            {
+                                UseShellExecute = true
+                            };
+                            chrome.ArgumentList.Add(url);
+                            Process.Start(chrome);
+                        }
+                        catch
+                        {
+                            Process.Start(new ProcessStartInfo(url)
+                                { UseShellExecute = true });
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        state.Text = "브라우저를 열지 못했습니다: " +
+                            ex.GetType().Name;
+                    }
+                });
             };
             string token = await GoogleDirectBrowserAuth.AuthorizeAsync(
-                idBox.Text.Trim(), secretBox.Text.Trim(),
-                update, browser, cts.Token);
+                clientId, clientSecret, update, browser, cts.Token);
             await GoogleDriveAuth.SaveNativeBrowserAuthorizationAsync(
-                profile, token, idBox.Text.Trim(), secretBox.Text.Trim(), cts.Token);
-            // Clear busy BEFORE Close(): FormClosing cancels a close while
-            // OAuth is still running. The token is already persisted here.
+                profile, token, clientId, clientSecret, cts.Token);
             busy = false;
             DialogResult = DialogResult.OK;
             Close();
         }
-        catch (OperationCanceledException) { state.Text = "인증이 취소되었습니다."; }
-        catch (Exception ex) {
-            state.Text = "인증에 실패했습니다. OAuth 설정이나 로그인 승인을 확인하세요.";
-            MessageBox.Show(this, ex.Message, "Google Drive 인증 오류",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        catch (OperationCanceledException)
+        {
+            state.Text = "Google 계정 연결이 취소됐습니다.";
         }
-        finally {
+        catch (Exception ex)
+        {
+            state.Text = "Google 인증에 실패했습니다. 다시 시도하세요.";
+            AppStore.Log("GOOGLE_BROWSER_AUTH_FAILED type=" +
+                ex.GetType().Name);
+            MessageBox.Show(this,
+                "Chrome에서 Google 계정 승인에 실패했습니다." +
+                "\n오류 분류: " + ex.GetType().Name,
+                "Google Drive 연결 오류", MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
             busy = false;
             RefreshLoginAvailability();
-            if (cts.IsCancellationRequested) { DialogResult = DialogResult.Cancel; Close(); }
+            if (cts.IsCancellationRequested && !IsDisposed)
+            {
+                DialogResult = DialogResult.Cancel;
+                Close();
+            }
         }
     }
 }

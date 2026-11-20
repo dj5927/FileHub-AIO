@@ -465,6 +465,58 @@ internal static class Program
             }
             return;
         }
+        if (args.Contains("--google-publisher-oauth-policy-test",
+                StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (!GoogleOAuthClientFile.TryReadPackagedClient(
+                    out var id, out var secret))
+                    throw new InvalidDataException(
+                        "Publisher Google Desktop OAuth client is missing");
+                GoogleOAuthClientFile.ValidateDesktopCredentials(id, secret);
+                Console.WriteLine("GOOGLE_PUBLISHER_OAUTH_PACKAGED_POLICY_PASS");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("GOOGLE_PUBLISHER_OAUTH_PACKAGED_POLICY_FAILED " +
+                    ex.GetType().Name);
+                // WinForms application shutdown can reset ExitCode. A
+                // packaging gate must fail the CI job deterministically.
+                Environment.Exit(1);
+            }
+            return;
+        }
+        if (args.Contains("--google-login-ui-policy-test",
+                StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var google = new NasProfile
+                {
+                    Id = Guid.NewGuid(), Protocol = "GoogleDrive",
+                    DisplayName = "Google Drive"
+                };
+                using var form = new GoogleDriveLoginDialog(google);
+                if (!form.BrowserOnlyUi ||
+                    form.Controls.Cast<Control>().Any(c =>
+                        c.Text.Contains("Client ID", StringComparison.OrdinalIgnoreCase) ||
+                        c.Text.Contains("Client Secret", StringComparison.OrdinalIgnoreCase) ||
+                        c.Text.Contains("JSON 가져오기", StringComparison.OrdinalIgnoreCase) ||
+                        c.Text.Contains("발급 안내", StringComparison.OrdinalIgnoreCase)) ||
+                    form.PublisherConfigured != form.LoginEnabled)
+                    throw new InvalidOperationException(
+                        "Google login exposed developer credentials or enabled without packaged OAuth");
+                Console.WriteLine("GOOGLE_CHROME_ONLY_LOGIN_NO_USER_OAUTH_FIELDS_PASS");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("GOOGLE_LOGIN_UI_POLICY_FAILED type=" +
+                    ex.GetType().Name);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
         if (args.Length == 3 &&
             args[0].Equals("--google-direct-recovery-export",
                 StringComparison.OrdinalIgnoreCase))

@@ -121,3 +121,32 @@
 - Mandatory future live gates: actual browser grant, first-directory
   latency, one-hour read/reconnect stability, and safe native Office
   overwrite. Never describe these as completed on a fake API test alone.
+
+## Browser-only OAuth UI correction (2026-11-20)
+
+- The user-facing `GoogleDriveLoginDialog` was rewritten: it contains only
+  the Google account-connection action, an explanatory label, a status label,
+  and Cancel. No Client ID, Client Secret, OAuth JSON import, Google Cloud
+  project creation link, or shared-rclone consent appears in this dialog.
+- The app loads publisher-owned Desktop OAuth configuration from its packaged
+  `tools/google-oauth-desktop.json`, or from an existing encrypted native
+  FileHub authorization for reauthorization. User data does not supply the
+  developer identity; missing publisher configuration is explicitly shown
+  as a **packaging error**, with no user action to generate credentials.
+- Browser approval continues to use PKCE and a localhost callback, and
+  direct Google Drive API + WinFsp; no Google rclone fallback.
+- The experimental ZIP must not be published without a real publisher OAuth
+  client. GitHub Actions now consumes a publisher-managed credential secret
+  and fails packaging if absent or malformed. This is an intentional fail-
+  closed gate: no more experimental builds that visibly ask ordinary users
+  to issue Google credentials.
+- `--google-login-ui-policy-test` checks the no-developer-controls contract.
+  `--google-publisher-oauth-policy-test` checks presence/validity of the
+  packaged Desktop OAuth client and refuses release when missing.
+- Google official docs explicitly require an application OAuth identity;
+  OpenList's easy Chrome UX uses its own app/server credentials. Their
+  OAuth client or public broker MUST NOT be silently reused as FileHub.
+- **Outstanding external gate:** a publisher-owned Google OAuth client was
+  not found in this environment or the repository. Therefore no valid live
+  Chrome authentication can be claimed until that credential is supplied
+  through the publisher's deployment channel and tested against Google.

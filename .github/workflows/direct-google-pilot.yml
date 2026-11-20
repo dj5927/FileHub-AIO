@@ -44,6 +44,11 @@ jobs:
               $out -notmatch 'GOOGLE_DIRECT_API_RANGE_READ_AND_NEW_RESUMABLE_UPLOAD_PASS') {
             throw 'Direct Google API/DPAPI/PKCE policy failed: ' + $out
           }
+          $loginUi = & $app --google-login-ui-policy-test 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or
+              $loginUi -notmatch 'GOOGLE_CHROME_ONLY_LOGIN_NO_USER_OAUTH_FIELDS_PASS') {
+            throw 'Google sign-in screen still exposes developer OAuth controls'
+          }
 
       - name: Install pinned official WinFsp driver
         shell: pwsh
@@ -95,6 +100,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          GOOGLE_DESKTOP_OAUTH_JSON_BASE64: ${{ secrets.FILEHUB_GOOGLE_DESKTOP_OAUTH_JSON_BASE64 }}
         run: |
           $ErrorActionPreference = 'Stop'
           $app = Join-Path $env:RUNNER_TEMP 'FileHubGoogleDirectPilot'
@@ -105,6 +111,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Bridge publish failed' }
           New-Item -ItemType Directory -Force -Path (Join-Path $app 'tools') | Out-Null
           Copy-Item -Recurse -Force (Join-Path $bridge '*') (Join-Path $app 'tools')
+          # Publisher creates the Desktop OAuth application once. Regular
+          # users never supply an API key or OAuth JSON. Without the actual
+          # config, publishing a supposedly working Chrome Login is invalid.
+          if ([string]::IsNullOrWhiteSpace($env:GOOGLE_DESKTOP_OAUTH_JSON_BASE64)) {
+            throw 'Publisher OAuth config missing: refusing Google-login ZIP without working Chrome sign-in'
+          }
+          $publisherJson = [Convert]::FromBase64String($env:GOOGLE_DESKTOP_OAUTH_JSON_BASE64)
+          [IO.File]::WriteAllBytes((Join-Path $app 'tools/google-oauth-desktop.json'), $publisherJson)
+          $authCheck = & (Join-Path $app 'FileHubAIO.exe') --google-publisher-oauth-policy-test 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or
+              $authCheck -notmatch 'GOOGLE_PUBLISHER_OAUTH_PACKAGED_POLICY_PASS') {
+            throw 'Publisher Chrome login configuration is invalid; refusing release'
+          }
           # WebDAV/FTP/SFTP and TeraBox still depend on rclone. Google MUST
           # use the direct API only, and must never ship its old patched
           # Google rclone backend as a silent fallback.
