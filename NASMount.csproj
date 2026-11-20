@@ -9,7 +9,7 @@
     <AssemblyName>FileHubAIO</AssemblyName>
     <Product>FileHub AIO</Product>
     <Title>FileHub AIO for Windows</Title>
-    <Version>1.3.111</Version>
+    <Version>1.3.112</Version>
     <ApplicationIcon>assets\NASMountBadge.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>

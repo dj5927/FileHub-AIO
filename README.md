@@ -4,8 +4,8 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 버전과 업데이트
 
-- PC 버전: v1.3.111, 이후 v1.3.112 / v1.3.113...
-- PC 전용 GitHub 릴리즈 태그: pc-v1.3.111 / pc-v1.3.112 ...
+- PC 버전: v1.3.112, 이후 v1.3.113 / v1.3.114...
+- PC 전용 GitHub 릴리즈 태그: pc-v1.3.112 / pc-v1.3.113 ...
 - Android 버전: v0.1.x — Windows 업데이트와 별개로 운영
 - 프로그램 실행 시 트레이 업데이트 알림 / 환경 설정 → PC 업데이트 확인
 - 새 PC 버전을 받으면 GitHub 릴리즈 ZIP SHA-256 검증 → 사용자의 설치 승인 → 원격 드라이브 안전 해제 → 프로그램 업데이트 후 재실행
@@ -13,7 +13,7 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 설치
 
-GitHub Releases에서 FileHub-AIO-PC-1.3.111-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.111을 설치할 수 있습니다.
+GitHub Releases에서 FileHub-AIO-PC-1.3.112-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.112를 설치할 수 있습니다.
 
 업데이트 설치 전에는 Excel/Word 등 열린 문서를 모두 저장하고 닫아야 합니다. 안전하게 해제하지 못한 NAS 드라이브가 있으면 프로그램 교체를 중단합니다. 이전 버전은 사용자 백업 폴더에 보관합니다.
 
@@ -32,6 +32,24 @@ GitHub Actions는 공식 릴리즈 파일과 컴파일된 실행 파일의 SHA-2
 PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj -c Release -r win-x64 --self-contained true -o publish, dotnet publish LockBridge/LockBridge.csproj -c Release -r win-x64 --self-contained true -o bridge 를 순서대로 실행합니다.
 
 두 프로젝트를 컴파일하는 것만으로 전체 배포본이 완성되는 것은 아닙니다. rclone, 확장 엔진, WinFsp 배포 파일은 GitHub Actions에서 공식 릴리즈로부터 수집합니다.
+
+## v1.3.112 Windows NAS 드라이브 EXE 실행 권한 복구
+
+- rclone/WinFsp 기본 파일 권한 0666에는 실행 권한이 없어서,
+  읽기/복사는 정상이어도 Windows에서 NAS의 EXE를 직접 실행하면
+  "네트워크 오류 / 접근 권한 없음" 메시지가 나타납니다.
+- 연결 시 --file-perms 0777을 추가하여 가상 드라이브의 기존
+  읽기/쓰기 기능은 유지하고 Windows 실행 권한을 부여합니다.
+  WebDAV/FTP/SFTP 및 클라우드 연결, 고정/네트워크 모드,
+  WebDAV 잠금 브리지 내부 rclone에도 동일하게 적용합니다.
+- NAS 서버의 ACL이나 저장된 권한, 계정은 변경하지 않습니다.
+  업데이트 후 드라이브를 안전하게 재연결해야 새 권한이 반영됩니다.
+- 테스트용 일회용 WinFsp V: 네트워크 드라이브에 Windows
+  기본 where.exe를 복사하여 기본 0666에서는 접근 거부,
+  0777에서는 실행 정상 종료코드 0을 실제로 재현/검증했습니다.
+  사용자의 NAS 및 프로그램 실행 파일은 건드리지 않았습니다.
+- 회사 AppLocker/WDAC/Defender가 원격 실행을 차단하는 경우
+  별도로 회사 관리자 승인이 필요할 수 있습니다.
 
 ## v1.3.111 Excel 연속 저장 시 자기 변경 오인 방지
 

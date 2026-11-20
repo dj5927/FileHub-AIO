@@ -69,6 +69,42 @@ internal static class Program
             }
             return;
         }
+        if (args.Contains("--winfsp-execute-policy-test", StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                foreach (string protocol in new[] {
+                    "WebDAV", "FTP", "SFTP", "GoogleDrive", "TeraBox", "MyBox"
+                })
+                {
+                    foreach (bool fixedMode in new[] { false, true })
+                    {
+                        var profile = new NasProfile {
+                            Protocol = protocol, UseFixedDriveMode = fixedMode
+                        };
+                        var mount = RemoteMount.WinFspPresentationArgs(profile);
+                        if (!mount.Take(2).SequenceEqual(new[] {
+                            "--file-perms", "0777"
+                        }) || mount.Count(value => value == "--file-perms") != 1)
+                            throw new InvalidOperationException(
+                                "Windows EXE launch permission missing: " +
+                                protocol + " fixedMode=" + fixedMode);
+                    }
+                }
+                var bridge = RemoteMount.WinFspPresentationArgs(new NasProfile {
+                    Protocol = "WebDAV", UseLockBridge = true
+                });
+                if (!bridge.Take(2).SequenceEqual(new[] { "--file-perms", "0777" }))
+                    throw new InvalidOperationException(
+                        "LockBridge underlying mount lacks EXE permission");
+                Console.WriteLine("WINFSP_EXE_EXECUTE_PERMISSION_ALL_PROVIDERS_PASS");
+            }
+            catch (Exception ex) {
+                Console.Error.WriteLine("WINFSP_EXE_PERMISSION_POLICY_FAILED " + ex);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
         if (args.Length == 2 &&
             args[0].Equals("--apply-pc-update", StringComparison.OrdinalIgnoreCase))
         {
@@ -1826,10 +1862,15 @@ internal static class SelfTest
                     mountArgs.Contains("--network-mode"));
                 Verify(cloud + " actual mount command owns exact UNC share",
                     mountArgs.Last() == MountPresentation.RcloneNetworkVolume(legacyCloud));
+                Verify(cloud + " allows launching EXE on mounted WinFsp drive",
+                    mountArgs.Count(x => x == "--file-perms") == 1 &&
+                    mountArgs.SkipWhile(x => x != "--file-perms")
+                        .Skip(1).FirstOrDefault() == "0777");
                 legacyCloud.UseFixedDriveMode = true;
                 var safeArgs = RemoteMount.WinFspPresentationArgs(legacyCloud);
                 Verify(cloud + " optional fixed mode omits UNC",
                     safeArgs.SequenceEqual(new[] {
+                        "--file-perms", "0777",
                         "--volname", legacyCloud.DisplayName
                     }));
             }
@@ -1840,6 +1881,12 @@ internal static class SelfTest
             Verify("existing NAS network presentation unchanged",
                 nasArgs.Contains("--network-mode") &&
                 nasArgs.Last() == MountPresentation.RcloneNetworkVolume(preservedNasNetwork));
+            Verify("NAS WebDAV executable permissions include X",
+                nasArgs.Take(2).SequenceEqual(new[] { "--file-perms", "0777" }));
+            Verify("NAS LockBridge inner rclone also allows launching EXE",
+                RemoteMount.WinFspPresentationArgs(new NasProfile {
+                    Protocol = "WebDAV", UseLockBridge = true
+                }).Take(2).SequenceEqual(new[] { "--file-perms", "0777" }));
             Verify("Google Drive fixed fallback detected only when selected",
                 RemoteMount.UsesStableCloudFixedMode(new NasProfile {
                     Protocol = "GoogleDrive", UseFixedDriveMode = true

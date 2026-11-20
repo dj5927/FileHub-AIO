@@ -772,7 +772,15 @@ internal static class RemoteMount
     // network flag. For fixed fallback emit neither, so no ghost server.
     internal static IReadOnlyList<string> WinFspPresentationArgs(NasProfile p)
     {
-        var output = new List<string>();
+        // rclone's Windows/WinFsp default --file-perms 0666 omits the
+        // executable bit. A NAS EXE is then readable and can be copied but
+        // CreateProcess from the mounted drive fails ACCESS_DENIED.
+        // Preserve existing 0666 read/write semantics while adding execute
+        // permission for the Windows ACL projection (not NAS server ACL).
+        // Use this on both direct network mounts and the hidden rclone
+        // backend behind LockBridge so outer passthrough inherits an
+        // executable file security descriptor as well.
+        var output = new List<string> { "--file-perms", "0777" };
         bool network = UsesNetworkDriveMode(p);
         if (network) output.Add("--network-mode");
         output.Add("--volname");
