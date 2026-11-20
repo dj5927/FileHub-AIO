@@ -1,6 +1,7 @@
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
+using System.Runtime.InteropServices;
 
 namespace NASMount;
 
@@ -9,6 +10,155 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "--direct-webdav-routing-policy-test")
+        {
+            try
+            {
+                var webdav = new NasProfile { Protocol = "WebDAV",
+                    UseLockBridge = true, AllowUnprotectedWrites = false };
+                if (!RemoteMount.UsesDirectWebDav(webdav))
+                    throw new IOException("Standard WebDAV must select direct WinFsp");
+                webdav.UseLockBridge = false;
+                webdav.AllowUnprotectedWrites = false;
+                if (!RemoteMount.UsesDirectWebDav(webdav))
+                    throw new IOException("Read-only WebDAV must select direct WinFsp");
+                webdav.UseNativeWebDavLocks = true;
+                if (RemoteMount.UsesDirectWebDav(webdav))
+                    throw new IOException("Explicit native RFC-lock gateway must retain its original path");
+                foreach (var provider in new[] { "SFTP", "FTP", "GoogleDrive", "TeraBox", "OneDrive", "MyBox" })
+                {
+                    if (RemoteMount.UsesDirectWebDav(new NasProfile { Protocol = provider }))
+                        throw new IOException("Non-WebDAV backend was switched unexpectedly: " + provider);
+                }
+                Console.WriteLine("DIRECT_WEBDAV_ONLY_PROVIDER_ROUTING_POLICY_PASS");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("DIRECT_WEBDAV_ROUTING_POLICY_FAIL " + ex);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
+        if (args.Length == 2 && args[0] == "--direct-webdav-gui-managed-flow-lab")
+        {
+            try
+            {
+                if (!int.TryParse(args[1], out int port) || port is < 1024 or > 65535)
+                    throw new ArgumentException("Invalid loopback WebDAV port");
+                string? letter = Enumerable.Range(0, 21)
+                    .Select(i => ((char)('Z' - i)).ToString())
+                    .FirstOrDefault(x => !Environment.GetLogicalDrives().Any(d =>
+                        d.StartsWith(x + ":", StringComparison.OrdinalIgnoreCase)));
+                if (letter is null) throw new IOException("No available test drive letter");
+                var profile = new NasProfile {
+                    Id = Guid.NewGuid(), Host = "127.0.0.1", Port = port,
+                    Protocol = "WebDAV", Letter = letter, DisplayName = "OneWinFspLab",
+                    UseLockBridge = true, IsAnonymous = true, WebDavUseHttp = true
+                };
+                Environment.SetEnvironmentVariable("NASMOUNT_LAB_DIRECT_MANAGED", "1");
+                try
+                {
+                    if (!RemoteMount.UsesDirectWebDav(profile))
+                        throw new IOException("Default WebDAV did not select native engine");
+                    var result = RemoteMount.Connect(profile, "").GetAwaiter().GetResult();
+                    if (!result.Success) throw new IOException("GUI managed connect: " + result.Message);
+                    Console.WriteLine("DIRECT_GUI_CONNECT_BUTTON_ROUTE_PASS");
+                    var status = RemoteMount.CheckMountedHealthAsync(profile).GetAwaiter().GetResult();
+                    if (!status.Success) throw new IOException("Direct GUI mount health failed");
+                    Console.WriteLine("DIRECT_GUI_MOUNT_HEALTH_PIPE_PASS");
+                    string path = letter + @":\filehub-gui-rounds.txt";
+                    for (int n = 1; n <= 3; n++)
+                    {
+                        File.WriteAllText(path, "FileHub round " + n);
+                        Console.WriteLine("DIRECT_GUI_SAVED_ROUND_" + n + "_PASS");
+                    }
+                    string windowsExe = Path.Combine(Environment.GetFolderPath(
+                        Environment.SpecialFolder.Windows), "System32", "where.exe");
+                    string mappedExe = letter + @":\DirectDownloadTests.exe";
+                    File.Copy(windowsExe, mappedExe);
+                    if (!System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+                        System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(windowsExe)),
+                        System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(mappedExe))))
+                        throw new IOException("Direct WinFsp EXE bytes differ from source");
+                    var timer = System.Diagnostics.Stopwatch.StartNew();
+                    _ = System.Diagnostics.FileVersionInfo.GetVersionInfo(mappedExe);
+                    Console.WriteLine("DIRECT_GUI_NATIVE_EXE_ICON_VERSION_MS=" + timer.ElapsedMilliseconds);
+                    using (var app = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                        mappedExe, "/?") { UseShellExecute = false, CreateNoWindow = true,
+                            RedirectStandardOutput = true, RedirectStandardError = true }) ??
+                        throw new IOException("Windows CreateProcess on mapped EXE failed"))
+                    {
+                        if (!app.WaitForExit(14000) || app.ExitCode != 0)
+                            throw new IOException("Windows mapped EXE launch failed or timed out");
+                    }
+                    Console.WriteLine("DIRECT_GUI_MAPPED_EXE_ACTUAL_EXECUTION_PASS");
+                    object? excelObject = null;
+                    object? workbookObject = null;
+                    try
+                    {
+                        excelObject = Activator.CreateInstance(
+                            Type.GetTypeFromProgID("Excel.Application") ??
+                            throw new IOException("Excel COM is not installed"));
+                        dynamic excel = excelObject!;
+                        excel.Visible = false;
+                        excel.DisplayAlerts = false;
+                        dynamic workbook = excel.Workbooks.Add();
+                        workbookObject = workbook;
+                        workbook.Worksheets.Item(1).Cells.Item(2, 2).Value2 = "FIRST";
+                        workbook.SaveAs(letter + @":\FileHubGuiActual.xlsx", 51);
+                        Console.WriteLine("DIRECT_GUI_REAL_EXCEL_FIRST_SAVE_PASS");
+                        for (int n = 2; n <= 3; n++)
+                        {
+                            workbook.Worksheets.Item(1).Cells.Item(2, 2).Value2 =
+                                "SAVE_" + n;
+                            workbook.Save();
+                            Console.WriteLine("DIRECT_GUI_REAL_EXCEL_SAVE_" + n + "_PASS");
+                        }
+                        workbook.Close(false);
+                        Marshal.FinalReleaseComObject(workbookObject!);
+                        workbookObject = null;
+                        excel.Quit();
+                        Marshal.FinalReleaseComObject(excelObject);
+                        excelObject = null;
+                    }
+                    finally
+                    {
+                        if (workbookObject is not null)
+                        {
+                            try { ((dynamic)workbookObject).Close(false); } catch { }
+                            Marshal.FinalReleaseComObject(workbookObject);
+                        }
+                        if (excelObject is not null)
+                        {
+                            try { ((dynamic)excelObject).Quit(); } catch { }
+                            Marshal.FinalReleaseComObject(excelObject);
+                        }
+                    }
+                    OperationResult pending = OperationResult.Fail("Still uploading");
+                    for (int retry = 0; retry < 50; retry++)
+                    {
+                        pending = RemoteMount.GetTransferStatus(profile).GetAwaiter().GetResult();
+                        if (pending.Success) break;
+                        // WinFsp may defer Cleanup/Close briefly after the
+                        // application's File.WriteAllText has returned.
+                        Thread.Sleep(200);
+                    }
+                    if (!pending.Success)
+                        throw new IOException("GUI upload status unsafe: " + pending.Message);
+                    var disconnected = RemoteMount.Disconnect(profile).GetAwaiter().GetResult();
+                    if (!disconnected.Success) throw new IOException("GUI Disconnect: " + disconnected.Message);
+                    Console.WriteLine("DIRECT_GUI_DISCONNECT_BUTTON_ROUTE_PASS");
+                    Console.WriteLine("DIRECT_GUI_NATIVE_WEBDAV_CONNECT_SAVE_DISCONNECT_PASS");
+                }
+                finally { Environment.SetEnvironmentVariable("NASMOUNT_LAB_DIRECT_MANAGED", null); }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("DIRECT_GUI_NATIVE_WEBDAV_LAB_FAILED " + ex);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
         // Private, isolated crash-recovery test child. This branch never
         // opens app settings, network sessions, WinFsp, or a window.
         if (args.Length == 1 &&

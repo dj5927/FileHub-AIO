@@ -22,6 +22,28 @@ internal static class Program
     {
         try
         {
+            if (args.Length == 4 && args[0] == "--direct-webdav-managed")
+            {
+                if (!Guid.TryParse(args[1], out var managedId) ||
+                    args[3] is not ("write" or "read"))
+                    throw new ArgumentException("Invalid FileHub direct WebDAV manager request");
+                return ManagedDirectWebDavHost.Run(managedId,
+                    args[2].ToUpperInvariant(), args[3] == "write");
+            }
+            if (args.Length == 5 && args[0] == "--direct-webdav-managed-loopback-lab")
+            {
+                if (!int.TryParse(args[1], out int loopbackPort) ||
+                    loopbackPort is < 1024 or > 65535 ||
+                    !Guid.TryParse(args[4], out Guid loopbackId) ||
+                    args[3] is not ("write" or "read"))
+                    throw new ArgumentException("Invalid loopback-managed WinFsp test parameters");
+                var lab = new NasProfile { Protocol = "WebDAV", Host = "127.0.0.1",
+                    Port = loopbackPort, Id = loopbackId,
+                    DisplayName = "FileHub Lab", Letter = args[2].TrimEnd(':'),
+                    WebDavUseHttp = true, IsAnonymous = true, UseLockBridge = true };
+                return ManagedDirectWebDavHost.Run(loopbackId,
+                    args[2].ToUpperInvariant(), args[3] == "write", lab);
+            }
             if (args.Length == 3 && (args[0] == "--direct-webdav-profile-readonly-pilot" ||
                                      args[0] == "--direct-webdav-profile-writable-pilot"))
             {

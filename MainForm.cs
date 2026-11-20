@@ -92,7 +92,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.116 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.117 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -1690,6 +1690,24 @@ internal sealed partial class MainForm : Form
     {
         var p = Selected();
         if (p is null || p.Protocol != "WebDAV") return;
+        if (RemoteMount.UsesDirectWebDav(p))
+        {
+            var state = IsConnected(p)
+                ? await RemoteMount.CheckPersistentMount(p)
+                : OperationResult.Fail("현재 WebDAV 드라이브가 연결되어 있지 않습니다.");
+            string mode = p.UseLockBridge || p.AllowUnprotectedWrites
+                ? "서버 조건부 저장 및 문서 잠금 검증 모드"
+                : "읽기 전용 모드";
+            MessageBox.Show(this,
+                "FileHub 전용 WebDAV 엔진 (단일 WinFsp)\n" +
+                "rclone 중간 마운트 없음\n연결 방식: " + mode + "\n\n" +
+                state.Message + "\n\n" +
+                "서버가 안전한 저장·잠금 기능을 지원하지 않으면 " +
+                "무단 덮어쓰기를 허용하지 않습니다.",
+                "WebDAV 연결 및 잠금 상태", MessageBoxButtons.OK,
+                state.Success ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            return;
+        }
         string message;
         if (!p.UseLockBridge)
         {

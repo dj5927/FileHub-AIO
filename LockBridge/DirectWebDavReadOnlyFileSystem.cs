@@ -26,6 +26,9 @@ internal class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposable
     private FileSystemHost? _host;
     private System.Threading.Timer? _watchTimer;
     private int _polling;
+    private int _activeFileHandles;
+    internal int ActiveHandles => Volatile.Read(ref _activeFileHandles);
+    protected void RegisterOpenHandle() => Interlocked.Increment(ref _activeFileHandles);
 
     private sealed class DirectoryCursor
     {
@@ -208,7 +211,14 @@ internal class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposable
         fileNode = stat;
         fileDesc = stat;
         info = DescribeEntry(stat);
+        RegisterOpenHandle();
         return Success;
+    }
+
+    public override void Close(object fileNode, object fileDesc)
+    {
+        if (fileDesc is DirectWebDavReadOnlyBackend.Entry)
+            Interlocked.Decrement(ref _activeFileHandles);
     }
 
     public override int GetFileInfo(object fileNode, object fileDesc, out FileInfo info)

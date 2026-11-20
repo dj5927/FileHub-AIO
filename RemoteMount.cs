@@ -16,7 +16,8 @@ internal static class RemoteMount
     private sealed record Instance(Process Process, int RcPort, string RcUser,
         string RcPassword, Process? Bridge, MyBoxBetaGateway? MyBoxGateway = null,
         LegacyCharsetGateway? LegacyGateway = null,
-        NativeWebDavGateway? NativeGateway = null);
+        NativeWebDavGateway? NativeGateway = null,
+        bool DirectWebDav = false, Guid? DirectProfileId = null);
     private static readonly ConcurrentDictionary<Guid,string> IntegrityAlerts = new();
     internal static string? GetIntegrityAlert(Guid id) =>
         IntegrityAlerts.TryGetValue(id, out var message) ? message : null;
@@ -35,6 +36,180 @@ internal static class RemoteMount
     internal static void RequestEmergency(Guid id) => EmergencyRequested[id] = 1;
     internal static void ClearEmergency(Guid id) => EmergencyRequested.TryRemove(id, out _);
     internal static bool EmergencyPending(Guid id) => EmergencyRequested.ContainsKey(id);
+
+    // WebDAV now runs as a single WinFsp filesystem with its own HTTP
+    // provider and disk journal. Legacy rclone remains for other protocols
+    // until they have an equally complete, verified native backend.
+    internal static bool UsesDirectWebDav(NasProfile profile) =>
+        profile.Protocol == "WebDAV" && !profile.UseNativeWebDavLocks;
+
+    private static async Task<string> DirectCommandAsync(Guid id, string command,
+        CancellationToken cancellationToken = default)
+    {
+        using var pipe = new NamedPipeClientStream(".",
+            "NASMountBridge_" + id.ToString("N"), PipeDirection.InOut,
+            PipeOptions.Asynchronous);
+        await pipe.ConnectAsync(3500, cancellationToken);
+        using var reader = new StreamReader(pipe, leaveOpen: true);
+        using var writer = new StreamWriter(pipe, leaveOpen: true) { AutoFlush = true };
+        await writer.WriteLineAsync(command);
+        return await reader.ReadLineAsync(cancellationToken) ?? "";
+    }
+
+    private static async Task<OperationResult> ConnectDirectWebDavAsync(
+        NasProfile p, string? password)
+    {
+        if (!HasWinFsp)
+            return OperationResult.Fail("WinFsp driver is not installed.");
+        string service = Path.Combine(AppContext.BaseDirectory,
+            "tools", "NASMountLockBridge.exe");
+        if (!File.Exists(service))
+            return OperationResult.Fail("FileHub direct WebDAV engine is missing from the installation.");
+        bool writable = p.UseLockBridge || p.AllowUnprotectedWrites;
+        if (EmergencyPending(p.Id))
+            return OperationResult.Fail("Drive connection was cancelled.");
+        var start = new ProcessStartInfo(service)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        bool loopbackIntegration =
+            Environment.GetEnvironmentVariable("NASMOUNT_LAB_DIRECT_MANAGED") == "1" &&
+            p.Host == "127.0.0.1" && p.WebDavUseHttp && p.IsAnonymous;
+        string[] command = loopbackIntegration
+            ? ["--direct-webdav-managed-loopback-lab", p.Port.ToString(),
+                p.Letter.ToUpperInvariant() + ":", writable ? "write" : "read",
+                p.Id.ToString("D")]
+            : ["--direct-webdav-managed", p.Id.ToString("D"),
+                p.Letter.ToUpperInvariant() + ":", writable ? "write" : "read"];
+        foreach (string argument in command)
+            start.ArgumentList.Add(argument);
+        // The password never appears in the child argv, UI status or logs.
+        start.Environment["NASMOUNT_BRIDGE_PASSWORD"] =
+            password ?? WindowsCredentials.Read(p.Id) ?? "";
+        var ready = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var messages = new ConcurrentQueue<string>();
+        // Keep Process alive in the Running table until a verified unmount.
+        var process = new Process { StartInfo = start, EnableRaisingEvents = true };
+        try
+        {
+            if (!process.Start())
+                return OperationResult.Fail("Could not start FileHub direct WebDAV engine.");
+            process.OutputDataReceived += (_, e) =>
+            {
+                if (e.Data is null) return;
+                if (e.Data.StartsWith("DIRECT_WEBDAV_MANAGED_READY ",
+                        StringComparison.Ordinal)) ready.TrySetResult(true);
+                AppStore.Log("DIRECT_WEBDAV_ENGINE " + e.Data);
+            };
+            process.ErrorDataReceived += (_, e) =>
+            {
+                if (e.Data is null) return;
+                // Never persist a full HTTP request URI or account secret.
+                string category = e.Data.Contains("401") ? "AUTH_401" :
+                    e.Data.Contains("403") ? "PERMISSION_403" :
+                    e.Data.Contains("If-Match", StringComparison.OrdinalIgnoreCase)
+                        ? "CONDITIONAL_WRITE_UNSUPPORTED" :
+                    e.Data.Contains("MKCOL", StringComparison.OrdinalIgnoreCase)
+                        ? "EXCLUSIVE_LOCK_UNSUPPORTED" : "PROVIDER_ERROR";
+                messages.Enqueue(category);
+                AppStore.Log("DIRECT_WEBDAV_ENGINE_ERROR category=" + category);
+            };
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            using var startupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            try
+            {
+                while (!ready.Task.IsCompleted && !startupTimeout.IsCancellationRequested)
+                {
+                    if (process.HasExited) break;
+                    if (EmergencyPending(p.Id))
+                        return OperationResult.Fail("Connection cancelled before mount became ready.");
+                    await Task.Delay(150, startupTimeout.Token);
+                }
+            }
+            catch (OperationCanceledException) { }
+            if (!ready.Task.IsCompleted)
+            {
+                if (!process.HasExited)
+                {
+                    lock (Guard) Running[p.Id] = new Instance(process, 0, "", "", null,
+                        DirectWebDav: true, DirectProfileId: p.Id);
+                    return OperationResult.Fail("Direct WebDAV connection was not ready within 45 seconds; " +
+                        "the engine is retained for safe diagnosis/disconnect.");
+                }
+                process.Dispose();
+                return OperationResult.Fail("Direct WebDAV server did not authorize a safe mount (" +
+                    string.Join(",", messages.Distinct().Take(3)) +
+                    "). The server must enforce conditional writes and exclusive locks.");
+            }
+            lock (Guard) Running[p.Id] = new Instance(process, 0, "", "", null,
+                DirectWebDav: true, DirectProfileId: p.Id);
+            // The normal GUI verifies the mounted Explorer root only once.
+            var checkedRoot = await VerifiedThenOk(p,
+                "FileHub direct WebDAV connected using one WinFsp filesystem (" +
+                (writable ? "protected write" : "read-only") + ").");
+            return checkedRoot;
+        }
+        catch (Exception ex)
+        {
+            AppStore.Log("DIRECT_WEBDAV_CONNECT_FAIL " + ex.GetType().Name);
+            return OperationResult.Fail("Direct WebDAV connection failed: " + ex.GetType().Name);
+        }
+    }
+    private static async Task<OperationResult> DisconnectDirectWebDavAsync(
+        NasProfile profile, Instance instance)
+    {
+        if (instance.Process.HasExited)
+        {
+            var residue = NetworkDriveResidueCleaner.AfterSafeStop(profile);
+            if (!residue.Success) return residue;
+            if (!await WaitForLetterRelease(profile.Letter))
+                return OperationResult.Fail("WinFsp has not released the drive letter.");
+            lock (Guard)
+            {
+                Running.Remove(profile.Id);
+                BrowseVerified.Remove(profile.Id);
+            }
+            instance.Process.Dispose();
+            return OperationResult.Ok("Direct WebDAV drive was already stopped and cleaned.");
+        }
+        if (EmergencyPending(profile.Id))
+            return OperationResult.Fail("An emergency stop was requested; safe disconnect cancelled.");
+        try
+        {
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(9));
+            string reply = await DirectCommandAsync(profile.Id, "QUIT", limit.Token);
+            if (reply != "OK")
+                return OperationResult.Fail("Cannot disconnect while files, Excel locks or recovery " +
+                    "journals remain active. Close documents or resolve pending files. " + reply);
+            await instance.Process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+            if (!await WaitForLetterRelease(profile.Letter))
+                return OperationResult.Fail("Direct WinFsp exited but Explorer still shows the drive; " +
+                    "pending data was not deleted.");
+            var cleanup = NetworkDriveResidueCleaner.AfterSafeStop(profile);
+            if (!cleanup.Success) return cleanup;
+            lock (Guard)
+            {
+                Running.Remove(profile.Id);
+                BrowseVerified.Remove(profile.Id);
+            }
+            instance.Process.Dispose();
+            AppStore.Log("DIRECT_WEBDAV_DISCONNECT_VERIFIED id=" + profile.Id);
+            return OperationResult.Ok("Direct WebDAV safely disconnected.");
+        }
+        catch (Exception ex)
+        {
+            AppStore.Log("DIRECT_WEBDAV_DISCONNECT_DEFERRED id=" + profile.Id +
+                " reason=" + ex.GetType().Name);
+            return OperationResult.Fail("Safe disconnect unverified; mount and cached data retained (" +
+                ex.GetType().Name + ").");
+        }
+    }
+
     // A mountpoint's existence alone does not prove Explorer can open it.
     private static readonly HashSet<Guid> BrowseVerified = [];
     // Never-usable startup processes may be terminated immediately.
@@ -121,6 +296,24 @@ internal static class RemoteMount
     {
         Instance? instance;
         lock (Guard) Running.TryGetValue(profile.Id, out instance);
+        if (instance is { DirectWebDav: true })
+        {
+            if (instance.Process.HasExited)
+                return OperationResult.Fail("Direct WebDAV mount process exited.");
+            try
+            {
+                using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+                string response = await DirectCommandAsync(profile.Id, "PING", limit.Token);
+                if (!response.StartsWith("READY ", StringComparison.Ordinal))
+                    return OperationResult.Fail("Direct WebDAV mount did not respond.");
+                LastHealthy[profile.Id] = DateTime.UtcNow;
+                return OperationResult.Ok("Direct WebDAV engine is running.");
+            }
+            catch (Exception ex)
+            {
+                return OperationResult.Fail("Direct WebDAV health check: " + ex.GetType().Name);
+            }
+        }
         if (instance is null || instance.Process.HasExited)
             return OperationResult.Fail("마운트 프로세스가 종료됐습니다.");
         try
@@ -222,6 +415,15 @@ internal static class RemoteMount
     {
         Instance? instance;
         lock (Guard) Running.TryGetValue(profile.Id, out instance);
+        if (instance is { DirectWebDav: true })
+        {
+            var live = await VerifyMountedBackendHealth(profile);
+            if (!live.Success) return live;
+            string state = await DirectCommandAsync(profile.Id, "STATUS");
+            return OperationResult.Ok("FileHub dedicated WebDAV service (one WinFsp layer)\n" +
+                "PID: " + instance.Process.Id + "\nDrive: " + profile.Letter +
+                ":\n" + state + "\nNo rclone intermediary is used.");
+        }
         if (instance is null)
             return OperationResult.Fail("이 앱이 시작한 마운트가 없습니다. 이전 실행 파일의 드라이브는 별도로 확인해야 합니다.");
         if (instance.Process.HasExited)
@@ -588,6 +790,19 @@ internal static class RemoteMount
         CancellationToken cancellationToken = default, int attempts = 1,
         int timeoutSeconds = 6)
     {
+        if (instance.DirectWebDav)
+        {
+            if (instance.DirectProfileId is not Guid profileId)
+                throw new IOException("Direct WebDAV managed profile ID missing.");
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+            string status = await DirectCommandAsync(profileId, "STATUS", timeout.Token);
+            if (!status.StartsWith("READY ", StringComparison.Ordinal))
+                throw new IOException("Direct WebDAV status channel is unavailable.");
+            bool safe = status.EndsWith(" SAFE", StringComparison.Ordinal);
+            return safe ? new UploadState(0, 0, 0, false)
+                : new UploadState(1, 0, 0, false);
+        }
         // rclone's local control channel sometimes fails to respond while
         // its VFS is busy serving Explorer. Do not confuse a SINGLE 6-second
         // probe timeout with proof that uploads are clear or the volume is
@@ -1178,6 +1393,8 @@ internal static class RemoteMount
         if (Environment.GetLogicalDrives().Any(d =>
                 d.StartsWith(p.Letter.ToUpperInvariant() + ":", StringComparison.OrdinalIgnoreCase)))
             return OperationResult.Fail(p.Letter + ": 드라이브가 다른 프로그램에서 사용 중입니다.");
+        if (UsesDirectWebDav(p))
+            return await ConnectDirectWebDavAsync(p, password);
         string? exe = BackendExecutable(p);
         if (exe == null)
             return OperationResult.Fail("rclone.exe가 없습니다. 프로그램 폴더의 tools\\rclone.exe에 배치하세요.");
@@ -1677,6 +1894,10 @@ internal static class RemoteMount
 
     public static async Task<OperationResult> Disconnect(NasProfile p)
     {
+        Instance? directInstance;
+        lock (Guard) Running.TryGetValue(p.Id, out directInstance);
+        if (directInstance is { DirectWebDav: true })
+            return await DisconnectDirectWebDavAsync(p, directInstance);
         if (EmergencyPending(p.Id))
             return OperationResult.Fail("비상 중단이 요청됐으므로 일반 안전 해제를 취소합니다.");
         var stopTimer = Stopwatch.StartNew();

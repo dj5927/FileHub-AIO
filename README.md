@@ -4,8 +4,8 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 버전과 업데이트
 
-- PC 버전: v1.3.116, 이후 v1.3.117 / v1.3.118...
-- PC 전용 GitHub 릴리즈 태그: pc-v1.3.116 / pc-v1.3.117 ...
+- PC 버전: v1.3.117, 이후 v1.3.117 / v1.3.118...
+- PC 전용 GitHub 릴리즈 태그: pc-v1.3.117 / pc-v1.3.117 ...
 - Android 버전: v0.1.x — Windows 업데이트와 별개로 운영
 - 프로그램 실행 시 트레이 업데이트 알림 / 환경 설정 → PC 업데이트 확인
 - 새 PC 버전을 받으면 GitHub 릴리즈 ZIP SHA-256 검증 → 사용자의 설치 승인 → 원격 드라이브 안전 해제 → 프로그램 업데이트 후 재실행
@@ -13,7 +13,7 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 설치
 
-GitHub Releases에서 FileHub-AIO-PC-1.3.116-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.116를 설치할 수 있습니다.
+GitHub Releases에서 FileHub-AIO-PC-1.3.117-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.117를 설치할 수 있습니다.
 
 업데이트 설치 전에는 Excel/Word 등 열린 문서를 모두 저장하고 닫아야 합니다. 안전하게 해제하지 못한 NAS 드라이브가 있으면 프로그램 교체를 중단합니다. 이전 버전은 사용자 백업 폴더에 보관합니다.
 
@@ -33,6 +33,16 @@ PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj 
 
 두 프로젝트를 컴파일하는 것만으로 전체 배포본이 완성되는 것은 아닙니다. rclone, 확장 엔진, WinFsp 배포 파일은 GitHub Actions에서 공식 릴리즈로부터 수집합니다.
 
+## v1.3.117 Dedicated single-WinFsp WebDAV engine
+
+- WebDAV mounts now use a dedicated FileHub WinFsp filesystem and direct HTTP provider, not two stacked WinFsp/rclone layers. Existing FTP, SFTP, Google, TeraBox and other backends are unchanged.
+- Standard FileHub Connect/Disconnect and automatic mounting route saved WebDAV profiles into the new engine. The same configuration, Windows credentials, and exact domain/port/share are respected; no vendor-specific host checks.
+- Native EXE/DLL reads and local cache avoid repeated nested filesystem opens. Full ReadDirectory + external-change polling (WinFsp Notify) preserves refreshed folder content.
+- Office handling: conditional WebDAV PUT/MOVE/DELETE, server capability enforcement, exclusive lock ownership probes, repeated Excel saves, local crash journal and conflict-aware replay.
+- Safe Disconnect checks active writable handles, outstanding document leases and uncommitted recovery entries; no forced unmount of dirty writes. FileHub now checks direct-engine health through its local management pipe rather than rclone RC.
+- Local integration QA: regular FileHub app -> managed direct WinFsp -> real EXE launch; Microsoft Excel SaveAs+2 Saves; final XLSX content verified on a separate loopback WebDAV server; safe disconnect. Two-client Office locks and crash/replay conflict tests passed.
+- WebDAV servers that do not enforce conditional writes and exclusive MKCOL are rejected for guarded writable mounts, not silently written to. Real Synology/QNAP NAS performance and compatibility still require user-site verification: saved test profile did not include a recoverable credential.
+- No production client data was modified during the local test suite.
 ## v1.3.116 Fast executable icon/version lookup on WebDAV LockBridge
 
 - Root cause reproduced in an isolated WinFsp-over-rclone loopback lab: Windows PE/icon/version extraction repeatedly probes absent `ko`, `ko-KR`, `en`, and `en-US` `.exe.mui` locale resources. The outer LockBridge forwarded repeated absent-path security queries through the second WinFsp filesystem, taking several seconds per EXE even though actual file reads were fast.

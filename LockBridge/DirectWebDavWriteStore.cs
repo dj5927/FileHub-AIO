@@ -423,6 +423,9 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         return pending.ToArray();
     }
 
+    internal bool HasUncommittedRecovery => PendingRecovery().Any(j =>
+        j.Status is not ("opened" or "committed" or "recovered-verified"));
+
     private bool AlreadyCommittedRemotely(Handle handle)
     {
         // A PUT may have committed before a network failure lost its reply.

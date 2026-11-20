@@ -80,3 +80,17 @@ Windows 보안 입력을 통해 인증할 수 있음.
 3. 개발 PC의 위 3개 QA 로그와 Git 작업 트리 상태 확인
 4. 실제 NAS 계정 인증이 가능해지면 읽기 전용 파일럿부터 테스트
 5. 전체 정식 기능과 안전성 검증 전 `pc/windows`에는 병합하지 않음
+
+## 7. PC v1.3.117 일반 FileHub 연결 통합 (추가 구현)
+
+- WebDAV 기본 연결은 `RemoteMount.Connect` -> `ConnectDirectWebDavAsync` -> `NASMountLockBridge.exe --direct-webdav-managed` 경로로 접속한다. Windows GUI 사용자는 별도 PowerShell 또는 시험 프로그램을 실행하지 않는다.
+- 단일 WinFsp 엔진은 기존 설정 파일·자격 증명을 사용한다. 비밀번호는 자식 프로세스 환경으로 일시 전달하고 프로세스 인수·로그에는 쓰지 않는다. 루트 주소는 사용자가 설정한 WebDAV URL 그대로 사용한다.
+- `RemoteMount.VerifyMountedBackendHealth`, `GetTransferStatus`, `CheckPersistentMount`, `Disconnect`가 기존 rclone RC 대신 엔진 이름 지정 파이프 `PING/STATUS/QUIT`를 사용한다.
+- 활성 편집 파일, 문서 잠금, 미전송 복구본이 있으면 `QUIT` 거부. 읽기 전용 메타데이터 핸들만 남은 경우는 안전하게 종료한다.
+- 기존 WebDAV 중 서버 기본 RFC4918 LOCK 기능을 명시한 프로필은 기존 경로를 유지한다. SFTP/FTP/Google/TeraBox/OneDrive/MyBox 역시 원래 백엔드를 사용한다.
+- 실제 FileHubAIO.exe 프로세스의 `RemoteMount.Connect` 경로에서 별도 임시 서버 드라이브로 Microsoft Excel `SaveAs` 후 두 차례 추가 `Save` 실행과 NAS 측 최종 XLSX XML `SAVE_3` 검증 성공.
+- 실제 Windows EXE 파일을 WebDAV 드라이브에 복사한 후 원본 SHA-256 검사, Win32 CreateProcess를 통한 직접 실행, 버전 리소스 조회까지 성공.
+- UI 수준의 `Connect`/상태 확인/`Disconnect`, 파일 열린 상태의 안전 종료 거부, 파일 닫힌 후 연결 해제, 기존 PC 업데이트·고스트 정리·Google 정책 회귀 검사 통과.
+- 패키지 생성 대상 버전은 **1.3.117**. 일반 FileHub 앱/전용 WinFsp 엔진을 모두 self-contained publish 후 Google/TeraBox/rclone 엔진과 함께 ZIP 구성한다.
+
+**주의:** 개발 PC의 실제 Synology NAS 프로필에는 기억된 인증 정보가 없어 현장 측정은 불가능했다. 버전 번호가 올라갔다고 실제 NAS 호환성을 증명한 것으로 간주하지 말 것. 파일 안전 정책을 우회해 저장을 강제하지 말 것. 기존 1.3.116 정식 버전은 반드시 복원 가능하도록 보존한다.

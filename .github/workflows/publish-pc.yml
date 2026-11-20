@@ -57,6 +57,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Synology multi-share/path policy test failed' }
           dotnet run --project NASMount.csproj -c Release -- --winfsp-execute-policy-test
           if ($LASTEXITCODE -ne 0) { throw 'WinFsp mounted EXE execution permission regression' }
+          dotnet run --project NASMount.csproj -c Release -- --direct-webdav-routing-policy-test
+          if ($LASTEXITCODE -ne 0) { throw 'Single-WinFsp WebDAV routing regression' }
 
       - name: Build Windows app and lock bridge
         shell: pwsh

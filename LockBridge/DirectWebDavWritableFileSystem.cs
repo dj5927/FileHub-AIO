@@ -21,6 +21,12 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
     private const int EndOfFile = unchecked((int)0xC0000011);
     private readonly DirectWebDavWriteStore _writes;
     private readonly LeaseCoordinator? _leases;
+    private int _activeWriteHandles;
+    internal int ActiveWriteHandles => Volatile.Read(ref _activeWriteHandles);
+    // Explorer may retain read-only metadata handles for icon caching.
+    // Only writers, unfinished uploads and held leases block safe unmount.
+    internal bool CanShutdown => ActiveWriteHandles == 0 &&
+        (_leases?.CanShutdown ?? true) && !_writes.HasUncommittedRecovery;
     private readonly ConcurrentDictionary<string, DirectWebDavReadOnlyBackend.Entry> _overlay =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -153,6 +159,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
                 fileNode = stat;
                 fileDesc = stat;
                 info = DescribeEntry(stat);
+                RegisterOpenHandle();
                 return Success;
             }
             string? lease = AcquireOfficeLease(key);
@@ -167,6 +174,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             fileNode = descriptor;
             fileDesc = descriptor;
             info = Describe(descriptor);
+            Interlocked.Increment(ref _activeWriteHandles);
             return Success;
         }
         catch (Exception ex) when (ex is IOException or ArgumentException)
@@ -195,6 +203,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             fileNode = directory;
             fileDesc = directory;
             info = DescribeEntry(directory);
+            RegisterOpenHandle();
             return Success;
         }
         if (!WriteIntent.IsWrite(grantedAccess))
@@ -216,6 +225,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             fileNode = descriptor;
             fileDesc = descriptor;
             info = Describe(descriptor);
+            Interlocked.Increment(ref _activeWriteHandles);
             return Success;
         }
         catch (Exception ex) when (ex is IOException or ArgumentException)
@@ -449,7 +459,12 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
     {
         if (Environment.GetEnvironmentVariable("FILEHUB_DIRECT_DEBUG") == "1")
             Console.Error.WriteLine("DIRECT_RW_CLOSE type=" + fileDesc?.GetType().Name);
-        if (fileDesc is not WriteDescriptor writer || writer.Closed) return;
+        if (fileDesc is not WriteDescriptor writer)
+        {
+            base.Close(fileNode, fileDesc);
+            return;
+        }
+        if (writer.Closed) return;
         writer.Closed = true;
         try
         {
@@ -467,6 +482,15 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             // failure to upload at Close means the NAS saved this document.
             Failure(ex, "Close");
             try { writer.Session.Dispose(); } catch (IOException) { }
+        }
+        finally
+        {
+            if (writer.LeaseKey is not null)
+            {
+                ReleaseOfficeLease(writer.LeaseKey);
+                writer.LeaseKey = null;
+            }
+            Interlocked.Decrement(ref _activeWriteHandles);
         }
     }
 
