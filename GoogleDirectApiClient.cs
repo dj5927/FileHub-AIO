@@ -293,15 +293,17 @@ internal sealed class GoogleDirectApiClient
             HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
         Interlocked.Exchange(ref _transportFailures, 0);
         if (result.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
-            return [];
+            throw new IOException(
+                "Google file size changed; ranged read rejected rather than returning false EOF");
         // Never serve a 200 full file body for an offset read. This could
         // silently splice the wrong bytes into a Windows application's read.
         if (result.StatusCode != HttpStatusCode.PartialContent &&
             !(result.StatusCode == HttpStatusCode.OK && offset == 0))
             throw new IOException("Google ranged download HTTP " + (int)result.StatusCode);
         if (result.StatusCode == HttpStatusCode.PartialContent &&
-            result.Content.Headers.ContentRange?.From != offset)
-            throw new IOException("Google returned an unexpected Content-Range");
+            (result.Content.Headers.ContentRange?.From != offset ||
+             result.Content.Headers.ContentRange?.To != offset + length - 1))
+            throw new IOException("Google returned a truncated or unexpected Content-Range");
         if (result.Content.Headers.ContentLength > length)
             throw new IOException("Google ignored byte range or returned excess data");
         using var content = await result.Content.ReadAsStreamAsync(cancel);
@@ -315,6 +317,8 @@ internal sealed class GoogleDirectApiClient
                 throw new IOException("Google returned more bytes than requested");
             await limited.WriteAsync(buffer.AsMemory(0, got), cancel);
         }
+        if (limited.Length != length)
+            throw new IOException("Google ranged file read was shorter than requested");
         return limited.ToArray();
         }
         catch (TaskCanceledException ex) when (!cancel.IsCancellationRequested)

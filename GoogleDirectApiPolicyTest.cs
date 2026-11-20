@@ -86,6 +86,30 @@ internal static class GoogleDirectApiPolicyTest
                 { Content = new ByteArrayContent(new byte[100]) };
             }
             if (request.Method == HttpMethod.Get &&
+                request.RequestUri.Query.Contains("alt=media") &&
+                request.RequestUri.AbsolutePath.EndsWith("/files/range_truncated"))
+            {
+                var partial = new HttpResponseMessage(HttpStatusCode.PartialContent)
+                { Content = new ByteArrayContent(Encoding.ASCII.GetBytes("ABC")) };
+                partial.Content.Headers.ContentRange =
+                    new System.Net.Http.Headers.ContentRangeHeaderValue(0, 2, 3);
+                return partial;
+            }
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri.Query.Contains("alt=media") &&
+                request.RequestUri.AbsolutePath.EndsWith("/files/range_shortbody"))
+            {
+                var partial = new HttpResponseMessage(HttpStatusCode.PartialContent)
+                { Content = new ByteArrayContent(Encoding.ASCII.GetBytes("AB")) };
+                partial.Content.Headers.ContentRange =
+                    new System.Net.Http.Headers.ContentRangeHeaderValue(0, 3, 4);
+                return partial;
+            }
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri.Query.Contains("alt=media") &&
+                request.RequestUri.AbsolutePath.EndsWith("/files/range_stale"))
+                return Response(HttpStatusCode.RequestedRangeNotSatisfiable, "{}");
+            if (request.Method == HttpMethod.Get &&
                 request.RequestUri.AbsolutePath.EndsWith("/files/fileA_1") &&
                 !request.RequestUri.Query.Contains("alt=media"))
             {
@@ -251,6 +275,7 @@ internal static class GoogleDirectApiPolicyTest
 
     internal static async Task RunAsync()
     {
+        await GoogleDirectBrowserOAuthPolicyLab.RunAsync();
         using (var slow = new SlowFakeGoogleServer())
         using (var boundedHttp = new HttpClient(slow))
         {
@@ -353,7 +378,18 @@ internal static class GoogleDirectApiPolicyTest
             StringComparison.Ordinal)) { oversizedRejected = true; }
         if (!oversizedRejected)
             throw new InvalidOperationException("Google ignored Range and consumed excess bytes");
+        foreach (string caseName in new[]
+            { "range_truncated", "range_shortbody", "range_stale" })
+        {
+            bool failedClosed = false;
+            try { await api.ReadRangeAsync(caseName, 0, 4); }
+            catch (IOException) { failedClosed = true; }
+            if (!failedClosed)
+                throw new InvalidOperationException(
+                    "Google short/changed file was returned as valid content");
+        }
         Console.WriteLine("GOOGLE_NATIVE_BOUNDED_RANGE_READ_NO_FULL_FILE_BUFFER_PASS");
+        Console.WriteLine("GOOGLE_NATIVE_SHORT_RANGE_AND_STALE_FILE_FAIL_CLOSED_PASS");
         using var uploadBody = new MemoryStream(Encoding.ASCII.GetBytes("DATA1234"));
         var uploaded = await api.UploadNewAsync("root", "new.txt", uploadBody);
         if (uploaded.Id != "pre_new_1" || fake.UploadStarts != 1 ||

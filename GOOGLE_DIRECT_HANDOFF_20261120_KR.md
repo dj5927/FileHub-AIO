@@ -246,3 +246,28 @@ production feature without these gates.
 Do not claim 100% product completion, publish a working-download link,
 or switch stable `pc/windows` until real Chrome consent, sustained live
 read/write, disconnect/reconnect and Office save tests all pass.
+
+## 2026-11-21 continuation: strict ranged-file integrity and truthful OAuth callback
+
+- Google's ranged read implementation now rejects a `416` response, a
+  partial response with an incomplete/unexpected Content-Range, or a body
+  shorter than the requested bytes. These previously risked looking like
+  a normal Windows EOF even while the file was changing remotely.
+  The affected range is NOT returned to WinFsp as valid data.
+- New isolated fake-server test cases: `range_truncated`,
+  `range_shortbody`, `range_stale`. Marker:
+  `GOOGLE_NATIVE_SHORT_RANGE_AND_STALE_FILE_FAIL_CLOSED_PASS`.
+- Chrome loopback callback no longer shows "Google login complete" merely
+  on receiving a code. FileHub exchanges the code for a valid access AND
+  refresh token first, and only then sends the browser's HTTP 200 success
+  confirmation. Invalid-grant exchanges show a failure response.
+- Added fully isolated real-127.0.0.1 callback tests with a fake Google
+  token endpoint: one successful grant and one rejected grant, checking
+  browser status before/after the controlled exchange. Marker:
+  `GOOGLE_BROWSER_LOOPBACK_TOKEN_EXCHANGE_BEFORE_SUCCESS_PASS`.
+- Each loopback callback connection gets a five-second request-line timeout
+  so an unrelated local connection cannot block the Chrome sign-in window.
+- Both main .NET Windows app and native WinFsp bridge pass offline tests;
+  Google live OAuth was not executed because a publisher-owned OAuth Client
+  ID is still absent. The user's existing legacy Google OAuth credentials
+  must NOT be copied, rewritten or treated as a native FileHub login.
