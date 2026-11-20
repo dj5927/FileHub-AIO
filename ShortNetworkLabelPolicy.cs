@@ -1,9 +1,11 @@
 namespace NASMount;
 
 /// <summary>
-/// Regression guard for real WinFsp WebDAV names on a second PC. A short
-/// complete name must be accepted, while a short PREFIX of a longer
-/// name and another profile's NASMount server must be rejected.
+/// Regression guard for real WinFsp WebDAV names on a second PC. WinFsp
+/// may register the live UNC using only the FIRST character of a profile
+/// name (observed on the user's Google drive). Such prefixes must be
+/// accepted ONLY under the exact managed GUID/session server. Foreign
+/// sessions and unrelated profile names must still be rejected.
 /// </summary>
 internal static class ShortNetworkLabelPolicy
 {
@@ -27,9 +29,13 @@ internal static class ShortNetworkLabelPolicy
         Check(ExplorerDriveIcon.IsCurrentMountPointKey(
                 "##NASMount-abcdef12#X", "NASMount-abcdef12", "X"),
             "Exact 1-character share name must match");
-        Check(!ExplorerDriveIcon.IsCurrentMountPointKey(
+        Check(ExplorerDriveIcon.IsCurrentMountPointKey(
                 "##NASMount-46095be6#" + wintec[..1],
                 "NASMount-46095be6", wintec) &&
+              ExplorerDriveIcon.IsCurrentMountPointKey(
+                "##NASMount-abcdef12#Go", "NASMount-abcdef12", "Google Drive"),
+            "Live owned one-character and two-character prefixes must match");
+        Check(
               !ExplorerDriveIcon.IsCurrentMountPointKey(
                 "##NASMount-32d555d9#" + oreum,
                 "NASMount-46095be6", oreum) &&
@@ -37,8 +43,8 @@ internal static class ShortNetworkLabelPolicy
                 "##NASMount-46095be6#" + wintec,
                 "NASMount-46095be6", oreum) &&
               !ExplorerDriveIcon.IsCurrentMountPointKey(
-                "##NASMount-abcdef12#Go", "NASMount-abcdef12", "Google Drive"),
-            "Short partial prefix, foreign session, or wrong share must be rejected");
+                "##RaiDrive-Foreign#Go", "NASMount-abcdef12", "Google Drive"),
+            "Foreign session, other profile, or vendor must still be rejected");
         Console.WriteLine("SHORT_KOREAN_WEBDAV_NETWORK_LABEL_POLICY_PASS");
     }
 }
