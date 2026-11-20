@@ -111,6 +111,15 @@ jobs:
           (Get-FileHash publish/tools/rclone.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content publish/tools/rclone.sha256 -Encoding ascii
           (Get-FileHash publish/tools/rclone-terabox.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content publish/tools/rclone-terabox.sha256 -Encoding ascii
 
+      - name: Guarded WebDAV save, conflict and crash-recovery integration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:FILEHUB_LAB_RCLONE = (Resolve-Path publish/tools/rclone.exe).Path
+          $env:FILEHUB_TEST_PUBLISHED_BRIDGE = (Resolve-Path bridge/NASMountLockBridge.exe).Path
+          & ./tests/direct_webdav_write_store_lab.ps1 -Port 18784
+          if (-not $?) { throw 'Guarded WebDAV crash recovery and cross-PC lease regression' }
+
       - name: Check out pinned rclone sources for Google-only engine
         uses: actions/checkout@v7
         with:

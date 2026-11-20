@@ -148,6 +148,22 @@ internal static class Program
                     var disconnected = RemoteMount.Disconnect(profile).GetAwaiter().GetResult();
                     if (!disconnected.Success) throw new IOException("GUI Disconnect: " + disconnected.Message);
                     Console.WriteLine("DIRECT_GUI_DISCONNECT_BUTTON_ROUTE_PASS");
+                    // A disconnected WinFsp letter must be reusable without
+                    // restarting Explorer or restarting FileHub. Exercise the
+                    // same connection route used by automatic reconnect.
+                    if (RemoteMount.DriveLetterExists(letter))
+                        throw new IOException("A disconnected WinFsp ghost still owns the drive letter");
+                    var reconnect = RemoteMount.Connect(profile, "").GetAwaiter().GetResult();
+                    if (!reconnect.Success)
+                        throw new IOException("FileHub reconnect failed: " + reconnect.Message);
+                    if (File.ReadAllText(path) != "FileHub round 3" ||
+                        !File.Exists(letter + @":\FileHubGuiActual.xlsx"))
+                        throw new IOException("Reconnect failed to show the last saved NAS contents");
+                    Console.WriteLine("DIRECT_GUI_DISCONNECT_RECONNECT_CONTENT_PRESERVED_PASS");
+                    var stopAgain = RemoteMount.Disconnect(profile).GetAwaiter().GetResult();
+                    if (!stopAgain.Success || RemoteMount.DriveLetterExists(letter))
+                        throw new IOException("Second safe disconnect left an Explorer drive entry");
+                    Console.WriteLine("DIRECT_GUI_REPEATED_SAFE_DISCONNECT_NO_GHOST_PASS");
                     Console.WriteLine("DIRECT_GUI_NATIVE_WEBDAV_CONNECT_SAVE_DISCONNECT_PASS");
                 }
                 finally { Environment.SetEnvironmentVariable("NASMOUNT_LAB_DIRECT_MANAGED", null); }

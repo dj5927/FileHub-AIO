@@ -1,8 +1,12 @@
 param([int]$Port = 18784)
 $ErrorActionPreference = 'Stop'
 $repo=Split-Path -Parent $PSScriptRoot
-$backend='E:\NASMount_Releases\NASMount_1_3_35_ICON_TITLEBAR\tools\rclone.exe'
-$program=Join-Path $repo 'LockBridge\bin\Release\net10.0-windows\win-x64\NASMountLockBridge.exe'
+$backend=if($env:FILEHUB_LAB_RCLONE){$env:FILEHUB_LAB_RCLONE}else{
+ 'E:\NASMount_Releases\NASMount_1_3_35_ICON_TITLEBAR\tools\rclone.exe'
+}
+$program=if($env:FILEHUB_TEST_PUBLISHED_BRIDGE){$env:FILEHUB_TEST_PUBLISHED_BRIDGE}else{
+ Join-Path $repo 'LockBridge\bin\Release\net10.0-windows\win-x64\NASMountLockBridge.exe'
+}
 $root=Join-Path $env:TEMP ('FileHubWriteStore_' + [Guid]::NewGuid().ToString('N'))
 $server=Join-Path $root 'server'
 $journals=Join-Path $root 'journals'
