@@ -29,6 +29,29 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         (_leases?.CanShutdown ?? true) && !_writes.HasUncommittedRecovery;
     private readonly ConcurrentDictionary<string, DirectWebDavReadOnlyBackend.Entry> _overlay =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _ownVerifiedEtags =
+        new(StringComparer.OrdinalIgnoreCase);
+    protected override bool PauseExternalChangeNotification =>
+        ActiveWriteHandles > 0;
+
+    private void RecordCommittedRevision(WriteDescriptor writer)
+    {
+        if (_backend.Stat(writer.Entry.Path) is not { } committed) return;
+        writer.Entry = committed;
+        if (DirectWebDavWriteStore.StrongEtag(committed.ETag))
+            _ownVerifiedEtags[committed.Path] = committed.ETag!;
+    }
+
+    protected override bool IsOwnVerifiedRevision(
+        DirectWebDavReadOnlyBackend.Entry before,
+        DirectWebDavReadOnlyBackend.Entry after)
+    {
+        if (!_ownVerifiedEtags.TryGetValue(after.Path, out var own) ||
+            !string.Equals(own, after.ETag, StringComparison.Ordinal))
+            return false;
+        _ownVerifiedEtags.TryRemove(after.Path, out _);
+        return true;
+    }
 
     private sealed class WriteDescriptor
     {
@@ -44,6 +67,12 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             Session = session;
             Entry = entry;
         }
+    }
+
+    private sealed class AttributeDescriptor(
+        DirectWebDavReadOnlyBackend.Entry entry)
+    {
+        internal DirectWebDavReadOnlyBackend.Entry Entry = entry;
     }
 
     internal DirectWebDavWritableFileSystem(DirectWebDavReadOnlyBackend backend,
@@ -81,9 +110,12 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
 
     private FileInfo Describe(WriteDescriptor descriptor)
     {
+        // Excel repeatedly queries the same open handle and treats changes
+        // in last-write time as evidence of an external editor. Returning
+        // DateTime.UtcNow on EVERY call caused false "another user saved"
+        // notifications even when the remote file had not changed.
         var local = descriptor.Entry with {
-            Size = descriptor.Session.Local.Length,
-            ModifiedUtc = DateTime.UtcNow
+            Size = descriptor.Session.Local.Length
         };
         return DescribeEntry(local);
     }
@@ -206,6 +238,21 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             RegisterOpenHandle();
             return Success;
         }
+        // An Excel attribute-only handle does not need to download the
+        // entire workbook a second time or create a recovery journal.
+        if (!WriteIntent.IsWrite(grantedAccess) &&
+            (grantedAccess & 0x100u) != 0)
+        {
+            fileNode = null!; fileDesc = null!; info = default; normalizedName = null!;
+            var attr = _backend.Stat(fileName);
+            if (attr is null) return NotFound;
+            if (attr.IsDirectory) return AccessDenied;
+            fileNode = attr;
+            fileDesc = new AttributeDescriptor(attr);
+            info = DescribeEntry(attr);
+            RegisterOpenHandle();
+            return Success;
+        }
         if (!WriteIntent.IsWrite(grantedAccess))
             return base.Open(fileName, createOptions, grantedAccess,
                 out fileNode, out fileDesc, out info, out normalizedName);
@@ -292,6 +339,9 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         {
             _writes.Commit(writer.Session);
             _overlay.TryRemove(writer.Entry.Path, out _);
+            // After our own successful conditional PUT, refresh the
+            // descriptor exactly once from the server's committed revision.
+            RecordCommittedRevision(writer);
             info = Describe(writer);
             return Success;
         }
@@ -300,6 +350,11 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
 
     public override int GetFileInfo(object fileNode, object fileDesc, out FileInfo info)
     {
+        if (fileDesc is AttributeDescriptor attribute)
+        {
+            info = DescribeEntry(attribute.Entry);
+            return Success;
+        }
         if (fileDesc is WriteDescriptor writer)
         {
             info = Describe(writer);
@@ -338,10 +393,37 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         ulong lastWriteTime, ulong changeTime, out FileInfo info)
     {
         info = default;
+        if (fileDesc is AttributeDescriptor attribute)
+        {
+            if (lastWriteTime is > 0 and < long.MaxValue)
+            {
+                try
+                {
+                    attribute.Entry = attribute.Entry with {
+                        ModifiedUtc = DateTime.FromFileTimeUtc((long)lastWriteTime)
+                    };
+                }
+                catch (ArgumentOutOfRangeException) { return AccessDenied; }
+            }
+            info = DescribeEntry(attribute.Entry);
+            return Success;
+        }
         if (fileDesc is not WriteDescriptor writer) return AccessDenied;
-        // The backend must not lie that WebDAV supports persistent attributes.
-        if (creationTime != 0 || lastAccessTime != 0 || lastWriteTime != 0 ||
-            changeTime != 0) return unchecked((int)0xC00000BB); // NOT_SUPPORTED
+        // Excel sets Win32 timestamps while writing its temporary document.
+        // STATUS_NOT_SUPPORTED here caused Excel to report the workbook as
+        // unsaved after it had issued its write operations. WebDAV has fewer
+        // metadata fields than NTFS, so retain the requested last-write time
+        // consistently on this open descriptor. No remote ETag is invented.
+        if (lastWriteTime is > 0 and < long.MaxValue)
+        {
+            try
+            {
+                writer.Entry = writer.Entry with {
+                    ModifiedUtc = DateTime.FromFileTimeUtc((long)lastWriteTime)
+                };
+            }
+            catch (ArgumentOutOfRangeException) { return AccessDenied; }
+        }
         info = Describe(writer);
         return Success;
     }
@@ -359,9 +441,8 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         if (Environment.GetEnvironmentVariable("FILEHUB_DIRECT_DEBUG") == "1")
             Console.Error.WriteLine("DIRECT_RW_RENAME from=" + fileName +
                 " to=" + newFileName + " replace=" + replaceIfExists);
-        // Windows may set replaceIfExists=true even when the destination is
-        // absent. Forward the rename ONLY with HTTP Overwrite:F, which
-        // rejects an occupied destination regardless of this Windows flag.
+        // An existing destination is replaced using a conditional PUT and
+        // verified checksum, never an unsafe MOVE Overwrite:T.
         string from = fileDesc switch {
             WriteDescriptor writer => writer.Entry.Path,
             DirectWebDavReadOnlyBackend.Entry entry => entry.Path,
@@ -381,10 +462,14 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
                 destinationLease = AcquireOfficeLease(to);
             }
             if (fileDesc is WriteDescriptor writer)
+            {
                 _writes.Commit(writer.Session);
+                RecordCommittedRevision(writer);
+            }
             var original = _backend.Stat(from);
             if (original is null) return NotFound;
-            _writes.RenameNewDestination(from, to, original.ETag);
+            _writes.RenameWithVerifiedReplacement(from, to,
+                original.ETag, replaceIfExists);
             _overlay.TryRemove(from, out _);
             if (fileDesc is WriteDescriptor active)
             {
@@ -422,6 +507,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
                 try
                 {
                     _writes.Commit(dirty.Session);
+                    RecordCommittedRevision(dirty);
                     _overlay.TryRemove(dirty.Entry.Path, out _);
                     if (Environment.GetEnvironmentVariable("FILEHUB_DIRECT_DEBUG") == "1")
                         Console.Error.WriteLine("DIRECT_RW_CLEANUP_COMMIT_OK path=" + fileName);
@@ -459,6 +545,11 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
     {
         if (Environment.GetEnvironmentVariable("FILEHUB_DIRECT_DEBUG") == "1")
             Console.Error.WriteLine("DIRECT_RW_CLOSE type=" + fileDesc?.GetType().Name);
+        if (fileDesc is AttributeDescriptor attribute)
+        {
+            base.Close(fileNode, attribute.Entry);
+            return;
+        }
         if (fileDesc is not WriteDescriptor writer)
         {
             base.Close(fileNode, fileDesc);

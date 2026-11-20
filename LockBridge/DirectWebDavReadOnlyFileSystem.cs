@@ -59,8 +59,10 @@ internal class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposable
         _host = host;
         if (Environment.GetEnvironmentVariable("FILEHUB_DIRECT_DEBUG") == "1")
             Console.Error.WriteLine("DIRECT_WATCHER_STARTED");
+        // High-frequency PROPFIND/Notify calls compete with foreground Excel
+        // and Explorer I/O on Synology. A delayed background refresh is safer.
         _watchTimer = new System.Threading.Timer(_ => PollWatchedFolders(), null,
-            TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+            TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
     }
 
     private void Watch(string directory)
@@ -70,8 +72,18 @@ internal class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposable
             Console.Error.WriteLine("DIRECT_WATCHED " + directory);
     }
 
+    // The read-only provider reports all remote revisions. A writable
+    // provider may suppress ONLY the precise ETag it has committed and
+    // verified itself, not a genuine revision from another NAS client.
+    protected virtual bool IsOwnVerifiedRevision(
+        DirectWebDavReadOnlyBackend.Entry before,
+        DirectWebDavReadOnlyBackend.Entry after) => false;
+
+    protected virtual bool PauseExternalChangeNotification => false;
+
     private void PollWatchedFolders()
     {
+        if (PauseExternalChangeNotification) return;
         if (Interlocked.Exchange(ref _polling, 1) != 0) return;
         try
         {
@@ -101,6 +113,8 @@ internal class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposable
                         now.Size != old.Size || now.ModifiedUtc != old.ModifiedUtc)
                     {
                         _backend.Invalidate(old.Path);
+                        if (found && IsOwnVerifiedRevision(old, now!))
+                            continue;
                         updates.Add(new NotifyInfo {
                             FileName = prefix + old.Name,
                             Action = found ? NotifyAction.Modified : NotifyAction.Removed,

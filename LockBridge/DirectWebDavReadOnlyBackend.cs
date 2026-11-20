@@ -141,7 +141,10 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
             long size = 0;
             long.TryParse(prop.Element(dav + "getcontentlength")?.Value,
                 out size);
-            DateTime modified = DateTime.UtcNow;
+            // Missing Last-Modified is an unknown timestamp, not the clock
+            // time of each PROPFIND. Fabricating UtcNow made the watcher
+            // repeatedly tell Excel that another editor changed the file.
+            DateTime modified = DateTime.UnixEpoch;
             if (DateTimeOffset.TryParse(prop.Element(dav + "getlastmodified")?.Value,
                     out var parsed)) modified = parsed.UtcDateTime;
             string? etag = prop.Element(dav + "getetag")?.Value;
@@ -212,8 +215,24 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
         if (entry.IsDirectory || offset >= (ulong)entry.Size || wanted <= 0)
             return [];
         int count = (int)Math.Min((long)wanted, entry.Size - (long)offset);
-        if ((entry.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
-             entry.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)) &&
+        // Image viewers often issue many tiny overlapping reads for EXIF,
+        // thumbnails and decoding. Repeating a blocking WebDAV GET for each
+        // range can leave Explorer showing "Not responding" after opening
+        // the image. Serve eligible immutable-revision images from the
+        // same local versioned read cache already used for EXE/DLL.
+        string extension = Path.GetExtension(entry.Name);
+        bool cachedContent = extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".dll", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".png", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".webp", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".gif", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".bmp", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".heic", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".tif", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".tiff", StringComparison.OrdinalIgnoreCase);
+        if (cachedContent &&
             entry.Size <= MaxCachedExecutableSize)
         {
             string local = EnsureExecutable(entry);

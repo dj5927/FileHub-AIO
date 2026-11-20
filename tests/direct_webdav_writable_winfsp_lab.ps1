@@ -1,4 +1,4 @@
-param([int]$Port = 18800)
+﻿param([int]$Port = 18800)
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $rclone='E:\NASMount_Releases\NASMount_1_3_35_ICON_TITLEBAR\tools\rclone.exe'
@@ -69,6 +69,56 @@ try {
  if(Test-Path (Join-Path $server 'test-renamed.txt')){throw 'DELETE did not reach NAS'}
  Write-Output 'ONE_LAYER_RW_DELETE_PASS'
 
+ # Real Excel may replace an existing target by moving its temporary file
+ # with MOVEFILE_REPLACE_EXISTING, and will leave E2770D12.tmp behind if the
+ # virtual filesystem sends MOVE Overwrite:F for every destination.
+ $replaced=Join-Path $drive 'Existing-Save-Target.txt'
+ [IO.File]::WriteAllText($replaced,'ORIGINAL_CONTENT')
+ Start-Sleep -Seconds 1
+ Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class FileHubNativeReplace {
+ [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+ public static extern bool MoveFileEx(string source, string target, uint flags);
+}
+'@
+ foreach($round in 1..3){
+   $tmp=Join-Path $drive ('E2770D1'+$round+'.tmp')
+   [IO.File]::WriteAllText($tmp,('REPLACED_CONTENT_'+$round))
+   if(![FileHubNativeReplace]::MoveFileEx($tmp,$replaced,1)){
+     throw ('MoveFileEx replace-existing failed WindowsError='+
+       [Runtime.InteropServices.Marshal]::GetLastWin32Error())
+   }
+   Start-Sleep -Seconds 1
+   $serverTarget=Join-Path $server 'Existing-Save-Target.txt'
+   $serverTmp=Join-Path $server ('E2770D1'+$round+'.tmp')
+   if([IO.File]::ReadAllText($serverTarget) -ne ('REPLACED_CONTENT_'+$round)){
+     throw ('Replace-existing failed at iteration '+$round)
+   }
+   if((Test-Path $serverTmp) -or (Test-Path $tmp)){
+     throw ('Excel-style temporary file remained after replacement '+$round)
+   }
+   Write-Output ('ONE_LAYER_RW_EXCEL_TEMP_REPLACE_EXISTING_'+$round+'_PASS')
+ }
+
+ $image=Join-Path $drive 'photo-test.jpg'
+ $originalImage=New-Object byte[] 524288
+ [Random]::new(42).NextBytes($originalImage)
+ [IO.File]::WriteAllBytes($image,$originalImage)
+ Start-Sleep -Seconds 1
+ $imgWatch=[Diagnostics.Stopwatch]::StartNew()
+ $readImage=[IO.File]::ReadAllBytes($image)
+ $hashEngine=[Security.Cryptography.SHA256]::Create()
+ $actualHash=[BitConverter]::ToString($hashEngine.ComputeHash($readImage))
+ $expectedHash=[BitConverter]::ToString($hashEngine.ComputeHash($originalImage))
+ $hashEngine.Dispose()
+ if($actualHash -ne $expectedHash){
+   throw 'Image read after upload differs from source'
+ }
+ Write-Output ('ONE_LAYER_RW_IMAGE_READ_AFTER_UPLOAD_MS='+$imgWatch.ElapsedMilliseconds)
+ Write-Output 'ONE_LAYER_RW_IMAGE_READ_AFTER_UPLOAD_PASS'
+
  $exe=Join-Path $drive 'DirectDownloadTests.exe'
  [IO.File]::Copy("$env:windir\System32\where.exe",$exe)
  Start-Sleep -Seconds 2
@@ -122,6 +172,101 @@ try {
    finally{$testbook.Close($false);[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($testbook)}
  }finally{$validate.Quit();[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($validate)}
  Write-Output 'ONE_LAYER_RW_REAL_EXCEL_THREE_SAVES_SERVER_VERIFIED_PASS'
+ # Reopen an EXISTING workbook in a Korean folder, the pattern that fails
+ # in real NAS Excel sessions. Do not use any real NAS path or user document.
+ $folder=Join-Path $drive '00.회사자료\2026\11월'
+ [IO.Directory]::CreateDirectory($folder)|Out-Null
+ $existingXlsx=Join-Path $folder '11월매출.xlsx'
+ [IO.File]::Copy($serverDoc,$existingXlsx)
+ $reopen=New-Object -ComObject Excel.Application
+ $reopen.DisplayAlerts=$false
+ $reopen.Visible=$false
+ $reopenBook=$null
+ try {
+   $reopenBook=$reopen.Workbooks.Open($existingXlsx,0,$false)
+   if($reopenBook.ReadOnly){throw 'Existing workbook opened readonly'}
+   Write-Output 'ONE_LAYER_RW_EXISTING_KOREAN_XLSX_REOPEN_PASS'
+   foreach($n in 1..5){
+     $reopenBook.Worksheets.Item(1).Cells.Item(2,2).Value2=('KOREAN_REOPEN_SAVE_'+$n)
+     $reopenBook.Save()
+     Write-Output ('ONE_LAYER_RW_EXISTING_KOREAN_XLSX_SAVE_'+$n+'_RETURNED')
+   }
+   $reopenBook.Close($false)
+   [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($reopenBook)
+   $reopenBook=$null
+ } finally {
+   if($reopenBook){try{$reopenBook.Close($false)}catch{};[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($reopenBook)}
+   $reopen.Quit()
+   [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($reopen)
+ }
+ $serverExisting=Join-Path $server '00.회사자료\2026\11월\11월매출.xlsx'
+ if(!(Test-Path $serverExisting)){throw 'Existing Korean XLSX missing on server'}
+ Add-Type -AssemblyName System.IO.Compression.FileSystem
+ $checkZip=[IO.Compression.ZipFile]::OpenRead($serverExisting)
+ try {
+   $shared=$checkZip.GetEntry('xl/sharedStrings.xml')
+   if(!$shared){throw 'Korean workbook missing shared strings'}
+   $reader=[IO.StreamReader]::new($shared.Open())
+   try{$value=$reader.ReadToEnd()}finally{$reader.Dispose()}
+   if($value -notmatch 'KOREAN_REOPEN_SAVE_5'){
+     throw 'Latest existing workbook content was not committed to WebDAV'
+   }
+ }finally{$checkZip.Dispose()}
+ Write-Output 'ONE_LAYER_RW_EXISTING_KOREAN_EXCEL_FIVE_SAVES_VERIFIED_PASS'
+ # Windows Excel queries GetFileInfo repeatedly on the SAME write-opened
+ # handle. Its timestamp must not change with wall clock time while idle.
+ Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class FileHubWinFspTimeProbe {
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern bool GetFileTime(SafeFileHandle file, out long created,
+        out long accessed, out long modified);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    public static extern SafeFileHandle CreateFile(string path, uint desiredAccess,
+        uint shareMode, System.IntPtr security, uint creation,
+        uint flags, System.IntPtr template);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern bool SetFileTime(SafeFileHandle file,
+        System.IntPtr created, System.IntPtr accessed, ref long modified);
+}
+'@
+ $timeHandle=[IO.FileStream]::new($existingXlsx,[IO.FileMode]::Open,
+   [IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite)
+ try {
+   [long]$created=0;[long]$accessed=0;[long]$first=0;[long]$second=0
+   if(![FileHubWinFspTimeProbe]::GetFileTime($timeHandle.SafeFileHandle,
+      [ref]$created,[ref]$accessed,[ref]$first)){throw 'GetFileTime first call failed'}
+   Start-Sleep -Milliseconds 2300
+   if(![FileHubWinFspTimeProbe]::GetFileTime($timeHandle.SafeFileHandle,
+      [ref]$created,[ref]$accessed,[ref]$second)){throw 'GetFileTime second call failed'}
+   if($first -ne $second){
+     throw ('Excel open-writer LastWriteTime changed while idle: '+$first+' -> '+$second)
+   }
+ } finally {$timeHandle.Dispose()}
+ Write-Output 'ONE_LAYER_RW_EXCEL_OPEN_HANDLE_TIMESTAMP_STABLE_PASS'
+ # Excel also opens an existing XLSX with FILE_WRITE_ATTRIBUTES but no
+ # FILE_WRITE_DATA. Such a handle must support SetBasicInfo, not route to
+ # the read-only backend and fail with STATUS_ACCESS_DENIED.
+ $attrHandle=[FileHubWinFspTimeProbe]::CreateFile($existingXlsx,
+   0x180, 7, [IntPtr]::Zero, 3, 0, [IntPtr]::Zero)
+ if($attrHandle.IsInvalid){throw 'Excel FILE_WRITE_ATTRIBUTES only open failed'}
+ try {
+   [long]$targetTime=([DateTime]::UtcNow.AddMinutes(-2)).ToFileTimeUtc()
+   if(![FileHubWinFspTimeProbe]::SetFileTime($attrHandle,[IntPtr]::Zero,
+       [IntPtr]::Zero,[ref]$targetTime)){
+     throw 'Excel FILE_WRITE_ATTRIBUTES only SetFileTime failed'
+   }
+   [long]$created=0;[long]$accessed=0;[long]$actualTime=0
+   if(![FileHubWinFspTimeProbe]::GetFileTime($attrHandle,
+       [ref]$created,[ref]$accessed,[ref]$actualTime)){
+     throw 'Excel FILE_WRITE_ATTRIBUTES only GetFileTime failed'
+   }
+   if($actualTime -ne $targetTime){
+     throw 'Excel attribute-only last write timestamp was not returned'
+   }
+ }finally{$attrHandle.Dispose()}
+ Write-Output 'ONE_LAYER_RW_EXCEL_ATTRIBUTE_ONLY_HANDLE_PASS'
  Write-Output 'ONE_LAYER_RW_WINFSP_INTEGRATION_PASS'
 }finally{
  if($book){try{$book.Close($false)}catch{}}

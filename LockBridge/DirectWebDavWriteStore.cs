@@ -575,6 +575,83 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         _read.Invalidate(to);
     }
 
+    // Office often renames a temporary file ON TOP OF an existing workbook.
+    // WebDAV MOVE with Overwrite:F fails there; Overwrite:T is unsafe because
+    // it can ignore a target revision changed by another NAS client.
+    // A conditional PUT to the exact destination ETag, followed by byte
+    // verification and conditional source deletion, preserves concurrency.
+    internal void RenameWithVerifiedReplacement(string from, string to,
+        string? sourceEtag, bool replaceIfExists)
+    {
+        RequireVerifiedConditionalWrites();
+        if (!StrongEtag(sourceEtag))
+            throw new IOException("Unsafe rename without strong source ETag");
+        var destination = _read.Stat(to);
+        if (destination is null)
+        {
+            RenameNewDestination(from, to, sourceEtag);
+            return;
+        }
+        if (!replaceIfExists)
+            throw new IOException("Destination already exists");
+        if (destination.IsDirectory || !StrongEtag(destination.ETag))
+            throw new IOException("Cannot safely replace destination without strong ETag");
+
+        string stage = Path.Combine(_journalRoot,
+            "replace-" + Guid.NewGuid().ToString("N") + ".partial");
+        try
+        {
+            using (var get = new HttpRequestMessage(HttpMethod.Get, Remote(from)))
+            {
+                get.Headers.TryAddWithoutValidation("If-Match", sourceEtag);
+                using var response = _http.Send(get, HttpCompletionOption.ResponseHeadersRead);
+                if (!response.IsSuccessStatusCode)
+                    throw new IOException("Safe replacement source GET HTTP " +
+                        (int)response.StatusCode);
+                using var input = response.Content.ReadAsStream();
+                using var local = new FileStream(stage, FileMode.CreateNew,
+                    FileAccess.ReadWrite, FileShare.None);
+                input.CopyTo(local);
+                local.Flush(true);
+            }
+            _read.Invalidate(from);
+            var source = _read.Stat(from);
+            if (source?.ETag != sourceEtag || source.Size != new FileInfo(stage).Length)
+                throw new IOException("Source changed during conditional replacement");
+
+            using (var put = new HttpRequestMessage(HttpMethod.Put, Remote(to)))
+            {
+                put.Headers.TryAddWithoutValidation("If-Match", destination.ETag);
+                put.Content = new StreamContent(new FileStream(stage, FileMode.Open,
+                    FileAccess.Read, FileShare.Read));
+                using var result = _http.Send(put, HttpCompletionOption.ResponseHeadersRead);
+                if (!result.IsSuccessStatusCode)
+                    throw new IOException("Safe replacement target PUT HTTP " +
+                        (int)result.StatusCode);
+            }
+            _read.Invalidate(to);
+            var saved = _read.Stat(to);
+            if (saved is null || saved.Size != new FileInfo(stage).Length ||
+                !StrongEtag(saved.ETag))
+                throw new IOException("Cannot verify replacement metadata; source retained");
+            using (var request = new HttpRequestMessage(HttpMethod.Get, Remote(to)))
+            {
+                request.Headers.TryAddWithoutValidation("If-Match", saved.ETag);
+                using var verified = _http.Send(request,
+                    HttpCompletionOption.ResponseHeadersRead);
+                verified.EnsureSuccessStatusCode();
+                using var remote = verified.Content.ReadAsStream();
+                using var local = File.OpenRead(stage);
+                if (!CryptographicOperations.FixedTimeEquals(
+                        SHA256.HashData(local), SHA256.HashData(remote)))
+                    throw new IOException("Replacement checksum mismatch; source retained");
+            }
+            Delete(from, sourceEtag);
+            Console.WriteLine("DIRECT_WEBDAV_EXCEL_REPLACEMENT_VERIFIED");
+        }
+        finally { try { File.Delete(stage); } catch (IOException) { } }
+    }
+
     internal void Delete(string path, string? etag)
     {
         RequireVerifiedConditionalWrites();

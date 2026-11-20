@@ -118,15 +118,31 @@ internal static class RemoteMount
             process.ErrorDataReceived += (_, e) =>
             {
                 if (e.Data is null) return;
-                // Never persist a full HTTP request URI or account secret.
-                string category = e.Data.Contains("401") ? "AUTH_401" :
-                    e.Data.Contains("403") ? "PERMISSION_403" :
+                // The bridge stderr may contain the private NAS path. Log
+                // only whitelisted callback and HTTP identifiers, never its
+                // full error message, URI or workbook filename. Previously
+                // *every* Excel failure was hidden as PROVIDER_ERROR.
+                string callback = System.Text.RegularExpressions.Regex.Match(
+                    e.Data, @"\bcallback=(Create|Open|Read|Write|Flush|Rename|SetFileSize|Overwrite|SetBasicInfo|CleanupCommit|CleanupDelete|Close)\b",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase).Groups[1].Value;
+                string httpStatus = System.Text.RegularExpressions.Regex.Match(
+                    e.Data, @"\bHTTP\s+([345][0-9]{2})\b").Groups[1].Value;
+                string errorType = System.Text.RegularExpressions.Regex.Match(
+                    e.Data, @"\btype=(IOException|UnauthorizedAccessException|HttpRequestException|ArgumentException|FileNotFoundException)\b").Groups[1].Value;
+                string category = httpStatus == "412" ? "ETAG_PRECONDITION_412" :
+                    httpStatus == "423" ? "LOCKED_423" :
+                    httpStatus == "409" ? "CONFLICT_409" :
+                    httpStatus == "401" ? "AUTH_401" :
+                    httpStatus == "403" ? "PERMISSION_403" :
+                    httpStatus.Length == 3 ? "WEBDAV_HTTP_" + httpStatus :
                     e.Data.Contains("If-Match", StringComparison.OrdinalIgnoreCase)
-                        ? "CONDITIONAL_WRITE_UNSUPPORTED" :
+                        ? "ETAG_WRITE_CHECK" :
                     e.Data.Contains("MKCOL", StringComparison.OrdinalIgnoreCase)
-                        ? "EXCLUSIVE_LOCK_UNSUPPORTED" : "PROVIDER_ERROR";
+                        ? "LOCK_DIRECTORY_CHECK" : "PROVIDER_ERROR";
                 messages.Enqueue(category);
-                AppStore.Log("DIRECT_WEBDAV_ENGINE_ERROR category=" + category);
+                AppStore.Log("DIRECT_WEBDAV_ENGINE_ERROR category=" + category +
+                    " callback=" + (callback.Length == 0 ? "unspecified" : callback) +
+                    " type=" + (errorType.Length == 0 ? "unspecified" : errorType));
             };
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
