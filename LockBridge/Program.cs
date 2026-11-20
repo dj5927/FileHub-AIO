@@ -673,6 +673,8 @@ internal sealed class LockingPassthrough : Ptfs
         new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<object, string> _visibleOfficeOwners =
         new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<object, string> _executableReads =
+        new(ReferenceEqualityComparer.Instance);
     private readonly object _sync = new();
     internal LockingPassthrough(string source, LeaseCoordinator coordinator,
         ExcelAtomicBridge? atomic = null, string displayLabel = "NAS Mount") : base(source)
@@ -734,6 +736,9 @@ internal sealed class LockingPassthrough : Ptfs
     public override int Open(string fileName, uint createOptions, uint grantedAccess,
         out object fileNode, out object fileDesc, out FspFileInfo info, out string normalizedName)
     {
+        bool executableRead = fileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
+            fileName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
+        long openedAt = executableRead ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         if (fileName.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase) ||
             fileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
             AppStore.Log("TRACE OPEN " + fileName + " access=0x" + grantedAccess.ToString("X"));
@@ -759,12 +764,18 @@ internal sealed class LockingPassthrough : Ptfs
         {
             int status = base.Open(fileName, createOptions, grantedAccess,
                 out fileNode, out fileDesc, out info, out normalizedName);
+            if (executableRead)
+                AppStore.Log("EXECUTABLE_VFS_OPEN_TIMING path=" + fileName +
+                    " elapsedMs=" + System.Diagnostics.Stopwatch.GetElapsedTime(openedAt).TotalMilliseconds.ToString("F1") +
+                    " status=" + status);
             if (status < 0)
             {
                 if (leased) _coordinator.ReleaseHandle(key);
                 return status;
             }
             if (leased) lock (_sync) _descriptors[fileDesc] = key;
+            if (executableRead && fileDesc is not null)
+                lock (_sync) _executableReads[fileDesc] = fileName;
             if (IsOfficeOwnerFile(fileName))
                 lock (_sync) _visibleOfficeOwners[fileDesc] = fileName;
             info.FileAttributes = VisibleOwnerAttributes(fileName, info.FileAttributes);
@@ -773,6 +784,36 @@ internal sealed class LockingPassthrough : Ptfs
         catch
         {
             if (leased) _coordinator.ReleaseHandle(key);
+            throw;
+        }
+    }
+
+    public override int Read(object fileNode, object fileDesc, IntPtr buffer,
+        ulong offset, uint length, out uint transferred)
+    {
+        string? target;
+        lock (_sync) _executableReads.TryGetValue(fileDesc, out target);
+        if (target is null)
+            return base.Read(fileNode, fileDesc, buffer, offset, length,
+                out transferred);
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            int status = base.Read(fileNode, fileDesc, buffer, offset,
+                length, out transferred);
+            double ms = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            if (ms >= 500 || status < 0)
+                AppStore.Log("EXECUTABLE_VFS_READ_TIMING path=" + target +
+                    " offset=" + offset + " request=" + length +
+                    " returned=" + transferred + " elapsedMs=" + ms.ToString("F1") +
+                    " status=" + status);
+            return status;
+        }
+        catch (Exception ex)
+        {
+            AppStore.Log("EXECUTABLE_VFS_READ_ERROR path=" + target +
+                " elapsedMs=" + System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds.ToString("F1") +
+                " type=" + ex.GetType().Name);
             throw;
         }
     }
@@ -955,6 +996,7 @@ internal sealed class LockingPassthrough : Ptfs
             if (fileDesc is not null && _descriptors.Remove(fileDesc, out var value)) key = value;
             if (fileDesc is not null && _ownerDescriptors.Remove(fileDesc, out var ownerValue)) owner = ownerValue;
             if (fileDesc is not null) _visibleOfficeOwners.Remove(fileDesc);
+            if (fileDesc is not null) _executableReads.Remove(fileDesc);
         }
         try { base.Close(fileNode, fileDesc); }
         finally

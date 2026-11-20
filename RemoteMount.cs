@@ -1347,22 +1347,10 @@ internal static class RemoteMount
                 args.Add("--buffer-size");
                 args.Add("16Mi");
             }
-            if (officeRead)
-            {
-                // XLSX is a ZIP file: Excel can seek between data and its
-                // central directory. Bound remote range requests and issue
-                // a modest local read-ahead, preserving full VFS write cache.
-                args.Add("--buffer-size");
-                args.Add("8Mi");
-                args.Add("--vfs-read-ahead");
-                args.Add("8Mi");
-                args.Add("--vfs-read-chunk-size");
-                args.Add("8Mi");
-                args.Add("--vfs-read-chunk-size-limit");
-                args.Add("32Mi");
-                args.Add("--vfs-cache-max-age");
-                args.Add("6h");
-            }
+            // The outer network WinFsp LockBridge uses the same WebDAV VFS
+            // for EXE/DLL reads and Excel writes. Apply bounded read chunks
+            // without changing full caching, 15s write-back or lock leases.
+            WebDavVfsReadPolicy.AppendArgs(args, p, fastRead, officeRead);
             // Google full-cache initial reads do not need the default
             // 128Mi remote chunk to open a tiny document. Preserve the
             // existing write-back and VFS safety semantics.
@@ -1394,6 +1382,7 @@ internal static class RemoteMount
                 " vfs-cache=" + (fastRead ? "writes" : "full") +
                 " dir-cache=" + directoryCacheTime +
                 " office-read-tuning=" + officeRead +
+                " bridge-read-tuning=" + (p.Protocol == "WebDAV" && p.UseLockBridge) +
                 " write-back=" + (officeWriteSafety ? "15s" :
                     p.Protocol == "GoogleDrive" ? "5s" : "0s") +
                 " readonly=" + (!p.AllowUnprotectedWrites && !p.UseLockBridge));

@@ -529,6 +529,7 @@ internal static class Program
                 ExplorerLiveViewRefresh.PolicyTest();
                 DriveIconLease.PolicyTest();
                 MountResponsivenessPolicy.PolicyTest();
+                WebDavVfsReadPolicy.PolicyTest();
                 FastConnectPolicy.PolicyTest();
             }
             catch (Exception ex)
