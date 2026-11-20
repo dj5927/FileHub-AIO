@@ -15,7 +15,21 @@ An open-source file manager and media/reading app designed for NAS, WebDAV, SMB,
 
 Get the latest signed APK from [GitHub Releases](https://github.com/dj5927/FileHub-AIO/releases/latest). On app launch, FileHub checks the latest published stable release, showing only a short notification when an update exists. You can download and install it manually from **⋮ → 업데이트 확인 (Check for updates)**. Installation always requires Android's confirmation and may require permission to install APKs from this app.
 
-The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.103 the metadata is versionCode: 104 and FileHub-AIO-v0.1.103.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.104 the metadata is versionCode: 105 and FileHub-AIO-v0.1.104.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+
+## Android v0.1.104: gallery-style photo swiping
+
+- Normal folder photos now use a finger-tracking horizontal filmstrip. The
+  previous/current/next images move together with the finger, then snap
+  into place with a short decelerating animation.
+- The current photo is never cleared when navigating to the next one. Both
+  neighboring photos pre-load in parallel, including remote NAS folders.
+- If a remote image is still downloading, the current photo stays visible
+  instead of revealing a black frame. On completion it slides in normally.
+- Pinch-to-zoom, panning a zoomed image, and double-tap zoom remain separate
+  from gallery navigation. Edge swipes do not switch folders or wrap around.
+- Motion tests verify adjacent photos maintain exact viewport spacing,
+  finger tracking, quick flings, pinch/pan exclusion and no blank-page drag.
 
 ## Build
 

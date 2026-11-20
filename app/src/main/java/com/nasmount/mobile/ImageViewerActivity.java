@@ -1,6 +1,9 @@
 package com.nasmount.mobile;
 
 import android.app.Activity;
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
@@ -15,7 +18,9 @@ import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
+import android.view.VelocityTracker;
 import android.view.View;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -29,6 +34,11 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.IOException;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -42,14 +52,33 @@ public final class ImageViewerActivity extends Activity {
     static final String EXTRA_PROFILE="image_profile";
     static final String EXTRA_SEQUENCE="image_folder_sequence";
     private static final long MAX_IMAGE_BYTES=100L*1024L*1024L;
-    private final ExecutorService worker=Executors.newSingleThreadExecutor();
-    private File staged;
+    // Cache the current photo and both neighbors. Two IO workers let a remote
+    // photo load without discarding the image already visible to the user.
+    private final ExecutorService worker=Executors.newFixedThreadPool(2);
+    private static final class LoadedPhoto {
+        final File file;
+        final Drawable drawable;
+        LoadedPhoto(File file, Drawable drawable) {
+            this.file=file;
+            this.drawable=drawable;
+        }
+    }
+    private final LinkedHashMap<Integer,LoadedPhoto> loaded=
+            new LinkedHashMap<>(8,0.75f,true);
+    private final Set<Integer> loading=new HashSet<>();
+    private FrameLayout stage;
     private PhotoCanvas canvas;
+    private ImageView previousCanvas, nextCanvas;
     private TextView info;
     private TextView title;
     private ImageFolderSequence.Snapshot sequence;
     private int sequenceIndex=-1;
-    private volatile int loadGeneration;
+    private int previewPrevious=-2,previewNext=-2;
+    private int pendingIndex=-1,pendingDirection=0;
+    private ValueAnimator slideAnimator;
+    private float slideX;
+    private boolean animating, fingerDown, currentReady, destroyed;
+    private float fingerDx;
 
     @Override public void onCreate(Bundle state){
         Ui.applyAppearance(this);
@@ -91,15 +120,29 @@ public final class ImageViewerActivity extends Activity {
         title.setPadding(Ui.dp(this,13),0,Ui.dp(this,13),0);
         title.setOnClickListener(v->finish());
         root.addView(title,Ui.lp(this,-1,44));
-        FrameLayout stage=new FrameLayout(this);
+        stage=new FrameLayout(this);
         stage.setBackgroundColor(Color.BLACK);
         root.addView(stage,new LinearLayout.LayoutParams(-1,0,1));
-        canvas=new PhotoCanvas(this,this::swipePhoto);
+        previousCanvas=new ImageView(this);
+        previousCanvas.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        stage.addView(previousCanvas,new FrameLayout.LayoutParams(-1,-1));
+        nextCanvas=new ImageView(this);
+        nextCanvas.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        stage.addView(nextCanvas,new FrameLayout.LayoutParams(-1,-1));
+        canvas=new PhotoCanvas(this,new PhotoCanvas.SwipeListener(){
+            @Override public void onStart(){fingerDown=true;pendingIndex=-1;}
+            @Override public void onDrag(float dx){dragPhoto(dx);}
+            @Override public void onRelease(int direction){releasePhoto(direction);}
+            @Override public void onCancel(){fingerDown=false;slideBack();}
+        });
         stage.addView(canvas,new FrameLayout.LayoutParams(-1,-1));
+        stage.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,oright,ob)->
+                applyPageOffsets(slideX));
         info=Ui.text(this,"이미지 읽는 중...",12,0xFFA4B7BD,false);
         info.setGravity(Gravity.CENTER);
         root.addView(info,Ui.lp(this,-1,29));
-        load();
+        updateTitle();
+        requestPhoto(currentIndex());
     }
 
     private ImageFolderSequence.Photo currentPhoto() {
@@ -112,15 +155,173 @@ public final class ImageViewerActivity extends Activity {
                         getIntent().getStringExtra(EXTRA_PATH));
     }
 
-    private void swipePhoto(int direction) {
-        if(sequence==null || sequenceIndex<0) return;
-        int next=sequence.neighbor(sequenceIndex,direction);
-        if(next<0) {
-            info.setText(direction>0?"마지막 사진입니다.":"첫 번째 사진입니다.");
+    private int currentIndex() {
+        return sequence==null ? 0 : sequenceIndex;
+    }
+
+    private ImageFolderSequence.Photo photoAt(int index) {
+        return sequence==null ? currentPhoto() : sequence.photos.get(index);
+    }
+
+    private int neighbor(int direction) {
+        return sequence==null ? -1 :
+                sequence.neighbor(sequenceIndex,direction);
+    }
+
+    private void updateTitle() {
+        ImageFolderSequence.Photo photo=currentPhoto();
+        title.setText("‹  "+photo.name+
+                (sequence!=null && sequence.photos.size()>1 ?
+                        "  ("+(sequenceIndex+1)+"/"+sequence.photos.size()+")":""));
+    }
+
+    private void readyText() {
+        info.setText(sequence!=null && sequence.photos.size()>1 ?
+                "좌우로 밀어 사진 넘기기  ·  두 손가락 확대  ·  두 번 탭" :
+                "두 손가락 확대·축소  ·  한 손가락 이동  ·  두 번 탭하여 원래 크기");
+    }
+
+    private static void stopImage(ImageView view) {
+        Drawable d=view.getDrawable();
+        if(d instanceof Animatable)((Animatable)d).stop();
+    }
+
+    private Drawable previewCopy(Drawable original) {
+        Drawable.ConstantState state=original.getConstantState();
+        return state==null?original:state.newDrawable(getResources()).mutate();
+    }
+
+    private void showPreview(ImageView view,int index,boolean previous) {
+        int shown=previous?previewPrevious:previewNext;
+        if(index==shown)return;
+        stopImage(view);
+        LoadedPhoto photo=index<0?null:loaded.get(index);
+        view.setImageDrawable(photo==null?null:previewCopy(photo.drawable));
+        view.setVisibility(photo==null?View.INVISIBLE:View.VISIBLE);
+        if(previous)previewPrevious=photo==null?-2:index;
+        else previewNext=photo==null?-2:index;
+    }
+
+    private void refreshPreviews() {
+        showPreview(previousCanvas,neighbor(-1),true);
+        showPreview(nextCanvas,neighbor(1),false);
+        applyPageOffsets(slideX);
+    }
+
+    private void applyPageOffsets(float x) {
+        if(stage==null||canvas==null)return;
+        slideX=x;
+        float width=stage.getWidth();
+        canvas.setTranslationX(x);
+        previousCanvas.setTranslationX(
+                ImagePagerMotionPolicy.neighborOffset(x,width,-1));
+        nextCanvas.setTranslationX(
+                ImagePagerMotionPolicy.neighborOffset(x,width,1));
+    }
+
+    private void dragPhoto(float dx) {
+        fingerDx=dx;
+        if(animating||!currentReady)return;
+        int dir=dx<0f?1:-1;
+        int target=neighbor(dir);
+        boolean ready=target>=0 && loaded.containsKey(target);
+        applyPageOffsets(ImagePagerMotionPolicy.offset(
+                dx,stage.getWidth(),ready));
+    }
+
+    private void settle(float end,Runnable finished) {
+        if(slideAnimator!=null)slideAnimator.cancel();
+        if(stage.getWidth()<=0) {
+            applyPageOffsets(end);
+            finished.run();
             return;
         }
-        sequenceIndex=next;
-        load();
+        animating=true;
+        final ValueAnimator animation=ValueAnimator.ofFloat(slideX,end);
+        slideAnimator=animation;
+        animation.setDuration(ImagePagerMotionPolicy.durationMs(
+                slideX,end,stage.getWidth()));
+        animation.setInterpolator(new DecelerateInterpolator(1.35f));
+        animation.addUpdateListener(value->applyPageOffsets(
+                (Float)value.getAnimatedValue()));
+        animation.addListener(new AnimatorListenerAdapter(){
+            private boolean cancelled;
+            @Override public void onAnimationCancel(Animator a){cancelled=true;}
+            @Override public void onAnimationEnd(Animator a){
+                if(slideAnimator!=animation)return;
+                slideAnimator=null;
+                animating=false;
+                if(!cancelled)finished.run();
+                tryPendingPhoto();
+            }
+        });
+        animation.start();
+    }
+
+    private void slideBack() {
+        if(animating)return;
+        if(Math.abs(slideX)<0.5f) {
+            applyPageOffsets(0);
+            tryPendingPhoto();
+            return;
+        }
+        settle(0,()->applyPageOffsets(0));
+    }
+
+    private void releasePhoto(int direction) {
+        fingerDown=false;
+        fingerDx=0;
+        if(animating||!currentReady)return;
+        if(direction==0) {
+            slideBack();
+            return;
+        }
+        int target=neighbor(direction);
+        if(target<0) {
+            info.setText(direction>0?"마지막 사진입니다.":"첫 번째 사진입니다.");
+            slideBack();
+            return;
+        }
+        if(!loaded.containsKey(target)) {
+            pendingIndex=target;
+            pendingDirection=direction;
+            info.setText("다음 사진 준비 중…");
+            requestPhoto(target);
+            slideBack();
+            return;
+        }
+        slideTo(target,direction);
+    }
+
+    private void slideTo(int target,int direction) {
+        if(animating||fingerDown||!loaded.containsKey(target))return;
+        if(target!=neighbor(direction))return;
+        pendingIndex=-1;
+        refreshPreviews();
+        // Current and next photo move on ONE continuous filmstrip. The next
+        // bitmap is already at x +/- width before the first animation frame.
+        float end=direction>0?-stage.getWidth():stage.getWidth();
+        settle(end,()->{
+            stopImage(canvas);
+            sequenceIndex=target;
+            LoadedPhoto photo=loaded.get(target);
+            canvas.setImageDrawable(photo.drawable);
+            if(photo.drawable instanceof Animatable)
+                ((Animatable)photo.drawable).start();
+            currentReady=true;
+            applyPageOffsets(0);
+            updateTitle();
+            readyText();
+            refreshPreviews();
+            prefetchNeighbors();
+            trimLoadedPhotos();
+        });
+    }
+
+    private void tryPendingPhoto() {
+        if(destroyed||animating||fingerDown||pendingIndex<0 ||
+                !loaded.containsKey(pendingIndex))return;
+        slideTo(pendingIndex,pendingDirection);
     }
 
     private InputStream fromSource(ImageFolderSequence.Photo photo) throws Exception {
@@ -141,20 +342,41 @@ public final class ImageViewerActivity extends Activity {
         throw new IOException("이미지 위치가 올바르지 않습니다.");
     }
 
-    private void load(){
-        final ImageFolderSequence.Photo photo=currentPhoto();
-        final int request=++loadGeneration;
-        title.setText("‹  "+photo.name+
-                (sequence!=null && sequence.photos.size()>1 ?
-                        "  ("+(sequenceIndex+1)+"/"+sequence.photos.size()+")":""));
-        info.setText("이미지 읽는 중...");
-        Drawable oldPicture=canvas.getDrawable();
-        if(oldPicture instanceof Animatable)((Animatable)oldPicture).stop();
-        canvas.setImageDrawable(null);
+    private void prefetchNeighbors() {
+        int before=neighbor(-1),after=neighbor(1);
+        if(before>=0)requestPhoto(before);
+        if(after>=0)requestPhoto(after);
+    }
+
+    private void trimLoadedPhotos() {
+        // Three full-resolution images are enough for the interactive
+        // strip. A fourth may temporarily exist during a page transition.
+        while(loaded.size()>3) {
+            int current=currentIndex(),before=neighbor(-1),after=neighbor(1);
+            boolean removed=false;
+            Iterator<Map.Entry<Integer,LoadedPhoto>> it=
+                    loaded.entrySet().iterator();
+            while(it.hasNext()) {
+                Map.Entry<Integer,LoadedPhoto> entry=it.next();
+                int position=entry.getKey();
+                if(position==current||position==before||
+                        position==after||position==pendingIndex)continue;
+                entry.getValue().file.delete();
+                it.remove();
+                removed=true;
+                break;
+            }
+            if(!removed)break;
+        }
+    }
+
+    private void requestPhoto(int index){
+        if(index<0||destroyed||loaded.containsKey(index)||
+                !loading.add(index))return;
+        final ImageFolderSequence.Photo photo=photoAt(index);
         worker.execute(()->{
             File pending=null;
             try {
-                if(request!=loadGeneration)return;
                 File dir=new File(getCacheDir(),"image_viewer");
                 if(!dir.exists()&&!dir.mkdirs())
                     throw new IOException("이미지 캐시를 만들 수 없습니다.");
@@ -164,9 +386,8 @@ public final class ImageViewerActivity extends Activity {
                     if(input==null)throw new IOException("이미지를 열 권한이 없습니다.");
                     byte[] buffer=new byte[65536];long total=0;int read;
                     while((read=input.read(buffer))>=0) {
-                        if(request!=loadGeneration ||
-                                Thread.currentThread().isInterrupted())
-                            throw new IOException("이미지 전환으로 다운로드가 취소됐습니다.");
+                        if(Thread.currentThread().isInterrupted())
+                            throw new IOException("이미지 읽기가 중단됐습니다.");
                         if(read==0)continue;
                         total+=read;
                         if(total>MAX_IMAGE_BYTES)
@@ -175,28 +396,39 @@ public final class ImageViewerActivity extends Activity {
                     }
                 }
                 if(pending.length()==0)throw new IOException("비어 있는 이미지입니다.");
-                if(request!=loadGeneration){pending.delete();return;}
                 Drawable picture=decode(pending);
                 File completed=pending;
+                pending=null;
                 runOnUiThread(()->{
-                    if(isFinishing()||isDestroyed()||request!=loadGeneration){
+                    loading.remove(index);
+                    if(destroyed||isFinishing()||isDestroyed()){
                         completed.delete();return;
                     }
-                    File previous=staged;
-                    staged=completed;
-                    canvas.setImageDrawable(picture);
-                    if(picture instanceof Animatable)((Animatable)picture).start();
-                    if(previous!=null && !previous.equals(completed))
-                        previous.delete();
-                    info.setText(sequence!=null && sequence.photos.size()>1 ?
-                            "좌우 스와이프: 이전·다음 사진  ·  두 손가락 확대  ·  두 번 탭" :
-                            "두 손가락 확대·축소  ·  한 손가락 이동  ·  두 번 탭하여 원래 크기");
+                    loaded.put(index,new LoadedPhoto(completed,picture));
+                    if(index==currentIndex()&&!currentReady) {
+                        canvas.setImageDrawable(picture);
+                        if(picture instanceof Animatable)
+                            ((Animatable)picture).start();
+                        currentReady=true;
+                        readyText();
+                        prefetchNeighbors();
+                    }
+                    refreshPreviews();
+                    if(fingerDown&&fingerDx!=0)dragPhoto(fingerDx);
+                    tryPendingPhoto();
+                    trimLoadedPhotos();
                 });
             }catch(Exception e){
                 if(pending!=null)pending.delete();
                 final String error=e.getMessage()==null?"이미지 파일을 읽을 수 없습니다.":e.getMessage();
                 runOnUiThread(()->{
-                    if(!isFinishing()&&!isDestroyed()&&request==loadGeneration)
+                    loading.remove(index);
+                    if(destroyed||isFinishing()||isDestroyed())return;
+                    if(index==pendingIndex) {
+                        pendingIndex=-1;
+                        info.setText("다음 사진을 불러오지 못했습니다: "+error);
+                        slideBack();
+                    }else if(index==currentIndex()&&!currentReady)
                         info.setText(error);
                 });
             }
@@ -209,8 +441,10 @@ public final class ImageViewerActivity extends Activity {
                     (decoder,header,source)->{
                         int max=Math.max(header.getSize().getWidth(),
                                 header.getSize().getHeight());
-                        if(max>4096)decoder.setTargetSampleSize(
-                                Math.max(1,(int)Math.ceil(max/4096.0)));
+                        // Keep three images resident on a Fold without
+                        // decoding three 64MB 4096x4096 bitmaps at once.
+                        if(max>3072)decoder.setTargetSampleSize(
+                                Math.max(1,(int)Math.ceil(max/3072.0)));
                     });
         }
         BitmapFactory.Options bounds=new BitmapFactory.Options();
@@ -219,7 +453,7 @@ public final class ImageViewerActivity extends Activity {
         if(bounds.outWidth<=0||bounds.outHeight<=0)
             throw new IOException("지원되지 않는 이미지 형식입니다.");
         int sample=1;
-        while(Math.max(bounds.outWidth,bounds.outHeight)/sample>4096)sample*=2;
+        while(Math.max(bounds.outWidth,bounds.outHeight)/sample>3072)sample*=2;
         BitmapFactory.Options options=new BitmapFactory.Options();
         options.inSampleSize=sample;
         Bitmap bitmap=BitmapFactory.decodeFile(image.getAbsolutePath(),options);
@@ -228,20 +462,32 @@ public final class ImageViewerActivity extends Activity {
     }
 
     @Override protected void onDestroy(){
+        destroyed=true;
+        if(slideAnimator!=null)slideAnimator.cancel();
         worker.shutdownNow();
-        if(staged!=null)staged.delete();
+        if(canvas!=null)stopImage(canvas);
+        if(previousCanvas!=null)stopImage(previousCanvas);
+        if(nextCanvas!=null)stopImage(nextCanvas);
+        for(LoadedPhoto photo:loaded.values())photo.file.delete();
+        loaded.clear();
         super.onDestroy();
     }
 
     private static final class PhotoCanvas extends ImageView {
-        interface SwipeListener { void onSwipe(int direction); }
+        interface SwipeListener {
+            void onStart();
+            void onDrag(float dx);
+            void onRelease(int direction);
+            void onCancel();
+        }
         private final Matrix matrix=new Matrix();
         private final ScaleGestureDetector scaleDetector;
         private final GestureDetector tapDetector;
         private final SwipeListener swipeListener;
         private float zoom=1f, panX=0f,panY=0f,lastX,lastY;
         private float touchStartX,touchStartY;
-        private boolean multiTouch;
+        private boolean multiTouch,pageDragging;
+        private VelocityTracker velocity;
         PhotoCanvas(Activity activity, SwipeListener swipeListener){
             super(activity);
             this.swipeListener=swipeListener;
@@ -265,11 +511,28 @@ public final class ImageViewerActivity extends Activity {
         @Override public void setImageDrawable(Drawable image){
             super.setImageDrawable(image);
             zoom=1;panX=0;panY=0;
-            post(this::applyMatrix);
+            // The outgoing and incoming canvases must share the exact same
+            // fit transform on the *same* animation frame. Posting only to
+            // the next frame momentarily stretches the new picture with
+            // the old one's matrix (a visible snap on aspect-ratio changes).
+            if(getWidth()>0&&getHeight()>0)applyMatrix();
+            else post(this::applyMatrix);
         }
         @Override protected void onSizeChanged(int w,int h,int oldW,int oldH){
             super.onSizeChanged(w,h,oldW,oldH);
             post(this::applyMatrix);
+        }
+        private void trackRawVelocity(MotionEvent event) {
+            if(velocity==null)return;
+            // The photo itself is translated during the gesture. Android's
+            // event.getX() is LOCAL TO THAT MOVING VIEW and would oscillate
+            // (e.g. finger -100px -> photo -100px -> next local dx almost 0).
+            // Track stable physical screen coordinates for drag and fling.
+            MotionEvent raw=MotionEvent.obtain(event);
+            raw.offsetLocation(event.getRawX()-event.getX(),
+                    event.getRawY()-event.getY());
+            velocity.addMovement(raw);
+            raw.recycle();
         }
         private void applyMatrix(){
             Drawable drawable=getDrawable();
@@ -294,29 +557,57 @@ public final class ImageViewerActivity extends Activity {
             switch(event.getActionMasked()){
                 case MotionEvent.ACTION_DOWN:
                     lastX=event.getX();lastY=event.getY();
-                    touchStartX=lastX;touchStartY=lastY;
-                    multiTouch=false;return true;
+                    touchStartX=event.getRawX();touchStartY=event.getRawY();
+                    multiTouch=false;pageDragging=false;
+                    if(velocity!=null)velocity.recycle();
+                    velocity=VelocityTracker.obtain();
+                    trackRawVelocity(event);
+                    swipeListener.onStart();
+                    return true;
                 case MotionEvent.ACTION_POINTER_DOWN:
                 case MotionEvent.ACTION_POINTER_UP:
                     multiTouch=true;
+                    if(pageDragging)swipeListener.onCancel();
+                    pageDragging=false;
                     return true;
                 case MotionEvent.ACTION_MOVE:
-                    if(event.getPointerCount()==1&&!scaleDetector.isInProgress()&&zoom>1f){
-                        panX+=event.getX()-lastX;
-                        panY+=event.getY()-lastY;
-                        applyMatrix();
+                    trackRawVelocity(event);
+                    if(event.getPointerCount()==1&&!scaleDetector.isInProgress()){
+                        if(zoom>1.05f) {
+                            panX+=event.getX()-lastX;
+                            panY+=event.getY()-lastY;
+                            applyMatrix();
+                        }else if(!multiTouch) {
+                            float dx=event.getRawX()-touchStartX;
+                            float dy=event.getRawY()-touchStartY;
+                            if(!pageDragging&&ImagePagerMotionPolicy.horizontal(
+                                    dx,dy,getResources().getDisplayMetrics().density))
+                                pageDragging=true;
+                            if(pageDragging)swipeListener.onDrag(dx);
+                        }
                     }
                     lastX=event.getX();lastY=event.getY();
                     return true;
                 case MotionEvent.ACTION_UP:
-                    int direction=ImageSwipePolicy.direction(
-                            event.getX()-touchStartX,
-                            event.getY()-touchStartY,
-                            getWidth(),getResources().getDisplayMetrics().density,
-                            zoom,multiTouch||scaleDetector.isInProgress());
-                    if(direction!=0)swipeListener.onSwipe(direction);
+                    float velocityX=0;
+                    if(velocity!=null){
+                        trackRawVelocity(event);
+                        velocity.computeCurrentVelocity(1000);
+                        velocityX=velocity.getXVelocity();
+                        velocity.recycle();velocity=null;
+                    }
+                    int direction=pageDragging?
+                            ImagePagerMotionPolicy.releaseDirection(
+                                    event.getRawX()-touchStartX,
+                                    event.getRawY()-touchStartY,velocityX,
+                                    getWidth(),getResources().getDisplayMetrics().density,
+                                    zoom,multiTouch||scaleDetector.isInProgress()):0;
+                    swipeListener.onRelease(direction);
                     return true;
-                case MotionEvent.ACTION_CANCEL:return true;
+                case MotionEvent.ACTION_CANCEL:
+                    if(velocity!=null){velocity.recycle();velocity=null;}
+                    swipeListener.onCancel();
+                    return true;
             }
             return true;
         }
