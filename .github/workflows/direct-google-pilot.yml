@@ -42,6 +42,8 @@ jobs:
               $out -notmatch 'GOOGLE_NATIVE_READ_ONLY_AND_NEW_FILE_WRITE_MODE_PASS' -or
               $out -notmatch 'GOOGLE_DIRECT_DPAPI_OAUTH_ROUNDTRIP_AND_BACKUP_PASS' -or
               $out -notmatch 'GOOGLE_NATIVE_EXPLORER_REQUEST_CAP_AND_FAST_FAIL_PASS' -or
+              $out -notmatch 'GOOGLE_NATIVE_STALE_DIRECTORY_OFFLINE_VISIBLE_PASS' -or
+              $out -notmatch 'GOOGLE_NATIVE_BOUNDED_RANGE_READ_NO_FULL_FILE_BUFFER_PASS' -or
               $out -notmatch 'GOOGLE_DIRECT_CRASH_JOURNAL_EXPORT_NO_OVERWRITE_PASS' -or
               $out -notmatch 'GOOGLE_DIRECT_API_RANGE_READ_AND_NEW_RESUMABLE_UPLOAD_PASS') {
             throw 'Direct Google API/DPAPI/PKCE policy failed: ' + $out

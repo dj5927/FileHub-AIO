@@ -55,6 +55,8 @@ internal static class GoogleDirectApiPolicyTest
         internal bool ExistingRevisionPinned;
         internal bool ExistingRevisionUpdated;
         internal bool Limit;
+        internal bool Offline;
+        internal bool PermissionDenied;
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
@@ -65,9 +67,24 @@ internal static class GoogleDirectApiPolicyTest
             if (request.RequestUri?.Host != "127.0.0.1")
                 throw new InvalidOperationException("Direct API test attempted real network");
 
+            if (Offline)
+                throw new HttpRequestException("OFFLINE_DIRECTORY_TEST");
+            if (PermissionDenied)
+                return Response(HttpStatusCode.Forbidden,
+                    """{"error":{"errors":[{"reason":"insufficientFilePermissions"}]}}""");
+
             if (Limit)
                 return Response(HttpStatusCode.Forbidden,
                     """{"error":{"status":"PERMISSION_DENIED","errors":[{"reason":"rateLimitExceeded"}]}}""");
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri.AbsolutePath.EndsWith("/files/range_ignored") &&
+                request.RequestUri.Query.Contains("alt=media"))
+            {
+                // A broken proxy might return the whole multi-GB file
+                // with HTTP 200 even when Range: bytes=0-3 was requested.
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                { Content = new ByteArrayContent(new byte[100]) };
+            }
             if (request.Method == HttpMethod.Get &&
                 request.RequestUri.AbsolutePath.EndsWith("/files/fileA_1") &&
                 !request.RequestUri.Query.Contains("alt=media"))
@@ -287,6 +304,32 @@ internal static class GoogleDirectApiPolicyTest
             throw new InvalidOperationException("Direct Google metadata cache not reused");
         Console.WriteLine("GOOGLE_DIRECT_API_HTTPCLIENT_AND_FOLDER_CACHE_PASS");
 
+        using (var outageFake = new FakeGoogleServer())
+        using (var outageHttp = new HttpClient(outageFake))
+        {
+            var resilient = new GoogleDirectApiClient(outageHttp,
+                _ => Task.FromResult("TEST_TOKEN"),
+                new Uri("http://127.0.0.1:18220/drive/v3/"),
+                cacheTtl: TimeSpan.FromMilliseconds(10), maxRetries: 0);
+            var known = await resilient.ListChildrenAsync("root");
+            await Task.Delay(25);
+            outageFake.Offline = true;
+            var duringOutage = await resilient.ListChildrenAsync("root");
+            if (known.Count == 0 || duringOutage.Count != known.Count ||
+                duringOutage[0].Name != known[0].Name || outageFake.Lists != 1)
+                throw new IOException("Offline directory lost last verified entries");
+            outageFake.Offline = false;
+            outageFake.PermissionDenied = true;
+            try
+            {
+                await resilient.ListChildrenAsync("root");
+                throw new IOException("Google permission failure was masked by stale metadata");
+            }
+            catch (GoogleDirectApiClient.GoogleDirectApiException ex) when
+                (ex.HttpStatus == 403 && !ex.IsRateLimited) { }
+        }
+        Console.WriteLine("GOOGLE_NATIVE_STALE_DIRECTORY_OFFLINE_VISIBLE_PASS");
+
         var folder = await api.CreateFolderAsync("root", "새 폴더");
         if (folder.Id != "folder_1" || fake.Creates != 1)
             throw new InvalidOperationException("Google direct folder create failed");
@@ -304,6 +347,13 @@ internal static class GoogleDirectApiPolicyTest
         var ranged = await api.ReadRangeAsync("fileA_1", 2, 4);
         if (fake.Reads != 1 || Encoding.ASCII.GetString(ranged) != "CDEF")
             throw new InvalidOperationException("Google direct ranged content read failed");
+        bool oversizedRejected = false;
+        try { await api.ReadRangeAsync("range_ignored", 0, 4); }
+        catch (IOException ex) when (ex.Message.Contains("excess data",
+            StringComparison.Ordinal)) { oversizedRejected = true; }
+        if (!oversizedRejected)
+            throw new InvalidOperationException("Google ignored Range and consumed excess bytes");
+        Console.WriteLine("GOOGLE_NATIVE_BOUNDED_RANGE_READ_NO_FULL_FILE_BUFFER_PASS");
         using var uploadBody = new MemoryStream(Encoding.ASCII.GetBytes("DATA1234"));
         var uploaded = await api.UploadNewAsync("root", "new.txt", uploadBody);
         if (uploaded.Id != "pre_new_1" || fake.UploadStarts != 1 ||

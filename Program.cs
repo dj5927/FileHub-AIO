@@ -465,6 +465,24 @@ internal static class Program
             }
             return;
         }
+        if (args.Length == 2 && args[0].Equals(
+                "--google-direct-live-smoke-test", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (!Guid.TryParse(args[1], out var profileId) ||
+                    profileId == Guid.Empty)
+                    throw new ArgumentException("Invalid Google profile ID");
+                GoogleDirectLiveLab.RunAsync(profileId).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("GOOGLE_DIRECT_LIVE_SMOKE_FAILED category=" +
+                    ex.GetType().Name);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
         if (args.Contains("--google-publisher-oauth-policy-test",
                 StringComparer.OrdinalIgnoreCase))
         {

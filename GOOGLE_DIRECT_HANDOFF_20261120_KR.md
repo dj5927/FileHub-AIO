@@ -204,3 +204,45 @@ explicitly supported/approved OpenList desktop callback contract, live
 Chrome login, repeated large directory and file I/O benchmarks, and
 multi-PC Office conflict recovery. Do not ship/claim a finished Google
 production feature without these gates.
+
+## Latest direct-engine reliability pass (2026-11-21)
+
+1. Verified RaiDrive's **documented user experience** is Add Google Drive,
+   browser Google login, approve, Explorer mount. The RaiDrive engine is
+   proprietary; its internal client cannot simply be copied or packaged.
+2. Inspected OpenList APIPages implementation and public-service docs. Its
+   shared public OAuth requires obtaining the tokens from an OpenList web
+   page. There is no documented supported desktop app callback. No Chrome
+   debugging, browser-token scraping, copied OAuth identity, invisible
+   clipboard watching or hidden OpenList proxy was added.
+3. Native Google folder metadata now retains previously verified listing
+   for a maximum of **five minutes** if the Google network is temporarily
+   unavailable or rate limited. Permanent auth/permission 403 is *not*
+   disguised as a stale cached directory, and explicit mutations invalidate
+   the previous list. Regression marker:
+   `GOOGLE_NATIVE_STALE_DIRECTORY_OFFLINE_VISIBLE_PASS`.
+4. Native ranged reads stream with an upper bound rather than loading the
+   response body before checking its size. If Google or a proxy ignores a
+   Range request on a large file, the client stops before allocating an
+   unbounded download. Regression marker:
+   `GOOGLE_NATIVE_BOUNDED_RANGE_READ_NO_FULL_FILE_BUFFER_PASS`.
+5. Added a real-account test command (explicit only):
+   `FileHubAIO.exe --google-direct-live-smoke-test PROFILE_GUID`.
+   It requires a valid native FileHub Chrome OAuth grant. It creates ONE
+   unique temporary folder, tests root listing, upload, SHA256 read-back,
+   rename and always attempts to trash ONLY its own test folder. Logs
+   contain operation timing and result categories, never token/file IDs.
+   This was compiled and reviewed, but could **not** be executed on the
+   real Google Drive because the publisher OAuth identity is not provided.
+6. The accessible PC has one old shared-rclone credential file and zero
+   native FileHub grants. Its shared-client refresh token was **not**
+   silently reused for native impersonation, since Google 403 rate limits
+   and the user's app consent would remain mismatched.
+7. Current official Google documentation classifies full Drive scope as
+   **restricted**. FileHub needs the publisher app's OAuth configuration
+   and appropriate testing/verification; no code change can issue a real
+   Google app identity on behalf of a missing authorized Cloud project.
+
+Do not claim 100% product completion, publish a working-download link,
+or switch stable `pc/windows` until real Chrome consent, sustained live
+read/write, disconnect/reconnect and Office save tests all pass.

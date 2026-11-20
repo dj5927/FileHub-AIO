@@ -34,7 +34,8 @@ internal sealed class GoogleDirectApiClient
         long Size, string? Version, DateTimeOffset? Modified,
         string MimeType = "", string? Md5Checksum = null,
         string? HeadRevisionId = null);
-    private sealed record CachedChildren(DateTimeOffset Expires, IReadOnlyList<Item> Items);
+    private sealed record CachedChildren(DateTimeOffset Expires,
+        DateTimeOffset StaleUntil, IReadOnlyList<Item> Items);
 
     internal GoogleDirectApiClient(HttpClient http,
         Func<CancellationToken, Task<string>> accessToken,
@@ -203,26 +204,41 @@ internal sealed class GoogleDirectApiClient
             if (_folderCache.TryGetValue(parentId, out cached) &&
                 cached.Expires > DateTimeOffset.UtcNow) return cached.Items;
             var files = new List<Item>();
-            string? token = null;
-            do
+            try
             {
-                string query = "'" + parentId + "' in parents and trashed = false";
-                string relative = "files?pageSize=1000&supportsAllDrives=true&" +
-                    "includeItemsFromAllDrives=true&q=" + Uri.EscapeDataString(query) +
-                    "&fields=" + Uri.EscapeDataString(
-                        "nextPageToken,files(id,name,mimeType,size,modifiedTime,version,md5Checksum,headRevisionId)");
-                if (token is not null)
-                    relative += "&pageToken=" + Uri.EscapeDataString(token);
-                using var doc = await SendJsonAsync(HttpMethod.Get, relative, null,
-                    cancel).ConfigureAwait(false);
-                if (doc.RootElement.TryGetProperty("files", out var list))
-                    foreach (var item in list.EnumerateArray()) files.Add(ParseItem(item));
-                token = doc.RootElement.TryGetProperty("nextPageToken", out var next) ?
-                    next.GetString() : null;
-            } while (!string.IsNullOrWhiteSpace(token));
+                string? token = null;
+                do
+                {
+                    string query = "'" + parentId + "' in parents and trashed = false";
+                    string relative = "files?pageSize=1000&supportsAllDrives=true&" +
+                        "includeItemsFromAllDrives=true&q=" + Uri.EscapeDataString(query) +
+                        "&fields=" + Uri.EscapeDataString(
+                            "nextPageToken,files(id,name,mimeType,size,modifiedTime,version,md5Checksum,headRevisionId)");
+                    if (token is not null)
+                        relative += "&pageToken=" + Uri.EscapeDataString(token);
+                    using var doc = await SendJsonAsync(HttpMethod.Get, relative, null,
+                        cancel).ConfigureAwait(false);
+                    if (doc.RootElement.TryGetProperty("files", out var list))
+                        foreach (var item in list.EnumerateArray()) files.Add(ParseItem(item));
+                    token = doc.RootElement.TryGetProperty("nextPageToken", out var next) ?
+                        next.GetString() : null;
+                } while (!string.IsNullOrWhiteSpace(token));
+            }
+            catch (IOException ex) when (!cancel.IsCancellationRequested &&
+                cached is not null && cached.StaleUntil > DateTimeOffset.UtcNow &&
+                (ex is not GoogleDirectApiException apiError ||
+                    apiError.IsRateLimited || apiError.HttpStatus >= 500))
+            {
+                // Temporary Google outage must not make Explorer display an
+                // apparently empty folder. Only serve previously VERIFIED
+                // metadata for up to five minutes; never cache permission
+                // failures or other non-transient Google HTTP errors.
+                return cached.Items;
+            }
             var result = files.AsReadOnly();
-            _folderCache[parentId] =
-                new CachedChildren(DateTimeOffset.UtcNow + _cacheTtl, result);
+            var current = DateTimeOffset.UtcNow;
+            _folderCache[parentId] = new CachedChildren(
+                current + _cacheTtl, current + TimeSpan.FromMinutes(5), result);
             return result;
         }
         finally { gate.Release(); }
@@ -262,7 +278,20 @@ internal sealed class GoogleDirectApiClient
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer",
             await _accessToken(cancel).ConfigureAwait(false));
         request.Headers.Range = new RangeHeaderValue(offset, offset + length - 1);
-        using var result = await SendBoundedAsync(request, cancel).ConfigureAwait(false);
+        if (Stopwatch.GetTimestamp() < Interlocked.Read(ref _unavailableUntil))
+            throw new IOException("Google network is temporarily unavailable");
+        if (!await _requestSlots.WaitAsync(TimeSpan.FromSeconds(2), cancel)
+            .ConfigureAwait(false))
+            throw new IOException("Google API request queue is busy; retry later");
+        try
+        {
+        // ContentRead would buffer the ENTIRE response before validating
+        // Range. A proxy ignoring Range on a multi-GB file could otherwise
+        // exhaust RAM and freeze Explorer. Hold the slot while streaming and
+        // stop as soon as one byte beyond the requested length is received.
+        using var result = await _http.SendAsync(request,
+            HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+        Interlocked.Exchange(ref _transportFailures, 0);
         if (result.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
             return [];
         // Never serve a 200 full file body for an offset read. This could
@@ -273,17 +302,32 @@ internal sealed class GoogleDirectApiClient
         if (result.StatusCode == HttpStatusCode.PartialContent &&
             result.Content.Headers.ContentRange?.From != offset)
             throw new IOException("Google returned an unexpected Content-Range");
+        if (result.Content.Headers.ContentLength > length)
+            throw new IOException("Google ignored byte range or returned excess data");
         using var content = await result.Content.ReadAsStreamAsync(cancel);
         using var limited = new MemoryStream(Math.Min(length, 65536));
         byte[] buffer = new byte[81920];
         int got;
-        while ((got = await content.ReadAsync(buffer, cancel)) > 0)
+        while ((got = await content.ReadAsync(buffer.AsMemory(0,
+            (int)Math.Min(buffer.Length, length - limited.Length + 1)), cancel)) > 0)
         {
             if (limited.Length + got > length)
                 throw new IOException("Google returned more bytes than requested");
             await limited.WriteAsync(buffer.AsMemory(0, got), cancel);
         }
         return limited.ToArray();
+        }
+        catch (TaskCanceledException ex) when (!cancel.IsCancellationRequested)
+        {
+            NoteTransportFailure();
+            throw new IOException("Google ranged download timed out", ex);
+        }
+        catch (HttpRequestException ex)
+        {
+            NoteTransportFailure();
+            throw new IOException("Google ranged download network failed", ex);
+        }
+        finally { _requestSlots.Release(); }
     }
 
     // ONLY create a new item; never use this method to overwrite an existing
