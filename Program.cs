@@ -449,7 +449,11 @@ internal static class Program
         if (args.Contains("--google-direct-api-policy-test",
                 StringComparer.OrdinalIgnoreCase))
         {
-            try { GoogleDirectApiPolicyTest.RunAsync().GetAwaiter().GetResult(); }
+            try
+            {
+                GoogleDirectBrowserAuth.PolicyTest();
+                GoogleDirectApiPolicyTest.RunAsync().GetAwaiter().GetResult();
+            }
             catch (Exception ex)
             {
                 Console.Error.WriteLine("GOOGLE_DIRECT_API_POLICY_FAILED " +

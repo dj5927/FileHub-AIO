@@ -13,6 +13,9 @@ internal static class GoogleDirectApiPolicyTest
         internal int Lists;
         internal int Creates;
         internal int Renames;
+        internal int Reads;
+        internal int Uploads;
+        internal int UploadStarts;
         internal bool Limit;
 
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -27,6 +30,46 @@ internal static class GoogleDirectApiPolicyTest
             if (Limit)
                 return Response(HttpStatusCode.Forbidden,
                     """{"error":{"status":"PERMISSION_DENIED","errors":[{"reason":"rateLimitExceeded"}]}}""");
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri.AbsolutePath.EndsWith("/files/fileA_1") &&
+                request.RequestUri.Query.Contains("alt=media"))
+            {
+                if (request.Headers.Range is not { } range ||
+                    range.Ranges.First().From != 2 ||
+                    range.Ranges.First().To != 5)
+                    throw new InvalidOperationException("Direct API sent an incorrect byte range");
+                Interlocked.Increment(ref Reads);
+                var response = new HttpResponseMessage(HttpStatusCode.PartialContent)
+                { Content = new ByteArrayContent(Encoding.ASCII.GetBytes("CDEF")) };
+                response.Content.Headers.ContentRange =
+                    new System.Net.Http.Headers.ContentRangeHeaderValue(2, 5, 10);
+                return response;
+            }
+            if (request.Method == HttpMethod.Post &&
+                request.RequestUri.AbsolutePath.EndsWith("/upload/drive/v3/files"))
+            {
+                using var json = JsonDocument.Parse(await request.Content!
+                    .ReadAsStringAsync(cancellationToken));
+                if (json.RootElement.GetProperty("name").GetString() != "new.txt" ||
+                    json.RootElement.GetProperty("parents")[0].GetString() != "root")
+                    throw new InvalidOperationException("Direct new file upload targeted the wrong object");
+                Interlocked.Increment(ref UploadStarts);
+                var response = Response(HttpStatusCode.OK, "{}");
+                response.Headers.Location = new Uri("http://127.0.0.1:18220/session/1");
+                return response;
+            }
+            if (request.Method == HttpMethod.Put &&
+                request.RequestUri.AbsolutePath == "/session/1")
+            {
+                string content = await request.Content!.ReadAsStringAsync(cancellationToken);
+                var range = request.Content.Headers.ContentRange;
+                if (content != "DATA1234" || range?.From != 0 ||
+                    range.To != 7 || range.Length != 8)
+                    throw new InvalidOperationException("Direct Google upload byte range or content mismatch");
+                Interlocked.Increment(ref Uploads);
+                return Response(HttpStatusCode.OK,
+                    """{"id":"new_file_1","name":"new.txt","mimeType":"application/octet-stream","size":"8","version":"1"}""");
+            }
             if (request.Method == HttpMethod.Get &&
                 request.RequestUri.AbsolutePath.EndsWith("/files"))
             {
@@ -122,6 +165,16 @@ internal static class GoogleDirectApiPolicyTest
         if (fake.Lists != 3)
             throw new InvalidOperationException("Rename did not invalidate folder cache");
         Console.WriteLine("GOOGLE_DIRECT_API_FOLDER_CREATE_RENAME_INVALIDATE_PASS");
+
+        var ranged = await api.ReadRangeAsync("fileA_1", 2, 4);
+        if (fake.Reads != 1 || Encoding.ASCII.GetString(ranged) != "CDEF")
+            throw new InvalidOperationException("Google direct ranged content read failed");
+        using var uploadBody = new MemoryStream(Encoding.ASCII.GetBytes("DATA1234"));
+        var uploaded = await api.UploadNewAsync("root", "new.txt", uploadBody);
+        if (uploaded.Id != "new_file_1" || fake.UploadStarts != 1 ||
+            fake.Uploads != 1)
+            throw new InvalidOperationException("Direct Google new-file upload failed");
+        Console.WriteLine("GOOGLE_DIRECT_API_RANGE_READ_AND_NEW_RESUMABLE_UPLOAD_PASS");
 
         fake.Limit = true;
         api.InvalidateFolder("root");

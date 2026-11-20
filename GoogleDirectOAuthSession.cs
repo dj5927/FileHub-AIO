@@ -52,19 +52,20 @@ internal sealed class GoogleDirectOAuthSession
     {
         if (profile.Protocol != "GoogleDrive")
             throw new InvalidOperationException("Not a Google Drive profile");
-        // The current user has a shared-client configuration. It must
-        // explicitly fail here rather than silently restarting the same
-        // throttled credentials with a new backend.
-        if (GoogleDriveAuth.ClientMode(profile) != "custom")
-            throw new InvalidOperationException(
-                "Direct Google API requires a dedicated OAuth Desktop client");
-        string raw = File.ReadAllText(GoogleDriveAuth.ConfigPath(profile),
-            Encoding.UTF8);
+        // Direct engine never invokes rclone, including for OAuth refresh.
+        // Read-only import of an existing profile is an interim bridge to
+        // a proper FileHub-owned browser PKCE onboarding flow.
+        string path = Path.Combine(AppStore.DirectoryPath, "google-auth",
+            profile.Id.ToString("N") + ".conf");
+        string raw = File.ReadAllText(path, Encoding.UTF8);
         static string Property(string source, string name) =>
             Regex.Match(source, @"(?m)^\s*" + Regex.Escape(name) +
                 @"\s*=\s*([^\r\n]+)").Groups[1].Value.Trim();
         string clientId = Property(raw, "client_id");
         string clientSecret = Property(raw, "client_secret");
+        if (string.IsNullOrWhiteSpace(clientId))
+            throw new InvalidOperationException(
+                "Google direct engine requires a dedicated OAuth Desktop client");
         string tokenJson = Property(raw, "token");
         using var json = JsonDocument.Parse(tokenJson);
         var token = json.RootElement;

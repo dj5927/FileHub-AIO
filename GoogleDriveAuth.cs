@@ -169,6 +169,40 @@ internal static class GoogleDriveAuth
         File.Move(temporary, destination, overwrite: true);
     }
 
+    // Browser PKCE can validate and preserve an account without executing
+    // rclone. Only swap the previous credential after a successful read-only
+    // Google Drive REST request.
+    internal static async Task SaveNativeBrowserAuthorizationAsync(
+        NasProfile profile, string jsonToken, string clientId, string clientSecret,
+        CancellationToken cancellationToken)
+    {
+        using var json = JsonDocument.Parse(jsonToken);
+        string? access = json.RootElement.GetProperty("access_token").GetString();
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            "https://www.googleapis.com/drive/v3/about?fields=user(permissionId)");
+        request.Headers.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", access);
+        using var response = await http.SendAsync(request, cancellationToken)
+            .ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            throw new IOException("Google direct OAuth validation HTTP " +
+                (int)response.StatusCode + ". Previous login is unchanged.");
+        string candidate = BuildConfig(profile, jsonToken, clientId, clientSecret);
+        SecureDirectory();
+        string current = ConfigPath(profile);
+        string temporary = current + "." + Guid.NewGuid().ToString("N") + ".native";
+        try
+        {
+            File.WriteAllText(temporary, candidate, new UTF8Encoding(false));
+            AtomicReplaceWithBackup(temporary, current,
+                PreviousAuthorizationPath(profile));
+            AppStore.Log("GOOGLE_NATIVE_BROWSER_OAUTH_SAVED profile=" +
+                profile.Id + " rcloneAuth=false previousSaved=true");
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+
     // A token acquired for a new OAuth app must be tested before replacing
     // the user's existing working account. Validate a disposable rclone
     // configuration and atomically save it with a rollback backup.
@@ -485,6 +519,42 @@ internal sealed class GoogleDriveLoginDialog : Form
         }, height: 34);
         cancel.SetBounds(520, 423, 114, 34);
         Controls.Add(cancel);
+        // Publisher-owned OAuth credentials are configured once when the
+        // application is built. End users only click the browser login.
+        try
+        {
+            if (GoogleOAuthClientFile.TryReadPackagedClient(
+                out string bundledId, out string bundledSecret))
+            {
+                idBox.Text = bundledId;
+                secretBox.Text = bundledSecret;
+                sharedClientConsent.Checked = false;
+                idBox.Visible = false;
+                secretBox.Visible = false;
+                sharedClientConsent.Visible = false;
+                var cover = new Panel { BackColor = ModernTheme.Background };
+                cover.SetBounds(20, 78, 630, 280);
+                Controls.Add(cover);
+                var heading = ModernTheme.Label("Google 계정 연결", 13f, true);
+                heading.SetBounds(10, 42, 600, 40);
+                cover.Controls.Add(heading);
+                var instructions = ModernTheme.Label(
+                    "아래 [Google 계정 연결] 버튼을 누르면 기본 브라우저가 열립니다." +
+                    "\nGoogle 계정 선택 → 접근 승인으로 인증이 완료됩니다." +
+                    "\n별도의 API 키나 Client ID 입력은 필요하지 않습니다.",
+                    10f, false);
+                instructions.SetBounds(10, 110, 605, 112);
+                cover.Controls.Add(instructions);
+                cover.BringToFront();
+                state.Text = "Google 계정 연결을 누르면 브라우저 인증이 시작됩니다.";
+            }
+        }
+        catch (Exception ex) when (ex is IOException or ArgumentException)
+        {
+            AppStore.Log("GOOGLE_PACKAGED_OAUTH_CONFIG_INVALID type=" +
+                ex.GetType().Name);
+            state.Text = "앱에 포함된 Google 인증 설정을 확인해야 합니다.";
+        }
         idBox.TextChanged += (_, _) => RefreshLoginAvailability();
         secretBox.TextChanged += (_, _) => RefreshLoginAvailability();
         sharedClientConsent.CheckedChanged += (_, _) => RefreshLoginAvailability();
@@ -554,15 +624,31 @@ internal sealed class GoogleDriveLoginDialog : Form
         try
         {
             state.Text = "구글 인증 주소를 준비 중입니다...";
-            await GoogleDriveAuth.AuthorizeAsync(profile, idBox.Text, secretBox.Text,
-                message => { if (!IsDisposed) BeginInvoke(() => state.Text = message); },
-                url => {
+            Action<string> update = message => {
+                if (!IsDisposed) BeginInvoke(() => state.Text = message);
+            };
+            Action<string> browser = url => {
                     if (IsDisposed) return;
                     BeginInvoke(() => {
                         try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
                         catch (Exception ex) { state.Text = "브라우저를 열지 못했습니다: " + ex.Message; }
                     });
-                }, cts.Token);
+            };
+            if (!string.IsNullOrWhiteSpace(idBox.Text))
+            {
+                string token = await GoogleDirectBrowserAuth.AuthorizeAsync(
+                    idBox.Text.Trim(), secretBox.Text.Trim(),
+                    update, browser, cts.Token);
+                await GoogleDriveAuth.SaveNativeBrowserAuthorizationAsync(
+                    profile, token, idBox.Text.Trim(), secretBox.Text.Trim(), cts.Token);
+            }
+            else
+            {
+                // Existing shared-client option remains explicitly opt-in.
+                // Native OAuth requires an app-owned Desktop OAuth client.
+                await GoogleDriveAuth.AuthorizeAsync(profile, "", "",
+                    update, browser, cts.Token);
+            }
             // Clear busy BEFORE Close(): FormClosing cancels a close while
             // OAuth is still running. The token is already persisted here.
             busy = false;

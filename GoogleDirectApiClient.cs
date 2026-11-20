@@ -31,7 +31,8 @@ internal sealed class GoogleDirectApiClient
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
 
     internal sealed record Item(string Id, string Name, bool IsFolder,
-        long Size, string? Version, DateTimeOffset? Modified);
+        long Size, string? Version, DateTimeOffset? Modified,
+        string MimeType = "");
     private sealed record CachedChildren(DateTimeOffset Expires, IReadOnlyList<Item> Items);
 
     internal GoogleDirectApiClient(HttpClient http,
@@ -139,7 +140,7 @@ internal sealed class GoogleDirectApiClient
         DateTimeOffset? modified = value.TryGetProperty("modifiedTime", out var date) &&
             DateTimeOffset.TryParse(date.GetString(), out var parsedTime) ?
                 parsedTime : null;
-        return new Item(id, name, mime == FolderMime, size, version, modified);
+        return new Item(id, name, mime == FolderMime, size, version, modified, mime);
     }
 
     internal async Task<IReadOnlyList<Item>> ListChildrenAsync(
@@ -182,6 +183,148 @@ internal sealed class GoogleDirectApiClient
 
     internal void InvalidateFolder(string parentId) =>
         _folderCache.TryRemove(parentId, out _);
+
+    internal async Task<Item?> GetFileAsync(string fileId,
+        CancellationToken cancel = default)
+    {
+        fileId = ValidId(fileId);
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            new Uri(_api, "files/" + fileId +
+                "?fields=id,name,mimeType,size,modifiedTime,version&supportsAllDrives=true"));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer",
+            await _accessToken(cancel).ConfigureAwait(false));
+        using var result = await _http.SendAsync(request,
+            HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+        if (result.StatusCode == HttpStatusCode.NotFound) return null;
+        if (!result.IsSuccessStatusCode)
+            throw new IOException("Google file metadata HTTP " + (int)result.StatusCode);
+        using var doc = await JsonDocument.ParseAsync(
+            await result.Content.ReadAsStreamAsync(cancel),
+            cancellationToken: cancel).ConfigureAwait(false);
+        return ParseItem(doc.RootElement);
+    }
+
+    internal async Task<byte[]> ReadRangeAsync(string fileId, long offset,
+        int length, CancellationToken cancel = default)
+    {
+        fileId = ValidId(fileId);
+        if (offset < 0 || length < 0 || length > 8 * 1024 * 1024)
+            throw new ArgumentOutOfRangeException(nameof(length));
+        if (length == 0) return [];
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            new Uri(_api, "files/" + fileId + "?alt=media&supportsAllDrives=true"));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer",
+            await _accessToken(cancel).ConfigureAwait(false));
+        request.Headers.Range = new RangeHeaderValue(offset, offset + length - 1);
+        using var result = await _http.SendAsync(request,
+            HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+        if (result.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
+            return [];
+        // Never serve a 200 full file body for an offset read. This could
+        // silently splice the wrong bytes into a Windows application's read.
+        if (result.StatusCode != HttpStatusCode.PartialContent &&
+            !(result.StatusCode == HttpStatusCode.OK && offset == 0))
+            throw new IOException("Google ranged download HTTP " + (int)result.StatusCode);
+        if (result.StatusCode == HttpStatusCode.PartialContent &&
+            result.Content.Headers.ContentRange?.From != offset)
+            throw new IOException("Google returned an unexpected Content-Range");
+        using var content = await result.Content.ReadAsStreamAsync(cancel);
+        using var limited = new MemoryStream(Math.Min(length, 65536));
+        byte[] buffer = new byte[81920];
+        int got;
+        while ((got = await content.ReadAsync(buffer, cancel)) > 0)
+        {
+            if (limited.Length + got > length)
+                throw new IOException("Google returned more bytes than requested");
+            await limited.WriteAsync(buffer.AsMemory(0, got), cancel);
+        }
+        return limited.ToArray();
+    }
+
+    // ONLY create a new item; never use this method to overwrite an existing
+    // Drive ID. Existing-file updates need an independently proven conflict
+    // protocol (Drive metadata version alone is not an atomic write CAS).
+    internal async Task<Item> UploadNewAsync(string parentId, string name,
+        Stream data, CancellationToken cancel = default)
+    {
+        parentId = ValidId(parentId);
+        if (string.IsNullOrWhiteSpace(name) || name.Length > 255 ||
+            name.Contains('/') || name.Contains('\\') || !data.CanSeek ||
+            data.Position != 0)
+            throw new ArgumentException("Invalid new Google file payload");
+        var upload = new Uri(_api, "../../upload/drive/v3/files?" +
+            "uploadType=resumable&fields=id,name,mimeType,size,modifiedTime,version");
+        using var start = new HttpRequestMessage(HttpMethod.Post, upload)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                name, parents = new[] { parentId },
+                mimeType = "application/octet-stream"
+            }), Encoding.UTF8, "application/json")
+        };
+        start.Headers.Authorization = new AuthenticationHeaderValue("Bearer",
+            await _accessToken(cancel).ConfigureAwait(false));
+        start.Headers.TryAddWithoutValidation("X-Upload-Content-Type",
+            "application/octet-stream");
+        start.Headers.TryAddWithoutValidation("X-Upload-Content-Length",
+            data.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var accepted = await _http.SendAsync(start,
+            HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+        if (!accepted.IsSuccessStatusCode || accepted.Headers.Location is not { } location)
+            throw new IOException("Google resumable create initiation HTTP " +
+                (int)accepted.StatusCode);
+        if (!location.IsAbsoluteUri ||
+            (location.Scheme != Uri.UriSchemeHttps &&
+                !(_api.IsLoopback && location.IsLoopback &&
+                  location.Scheme == Uri.UriSchemeHttp)) ||
+            !string.Equals(location.Host, _api.Host, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Google returned an unsafe upload session endpoint");
+        // Chunk size is a multiple of 256 KiB, as required by Drive.
+        const int chunkSize = 8 * 1024 * 1024;
+        long sent = 0;
+        bool empty = data.Length == 0;
+        while (sent < data.Length || empty)
+        {
+            cancel.ThrowIfCancellationRequested();
+            int size = empty ? 0 : (int)Math.Min(chunkSize, data.Length - sent);
+            byte[] chunk = new byte[size];
+            int total = 0;
+            while (total < size)
+            {
+                int n = await data.ReadAsync(chunk.AsMemory(total), cancel);
+                if (n == 0) throw new EndOfStreamException("Local upload stage truncated");
+                total += n;
+            }
+            using var put = new HttpRequestMessage(HttpMethod.Put, location)
+            {
+                Content = new ByteArrayContent(chunk)
+            };
+            put.Headers.Authorization = new AuthenticationHeaderValue("Bearer",
+                await _accessToken(cancel).ConfigureAwait(false));
+            put.Content.Headers.ContentType =
+                new MediaTypeHeaderValue("application/octet-stream");
+            put.Content.Headers.ContentRange = data.Length == 0
+                ? new ContentRangeHeaderValue(0)
+                : new ContentRangeHeaderValue(sent, sent + size - 1, data.Length);
+            using var result = await _http.SendAsync(put,
+                HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+            if (result.IsSuccessStatusCode)
+            {
+                using var doc = await JsonDocument.ParseAsync(
+                    await result.Content.ReadAsStreamAsync(cancel),
+                    cancellationToken: cancel).ConfigureAwait(false);
+                var uploaded = ParseItem(doc.RootElement);
+                InvalidateFolder(parentId);
+                return uploaded;
+            }
+            if ((int)result.StatusCode != 308)
+                throw new IOException("Google resumable upload HTTP " +
+                    (int)result.StatusCode + "; local stage retained");
+            sent += size;
+            empty = false;
+        }
+        throw new IOException("Google resumable upload not confirmed; local stage retained");
+    }
 
     internal async Task<Item> CreateFolderAsync(string parentId, string name,
         CancellationToken cancel = default)
