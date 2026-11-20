@@ -49,7 +49,7 @@ index 6c0cb7d..209c451 100644
  	vfs.usageMu.Lock()
  	defer vfs.usageMu.Unlock()
  	total, used, free = -1, -1, -1
-@@ -755,6 +762,53 @@ func (vfs *VFS) Statfs() (total, used, free int64) {
+@@ -755,6 +762,56 @@ func (vfs *VFS) Statfs() (total, used, free int64) {
  	return
  }
  
@@ -59,6 +59,9 @@ index 6c0cb7d..209c451 100644
 +// The FileHub launcher opts into this path for its Google-specific engine.
 +func (vfs *VFS) statfsAsyncAbout(about func(context.Context) (*fs.Usage, error)) (total, used, free int64) {
 +	vfs.usageMu.Lock()
++	// Let the initial mount/root enumeration finish before issuing About.
++	// This separate Google API request can stall for 30 seconds or more.
++	if vfs.usageRefreshAfter.IsZero() { vfs.usageRefreshAfter = time.Now().Add(15 * time.Second) }
 +	if !vfs.usageRefreshing && !time.Now().Before(vfs.usageRefreshAfter) {
 +		vfs.usageRefreshing = true
 +		vfs.usageRefreshAfter = time.Now().Add(30 * time.Second)

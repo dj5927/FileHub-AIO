@@ -31,6 +31,7 @@ internal static class Program
                         throw new IOException("Non-WebDAV backend was switched unexpectedly: " + provider);
                 }
                 Console.WriteLine("DIRECT_WEBDAV_ONLY_PROVIDER_ROUTING_POLICY_PASS");
+                RemoteMount.DirectWebDavUploadStatusPolicyTest();
             }
             catch (Exception ex)
             {

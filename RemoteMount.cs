@@ -21,12 +21,14 @@ internal static class RemoteMount
     private static readonly ConcurrentDictionary<Guid,string> IntegrityAlerts = new();
     internal static string? GetIntegrityAlert(Guid id) =>
         IntegrityAlerts.TryGetValue(id, out var message) ? message : null;
-    internal sealed record UploadState(int Queued, int Uploading, int Errors, bool OutOfSpace)
+    internal sealed record UploadState(int Queued, int Uploading, int Errors,
+        bool OutOfSpace, string? BlockedReason = null)
     {
         public bool IsSafeToDisconnect => Queued == 0 && Uploading == 0 &&
-            Errors == 0 && !OutOfSpace;
+            Errors == 0 && !OutOfSpace && BlockedReason is null;
         public string Summary => $"업로드 대기 {Queued}개 / 전송 중 {Uploading}개 / 실패 {Errors}개" +
-            (OutOfSpace ? " / 캐시 공간 부족" : "");
+            (OutOfSpace ? " / 캐시 공간 부족" : "") +
+            (BlockedReason is null ? "" : " / " + BlockedReason);
     }
     private static readonly Dictionary<Guid, Instance> Running = [];
     private static readonly object Guard = new();
@@ -814,11 +816,7 @@ internal static class RemoteMount
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
             string status = await DirectCommandAsync(profileId, "STATUS", timeout.Token);
-            if (!status.StartsWith("READY ", StringComparison.Ordinal))
-                throw new IOException("Direct WebDAV status channel is unavailable.");
-            bool safe = status.EndsWith(" SAFE", StringComparison.Ordinal);
-            return safe ? new UploadState(0, 0, 0, false)
-                : new UploadState(1, 0, 0, false);
+            return ParseDirectWebDavUploadStatus(status);
         }
         // rclone's local control channel sometimes fails to respond while
         // its VFS is busy serving Explorer. Do not confuse a SINGLE 6-second
@@ -859,6 +857,64 @@ internal static class RemoteMount
                 await Task.Delay(350, cancellationToken);
             }
         }
+    }
+
+    // The direct WinFsp bridge's BUSY flag is an unmount guard, not a VFS
+    // upload. Keep the guard while reporting its real cause.
+    internal static UploadState ParseDirectWebDavUploadStatus(string status)
+    {
+        string[] fields = status.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (fields.Length < 6 || fields[0] != "READY" ||
+            !int.TryParse(fields[1], out _) ||
+            fields[^1] is not ("SAFE" or "BUSY"))
+            throw new IOException("Direct WebDAV status channel is unavailable.");
+        static int Count(string[] tokens, string key)
+        {
+            string prefix = key + "=";
+            string? value = tokens.FirstOrDefault(t =>
+                t.StartsWith(prefix, StringComparison.Ordinal));
+            if (value is null || !int.TryParse(value[prefix.Length..], out int count) ||
+                count < 0)
+                throw new IOException("Direct WebDAV status field is invalid: " + key);
+            return count;
+        }
+        int writers = Count(fields, "writers");
+        int recovery = Count(fields, "recovery");
+        int leases = Count(fields, "lease");
+        if (fields[^1] == "SAFE")
+            return new UploadState(0, 0, 0, false);
+        var reasons = new List<string>();
+        if (writers > 0) reasons.Add($"열린 쓰기 파일 {writers}개");
+        if (leases > 0) reasons.Add($"편집 잠금 {leases}개");
+        if (recovery > 0) reasons.Add($"복구 기록 {recovery}개 확인 필요");
+        if (reasons.Count == 0) reasons.Add("활성 작업 확인 필요");
+        return new UploadState(0, 0, 0, false,
+            string.Join(" / ", reasons) + " (안전한 연결 해제 보류)");
+    }
+
+    internal static void DirectWebDavUploadStatusPolicyTest()
+    {
+        var safe = ParseDirectWebDavUploadStatus(
+            "READY 3 writers=0 recovery=0 lease=0 SAFE");
+        if (!safe.IsSafeToDisconnect || safe.Queued != 0)
+            throw new InvalidOperationException("Metadata handles blocked safe unmount");
+        var writer = ParseDirectWebDavUploadStatus(
+            "READY 2 writers=1 recovery=0 lease=1 BUSY");
+        if (writer.IsSafeToDisconnect || writer.Queued != 0 ||
+            !writer.Summary.Contains("열린 쓰기 파일 1개"))
+            throw new InvalidOperationException("Open writer mislabeled as queued upload");
+        var recovery = ParseDirectWebDavUploadStatus(
+            "READY 0 writers=0 recovery=1 lease=0 BUSY");
+        if (recovery.IsSafeToDisconnect ||
+            !recovery.Summary.Contains("복구 기록 1개"))
+            throw new InvalidOperationException("Recovery journal guard was lost");
+        try
+        {
+            ParseDirectWebDavUploadStatus("READY 0 SAFE");
+            throw new InvalidOperationException("Invalid state accepted");
+        }
+        catch (IOException) { }
+        Console.WriteLine("DIRECT_WEBDAV_BUSY_REASON_NOT_FAKE_UPLOAD_POLICY_PASS");
     }
 
     internal static UploadState ParseUploadStatus(string json)
@@ -938,7 +994,10 @@ internal static class RemoteMount
                     "\n원본·TMP·로컬 캐시를 보존하고 DSM의 실제 파일을 확인하세요.");
             return state.IsSafeToDisconnect
                 ? OperationResult.Ok(state.Summary)
-                : OperationResult.Fail(state.Summary + "\n로컬 캐시 또는 원격 업로드가 아직 완료되지 않았습니다.");
+                : OperationResult.Fail(state.Summary +
+                    (instance.DirectWebDav
+                        ? "\n열린 편집 파일·잠금 또는 로컬 복구 기록을 확인하세요. 데이터 보호를 위해 연결을 유지합니다."
+                        : "\n로컬 캐시 또는 원격 업로드가 아직 완료되지 않았습니다."));
         }
         catch (Exception ex)
         {

@@ -4,8 +4,8 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 버전과 업데이트
 
-- PC 버전: v1.3.118, 이후 v1.3.118 / v1.3.118...
-- PC 전용 GitHub 릴리즈 태그: pc-v1.3.118 / pc-v1.3.118 ...
+- PC 버전: v1.3.119, 후속 버전은 PC 전용 번호로 증가
+- PC 전용 GitHub 릴리즈 태그: pc-v1.3.119 (이전 pc-v1.3.118)
 - Android 버전: v0.1.x — Windows 업데이트와 별개로 운영
 - 프로그램 실행 시 트레이 업데이트 알림 / 환경 설정 → PC 업데이트 확인
 - 새 PC 버전을 받으면 GitHub 릴리즈 ZIP SHA-256 검증 → 사용자의 설치 승인 → 원격 드라이브 안전 해제 → 프로그램 업데이트 후 재실행
@@ -13,7 +13,7 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 설치
 
-GitHub Releases에서 FileHub-AIO-PC-1.3.118-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.118를 설치할 수 있습니다.
+GitHub Releases에서 FileHub-AIO-PC-1.3.119-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.119를 설치할 수 있습니다.
 
 업데이트 설치 전에는 Excel/Word 등 열린 문서를 모두 저장하고 닫아야 합니다. 안전하게 해제하지 못한 NAS 드라이브가 있으면 프로그램 교체를 중단합니다. 이전 버전은 사용자 백업 폴더에 보관합니다.
 
@@ -32,6 +32,14 @@ GitHub Actions는 공식 릴리즈 파일과 컴파일된 실행 파일의 SHA-2
 PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj -c Release -r win-x64 --self-contained true -o publish, dotnet publish LockBridge/LockBridge.csproj -c Release -r win-x64 --self-contained true -o bridge 를 순서대로 실행합니다.
 
 두 프로젝트를 컴파일하는 것만으로 전체 배포본이 완성되는 것은 아닙니다. rclone, 확장 엔진, WinFsp 배포 파일은 GitHub Actions에서 공식 릴리즈로부터 수집합니다.
+
+## v1.3.119 WebDAV pending-state clarity and Google cold-mount API prioritization
+
+- The native single-WinFsp WebDAV bridge reports its actual busy guard separately. Open write handles, Office leases and recovery journals no longer masquerade as exactly one pending rclone VFS upload. Busy state continues to block unsafe disconnect.
+- The Google-only patched rclone defers its first asynchronous quota About request for 15 seconds after the first WinFsp volume callback. It allows the first folder enumeration to receive API priority and leaves real capacity retrieval asynchronous; other cloud engines and file writes are unchanged.
+- The cached real Google quota presentation monitors for up to 60 seconds after connection. If the About API is still unavailable, an unknown-capacity placeholder remains; no made-up 15 GiB value is presented.
+- Read-only developer-machine observation with a disposable copy of existing OAuth configuration: an About request exceeded 30 seconds while a subsequent root lsf completed in 1.07 seconds. This is one observation, not proof that every 30-second connection delay is caused by About.
+- This release does NOT guarantee one-second Google cold mounts. Shared rclone OAuth client rate limiting and token-refresh delays may still require the user to import a personal desktop OAuth client and reauthorize through the existing settings UI. No authentication secrets or NAS files were changed.
 
 ## v1.3.118 WebDAV Synology shared-folder compatibility and automatic fallback
 

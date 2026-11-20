@@ -24,7 +24,10 @@ internal static class GoogleQuotaPresentation
         {
             try
             {
-                for (int attempt = 0; attempt < 25; attempt++)
+                // Real quota fetch is deliberately deferred until after the
+                // first root browse. Keep polling the local WinFsp cache
+                // (without making an extra Google API call).
+                for (int attempt = 0; attempt < 60; attempt++)
                 {
                     if (!RemoteMount.IsMounted(profile)) return;
                     Thread.Sleep(1000);
