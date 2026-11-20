@@ -1,0 +1,82 @@
+# FileHub AIO PC — 단일 WinFsp 전용 WebDAV 엔진 작업 기록
+
+기록일: 2026-11-20 / 브랜치: `pc/direct-webdav-engine`
+
+## 1. 요청 목적
+
+RaiDrive에서 즉시 열리는 NAS의 EXE 폴더와 프로그램이 기존 FileHub에서는
+아이콘 로딩, 파일 열기, 실행까지 수십 초 이상 걸리는 구조 문제 해결.
+기존 경로 `탐색기 -> WinFsp 잠금 브리지 -> rclone WinFsp -> WebDAV -> NAS`를
+`탐색기 -> 단일 WinFsp -> FileHub 전용 WebDAV 클라이언트 -> NAS`로 교체.
+
+## 2. 이번 세션에 구현한 코드
+
+- `LockBridge/DirectWebDavReadOnlyBackend.cs`: 단일 계층 HTTP WebDAV
+  PROPFIND, GET/Range, ETag·메타데이터 캐시, EXE/DLL 로컬 읽기 캐시,
+  사용자에 저장된 WebDAV 프로필의 정확한 주소·포트·경로와 TLS 정책 사용
+- `LockBridge/DirectWebDavReadOnlyFileSystem.cs`: WinFsp 읽기·탐색·속성,
+  폴더 변경 감시와 탐색기 이벤트 통지
+- `LockBridge/DirectWebDavWriteStore.cs`: 파일별 안전한 로컬 저널,
+  조건부 PUT, 안전한 MOVE/DELETE, 충돌 감지, 전체 해시 검증 기반 복구,
+  다른 클라이언트가 원격 파일을 수정했으면 자동 덮어쓰기 거부
+- `LockBridge/DirectWebDavWritableFileSystem.cs`: 실제 WinFsp 생성·쓰기·
+  Flush·Close·이름 변경·삭제·폴더 처리, Excel 문서 잠금 유지
+- `LockBridge/DirectWebDavLeaseLab.cs`: 두 클라이언트의 잠금 경합과
+  실제 열려 있는 Excel 문서에 대한 다른 클라이언트 편집 차단 검증
+- `LockBridge/Program.cs`: 개발용 loopback 시험 모드와 저장된 WebDAV
+  프로필로만 실행 가능한 독립 읽기 전용/쓰기 파일시스템 파일럿 모드
+- `tests/start_direct_webdav_readonly_pilot.ps1`: 비밀번호가 저장되지
+  않았을 때 채팅이나 명령줄이 아닌 Windows PowerShell 보안 입력으로만
+  인증 정보를 일시적으로 전달하는 **읽기 전용** 실제 NAS 시험 스크립트
+
+## 3. 검증 결과 (격리된 테스트 NAS 역할의 WebDAV 서버)
+
+- 읽기용 단일 WinFsp: 처음 EXE 정보 읽기 약 37~60ms, 재조회 0~1ms
+- 실행 파일 SHA-256: 원본 일치, 캐시 변조 방지 및 변경 버전 반영
+- Windows 파일 API: 파일 생성, 2·3차 저장, 이동, 삭제 모두 성공
+- **실제 Microsoft Excel**: `SaveAs` + 두 번의 `Save` 정상 반환,
+  NAS 역할의 서버에서 XLSX를 다시 열어 최종 셀 값 확인 성공
+- Excel이 열린 상태에서 두 번째 FileHub 클라이언트의 편집 잠금 차단
+- 두 FileHub 클라이언트의 잠금 충돌 차단과 정상 해제 후 재취득 검증
+- 별도 클라이언트의 동시 수정 발생 시 덮어쓰기 차단 + 로컬 복구본 보존
+- 비정상 종료 모의 이후 다른 인스턴스에서 로컬 저널 다시 읽어 복구;
+  다른 클라이언트가 그 사이 파일을 변경했으면 복구본만 보존
+- WebDAV 서버가 `If-Match`/`If-None-Match` 또는 배타적 `MKCOL`을
+  실제로 보장하지 않으면 위험한 쓰기를 시작하지 않도록 차단
+- 기존 PC 앱의 주요 정책 회귀 검사 및 LockBridge 자체 테스트 통과
+
+최종 테스트 실행 결과: `ALL_NATIVE_WIN_FSP_DIRECT_DEVELOPMENT_END_TO_END_TESTS_PASS`.
+상세 로그는 개발 PC 저장소의 `.direct-final-readonly-lab.log`,
+`.direct-final-recovery-lab.log`, `.direct-final-excel-lab.log` 등에 기록.
+
+## 4. 실제 NAS 현장 검증을 못한 이유
+
+현재 PC에 저장된 WebDAV 프로필의 **RememberPassword=false**로 인해,
+별도 읽기 전용 시험 엔진이 저장된 인증 정보를 찾지 못해 실제 NAS 연결 전에
+종료함. 비밀번호 우회·추출은 하지 않았고, 사용자 NAS는 변경하지 않았음.
+사용자가 안전한 **읽기 전용** 파일럿 스크립트를 직접 실행하면 로컬
+Windows 보안 입력을 통해 인증할 수 있음.
+
+## 5. 정식 배포 미전환 이유 및 남은 사항
+
+**아직 전체 FileHub 완성이 아님.** 새 엔진은 현재 개발 브랜치의
+시험·파일럿에만 적용하며, 기존 `pc/windows` 정식 릴리스 v1.3.116은
+변경하지 않았음. 아래 항목이 실제 장비로 검증되지 않았음:
+
+1. 실제 Synology/QNAP WebDAV에서 조건부 PUT과 배타적 MKCOL 지원 여부
+2. 실제 NAS와 두 PC에서 파일명·Excel 연속 저장·동시 잠금·충돌 복구
+3. 실제 NAS의 EXE/DLL 실행·아이콘 속도 및 장시간 실행 중 성능
+4. GUI Connect/Disconnect, 자동연결, 업데이트, 비정상 종료 후 복구 안내
+5. 네트워크 장애/PC 강제 종료/대용량 파일/다른 앱과의 파일잠금 처리
+6. SFTP, FTP, Google Drive, TeraBox 등 다른 프로토콜의 전용 엔진 통합
+
+안전하지 않은 서버에서 무조건 저장되도록 파일잠금이나 ETag 검증을
+끄는 우회는 하지 말 것. 사용자가 테스트하기 전 정식 릴리스에 혼합 금지.
+
+## 6. 재시작 시 확인
+
+1. GitHub 브랜치 `pc/direct-webdav-engine` 및 최신 커밋 확인
+2. `DIRECT_WEBDAV_ONE_LAYER_ARCHITECTURE.md` 확인
+3. 개발 PC의 위 3개 QA 로그와 Git 작업 트리 상태 확인
+4. 실제 NAS 계정 인증이 가능해지면 읽기 전용 파일럿부터 테스트
+5. 전체 정식 기능과 안전성 검증 전 `pc/windows`에는 병합하지 않음
