@@ -245,8 +245,17 @@ internal sealed class GoogleDirectApiClient
             try
             {
                 string? token = null;
+                var seenPageTokens = new HashSet<string>(StringComparer.Ordinal);
+                int pageCount = 0;
                 do
                 {
+                    // Repeated pagination tokens must never spin forever
+                    // on an Explorer callback. 10000 pages cover up to
+                    // ten million files before failing safely.
+                    if (++pageCount > 10000 ||
+                        (token is not null && !seenPageTokens.Add(token)))
+                        throw new IOException(
+                            "Google folder pagination did not make forward progress");
                     string query = "'" + parentId + "' in parents and trashed = false";
                     string relative = "files?pageSize=1000&supportsAllDrives=true&" +
                         "includeItemsFromAllDrives=true&q=" + Uri.EscapeDataString(query) +

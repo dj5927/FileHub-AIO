@@ -377,3 +377,14 @@ read/write, disconnect/reconnect and Office save tests all pass.
   pass. The new behavior helps eliminate *idle expiry* first-open latency,
   not the separate first-account registration gate. Live Google sign-in and
   real user Office saves have not been verified.
+
+## 2026-11-21 native Drive folder pagination protection
+
+- The direct Google API directory reader now detects repeated page tokens
+  before making any redundant request, with a generous upper bound of
+  10,000 listing pages. This prevents a stuck or malformed remote listing
+  from monopolizing an Explorer callback indefinitely.
+- An isolated fake server deliberately returns the same pagination token
+  repeatedly; the verified result is exactly two GET requests followed by
+  a categorized I/O error, never an apparently empty directory. Marker:
+  `GOOGLE_NATIVE_REPEATED_PAGINATION_LOOP_PREVENTION_PASS`.

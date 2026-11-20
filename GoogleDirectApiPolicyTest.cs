@@ -325,6 +325,25 @@ internal static class GoogleDirectApiPolicyTest
         }
     }
 
+    private sealed class RepeatedPagesFakeServer : HttpMessageHandler
+    {
+        internal int Requests;
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri?.Host != "127.0.0.1" ||
+                request.Method != HttpMethod.Get)
+                throw new InvalidOperationException("Synthetic paging request escaped loopback");
+            Interlocked.Increment(ref Requests);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"files":[],"nextPageToken":"REPEAT_TOKEN"}""",
+                    Encoding.UTF8, "application/json")
+            });
+        }
+    }
+
     private sealed class InvalidOAuthRefreshServer : HttpMessageHandler
     {
         internal int Mode;
@@ -353,6 +372,22 @@ internal static class GoogleDirectApiPolicyTest
     internal static async Task RunAsync()
     {
         await GoogleDirectBrowserOAuthPolicyLab.RunAsync();
+        using (var repeated = new RepeatedPagesFakeServer())
+        using (var pagedHttp = new HttpClient(repeated))
+        {
+            var pagedApi = new GoogleDirectApiClient(pagedHttp,
+                _ => Task.FromResult("TEST_TOKEN"),
+                new Uri("http://127.0.0.1:18220/drive/v3/"),
+                maxRetries: 0);
+            bool rejected = false;
+            try { await pagedApi.ListChildrenAsync("root"); }
+            catch (IOException ex) when (ex.Message.Contains("pagination",
+                StringComparison.Ordinal)) { rejected = true; }
+            if (!rejected || repeated.Requests != 2)
+                throw new InvalidOperationException(
+                    "Repeated Google folder page token caused a WinFsp infinite request loop");
+        }
+        Console.WriteLine("GOOGLE_NATIVE_REPEATED_PAGINATION_LOOP_PREVENTION_PASS");
         using (var brokenOAuth = new InvalidOAuthRefreshServer())
         using (var brokenHttp = new HttpClient(brokenOAuth))
         {
