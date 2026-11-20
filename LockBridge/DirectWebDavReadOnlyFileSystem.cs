@@ -67,7 +67,12 @@ internal class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposable
 
     private void Watch(string directory)
     {
-        _watchedFolders.TryAdd(directory, _backend.List(directory));
+        // FileHub's cooperative office lock is a real remote directory,
+        // but is NOT a user-visible directory in our virtual filesystem.
+        // Always snapshot the same filtered namespace we enumerate to
+        // Explorer. Otherwise the watcher can send a phantom Added/Removed
+        // notification for a folder hidden by ReadDirectoryEntry.
+        _watchedFolders.TryAdd(directory, VisibleEntries(_backend.List(directory)));
         if (Environment.GetEnvironmentVariable("FILEHUB_DIRECT_DEBUG") == "1")
             Console.Error.WriteLine("DIRECT_WATCHED " + directory);
     }
@@ -81,6 +86,14 @@ internal class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposable
 
     protected virtual bool PauseExternalChangeNotification => false;
 
+    // Filtering a directory listing alone is insufficient. Windows can
+    // materialize names from WinFsp Notify without enumerating again.
+    protected virtual bool IsInternalPath(string path) => false;
+
+    private DirectWebDavReadOnlyBackend.Entry[] VisibleEntries(
+        DirectWebDavReadOnlyBackend.Entry[] entries) =>
+        entries.Where(e => !IsInternalPath(e.Path)).ToArray();
+
     private void PollWatchedFolders()
     {
         if (PauseExternalChangeNotification) return;
@@ -90,7 +103,7 @@ internal class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposable
             foreach (var pair in _watchedFolders.ToArray())
             {
                 DirectWebDavReadOnlyBackend.Entry[] fresh;
-                try { fresh = _backend.RefreshList(pair.Key); }
+                try { fresh = VisibleEntries(_backend.RefreshList(pair.Key)); }
                 catch (Exception ex)
                 {
                     if (Environment.GetEnvironmentVariable("FILEHUB_DIRECT_DEBUG") == "1")
@@ -202,6 +215,11 @@ internal class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposable
     public override int GetSecurityByName(string fileName, out uint attributes,
         ref byte[] securityDescriptor)
     {
+        if (IsInternalPath(fileName))
+        {
+            attributes = 0;
+            return NotFound;
+        }
         var stat = _backend.Stat(fileName);
         if (stat is null) { attributes = 0; return NotFound; }
         attributes = DescribeEntry(stat).FileAttributes;
@@ -218,6 +236,7 @@ internal class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposable
         fileDesc = null!;
         info = default;
         normalizedName = null!;
+        if (IsInternalPath(fileName)) return NotFound;
         // Read-only test. Never quietly accept an upload or Office save.
         if ((grantedAccess & 0x00000116) != 0) return AccessDenied;
         var stat = _backend.Stat(fileName);
@@ -292,7 +311,7 @@ internal class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposable
     }
 
     protected virtual DirectWebDavReadOnlyBackend.Entry[] ListForDirectory(
-        string directory) => _backend.List(directory);
+        string directory) => VisibleEntries(_backend.List(directory));
 
     public override int GetSecurity(object fileNode, object fileDesc,
         ref byte[] securityDescriptor)

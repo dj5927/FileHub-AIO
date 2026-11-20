@@ -4,8 +4,8 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 버전과 업데이트
 
-- PC 버전: v1.3.124, 후속 버전은 PC 전용 번호로 증가
-- PC 전용 GitHub 릴리즈 태그: pc-v1.3.124 (이전 pc-v1.3.123)
+- PC 버전: v1.3.125, 후속 버전은 PC 전용 번호로 증가
+- PC 전용 GitHub 릴리즈 태그: pc-v1.3.125 (이전 pc-v1.3.124)
 - Android 버전: v0.1.x — Windows 업데이트와 별개로 운영
 - 프로그램 실행 시 트레이 업데이트 알림 / 환경 설정 → PC 업데이트 확인
 - 새 PC 버전을 받으면 GitHub 릴리즈 ZIP SHA-256 검증 → 사용자의 설치 승인 → 원격 드라이브 안전 해제 → 프로그램 업데이트 후 재실행
@@ -13,7 +13,7 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 설치
 
-GitHub Releases에서 FileHub-AIO-PC-1.3.124-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. v1.3.120~1.3.121에서는 자동 업데이트 종료 오류가 있으므로, 해당 버전 사용자는 프로그램 종료(강제 연결 해제 확인) 후 이번 ZIP을 새 폴더에 풀어 처음 한 번 수동 교체합니다. 이후 PC OTA 정상 사용을 목표로 합니다.
+GitHub Releases에서 FileHub-AIO-PC-1.3.125-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. v1.3.120~1.3.121에서는 자동 업데이트 종료 오류가 있으므로, 해당 버전 사용자는 프로그램 종료(강제 연결 해제 확인) 후 이번 ZIP을 새 폴더에 풀어 처음 한 번 수동 교체합니다. 이후 PC OTA 정상 사용을 목표로 합니다.
 
 업데이트 설치 전에는 Excel/Word 등 열린 문서를 모두 저장하고 닫아야 합니다. 안전하게 해제하지 못한 NAS 드라이브가 있으면 프로그램 교체를 중단합니다. 이전 버전은 사용자 백업 폴더에 보관합니다. 일반 트레이의 [프로그램 종료]는 업데이트 설치와 별개로, 사용자가 데이터 유실 가능성 경고를 확인하면 강제 종료할 수 있습니다.
 
@@ -32,6 +32,18 @@ GitHub Actions는 공식 릴리즈 파일과 컴파일된 실행 파일의 SHA-2
 PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj -c Release -r win-x64 --self-contained true -o publish, dotnet publish LockBridge/LockBridge.csproj -c Release -r win-x64 --self-contained true -o bridge 를 순서대로 실행합니다.
 
 두 프로젝트를 컴파일하는 것만으로 전체 배포본이 완성되는 것은 아닙니다. rclone, 확장 엔진, WinFsp 배포 파일은 GitHub Actions에서 공식 릴리즈로부터 수집합니다.
+
+## v1.3.125 Hide Office lock folders and fix Windows folder rename permissions
+
+- **Confirmed permission error root cause:** Explorer F2 / Directory.Move opens an existing folder with DELETE + SYNCHRONIZE, often without FILE_DIRECTORY_FILE in createOptions. The direct WinFsp provider classified the handle as a writable *regular file*, returning STATUS_ACCESS_DENIED for a folder. This is a FileHub bug, **not the Windows account or NAS ACL**.
+- Directory opens now inspect the actual remote entry type. A dedicated WebDAV directory MOVE uses Overwrite:F instead of the regular-file conditional GET/PUT replacement path, verifies the destination, and never overwrites an existing folder.
+- Real WinFsp regression reproduces the previous access denied and verifies folder rename with a nested child, then a Korean folder name, without losing child contents.
+
+- Root cause: the direct WebDAV WinFsp provider filtered `*.nasmount.lock` from directory listings but the separate 15-second remote watcher fetched UNFILTERED directory snapshots and emitted Added/Removed notifications for these hidden names. Explorer may briefly show a phantom folder and only remove it on refresh.
+- WinFsp watcher now snapshots and diffs the same filtered namespace used for directory enumeration. Both creation and removal of the internal lock directory are invisible to WinFsp Notify.
+- Filter the lock folder, nested `owner.json`, and FileHub internal staging names from GetSecurityByName, Open and directory listings. Existing NAS documents and real user folders remain visible.
+- The server-side cooperative MKCOL folder is **still created temporarily on the NAS** for exclusive cross-PC editing. This change hides it from **FileHub's own direct WinFsp drive**, not from unrelated SMB/WebDAV clients. Removing this server lock without a replacement would break cross-PC edit safety.
+- Added a CI-safe real WinFsp test creating and deleting a physical server lock while the 15-second background watcher runs. The test fails if lock entries appear or trigger WinFsp Notify; file copy, replace, image and Excel regression remains enabled.
 
 ## v1.3.124 WebDAV 0-byte Explorer capacity and lost-Flush HTTP 412 fix
 

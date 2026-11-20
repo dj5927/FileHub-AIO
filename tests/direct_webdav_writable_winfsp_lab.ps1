@@ -72,6 +72,71 @@ public static class FileHubDiskQuotaProbe {
  }
  Write-Output 'ONE_LAYER_RW_EXPLORER_COPY_HAS_SPACE_PASS'
 
+ # Cooperative Office locks are real NAS directories for cross-PC editing,
+ # but must never enter the virtual filesystem or a WinFsp Notify event.
+ # Exercise watcher creation/removal even without Office installed (CI).
+ $null=@([IO.Directory]::GetFileSystemEntries($drive))
+ $watchLog=Join-Path $logs 'mount.err'
+ $watchBefore=@(Select-String -LiteralPath $watchLog -Pattern 'DIRECT_WATCH_NOTIFY result=' -ErrorAction SilentlyContinue).Count
+ $lockName='lock-visibility-test.xlsx.nasmount.lock'
+ $remoteLock=Join-Path $server $lockName
+ $mountedLock=Join-Path $drive $lockName
+ [IO.Directory]::CreateDirectory($remoteLock)|Out-Null
+ [IO.File]::WriteAllText((Join-Path $remoteLock 'owner.json'),'{}')
+ if(!(Test-Path $remoteLock)){throw 'Remote cooperative lock fixture was not created'}
+ foreach($phase in 1..2){
+   # The second check happens after the 15-second remote change poll.
+   if($phase -eq 2){Start-Sleep -Seconds 18}
+   $visible=@([IO.Directory]::GetFileSystemEntries($drive))
+   if($visible|Where-Object { [IO.Path]::GetFileName($_) -eq $lockName }){
+     throw ('Internal lock leaked into directory listing phase='+$phase)
+   }
+   if([IO.Directory]::Exists($mountedLock) -or (Test-Path (Join-Path $mountedLock 'owner.json'))){
+     throw ('Internal lock accessible from mounted filesystem phase='+$phase)
+   }
+ }
+ $watchWhilePresent=@(Select-String -LiteralPath $watchLog -Pattern 'DIRECT_WATCH_NOTIFY result=' -ErrorAction SilentlyContinue).Count
+ if($watchWhilePresent -ne $watchBefore){
+   throw 'Hidden internal lock triggered an Explorer change notification'
+ }
+ [IO.File]::Delete((Join-Path $remoteLock 'owner.json'))
+ [IO.Directory]::Delete($remoteLock)
+ Start-Sleep -Seconds 17
+ $watchAfter=@(Select-String -LiteralPath $watchLog -Pattern 'DIRECT_WATCH_NOTIFY result=' -ErrorAction SilentlyContinue).Count
+ if($watchAfter -ne $watchBefore){
+   throw 'Removing hidden lock triggered an Explorer change notification'
+ }
+ Write-Output 'ONE_LAYER_RW_LOCK_FOLDER_NEVER_VISIBLE_OR_NOTIFIED_PASS'
+
+ # Explorer F2 / Rename on a directory is not the same as an Office file
+ # replacement. The directory has no guaranteed strong ETag and the
+ # WinFsp callback must issue a directory MOVE, not file GET/PUT.
+ $folderOld=Join-Path $drive 'rename-folder-before'
+ $folderNew=Join-Path $drive 'rename-folder-after'
+ [IO.Directory]::CreateDirectory($folderOld)|Out-Null
+ $nested=Join-Path $folderOld 'child.txt'
+ [IO.File]::WriteAllText($nested,'FOLDER_MOVE_MUST_KEEP_CHILDREN')
+ Start-Sleep -Seconds 2
+ [IO.Directory]::Move($folderOld,$folderNew)
+ Start-Sleep -Seconds 2
+ if((Test-Path (Join-Path $server 'rename-folder-before')) -or
+   !(Test-Path (Join-Path $server 'rename-folder-after\child.txt')) -or
+   ([IO.File]::ReadAllText((Join-Path $server 'rename-folder-after\child.txt')) -ne
+     'FOLDER_MOVE_MUST_KEEP_CHILDREN')){
+   throw 'Explorer folder rename failed or child file lost'
+ }
+ Write-Output 'ONE_LAYER_RW_DIRECTORY_RENAME_WITH_CHILD_PASS'
+ $folderKorean=Join-Path $drive '회사자료-변경됨'
+ [IO.Directory]::Move($folderNew,$folderKorean)
+ Start-Sleep -Seconds 1
+ $serverKorean=Join-Path $server '회사자료-변경됨\child.txt'
+ if((Test-Path (Join-Path $server 'rename-folder-after')) -or
+    !(Test-Path $serverKorean) -or
+    [IO.File]::ReadAllText($serverKorean) -ne 'FOLDER_MOVE_MUST_KEEP_CHILDREN'){
+   throw 'Korean folder rename failed or contents were altered'
+ }
+ Write-Output 'ONE_LAYER_RW_KOREAN_DIRECTORY_RENAME_WITH_CHILD_PASS'
+
  $path=Join-Path $drive 'test-created.txt'
  [IO.File]::WriteAllText($path,'first-save')
  Start-Sleep -Seconds 2

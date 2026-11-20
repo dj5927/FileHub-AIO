@@ -162,16 +162,27 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
                 ? Collision : IoError;
     }
 
+    // Cooperative MKCOL lease folders stay on the server to serialize
+    // writers across PCs. Hide them from our mounted namespace, including
+    // owner.json and every nested path, without touching their NAS contents.
+    private static bool IsOwnLockArtifact(string path) =>
+        path.Replace('\\', '/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Any(segment =>
+                segment.EndsWith(".nasmount.lock", StringComparison.OrdinalIgnoreCase) ||
+                segment.StartsWith(".nasmount-stage-", StringComparison.OrdinalIgnoreCase));
+
+    protected override bool IsInternalPath(string path) => IsOwnLockArtifact(path);
+
     protected override DirectWebDavReadOnlyBackend.Entry[] ListForDirectory(string directory)
     {
         var remote = _backend.List(directory);
-        var existing = remote.Where(x =>
-            !x.Name.EndsWith(".nasmount.lock", StringComparison.OrdinalIgnoreCase) &&
-            !x.Name.StartsWith(".nasmount-stage-", StringComparison.OrdinalIgnoreCase))
+        var existing = remote.Where(x => !IsOwnLockArtifact(x.Path))
             .ToDictionary(x => x.Name,
             StringComparer.OrdinalIgnoreCase);
         foreach (var added in _overlay.Values)
         {
+            if (IsOwnLockArtifact(added.Path)) continue;
             string parent = DirectWebDavReadOnlyBackend.Normalize(
                 Path.GetDirectoryName(added.Path.Replace('/', '\\')) ?? "/");
             if (parent.Equals(directory, StringComparison.OrdinalIgnoreCase))
@@ -185,6 +196,11 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         ref byte[] securityDescriptor)
     {
         string key = DirectWebDavReadOnlyBackend.Normalize(fileName);
+        if (IsOwnLockArtifact(key))
+        {
+            attributes = 0;
+            return NotFound;
+        }
         if (_overlay.TryGetValue(key, out var entry))
         {
             attributes = DescribeEntry(entry).FileAttributes &
@@ -209,6 +225,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
     {
         fileNode = null!; fileDesc = null!; info = default; normalizedName = null!;
         string key = DirectWebDavReadOnlyBackend.Normalize(fileName);
+        if (IsOwnLockArtifact(key)) return AccessDenied;
         try
         {
             bool directory = (createOptions & 1) != 0;
@@ -249,17 +266,25 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         out object fileNode, out object fileDesc, out FileInfo info,
         out string normalizedName)
     {
+        if (IsOwnLockArtifact(fileName))
+        {
+            fileNode = null!; fileDesc = null!; info = default; normalizedName = null!;
+            return NotFound;
+        }
         if (Environment.GetEnvironmentVariable("FILEHUB_DIRECT_DEBUG") == "1")
             Console.Error.WriteLine("DIRECT_RW_OPEN name=" + fileName +
                 " access=0x" + grantedAccess.ToString("X") +
                 " options=0x" + createOptions.ToString("X"));
-        // Windows opens the containing DIRECTORY with DELETE/WRITE access
-        // during MoveFileEx. The read-only base class rejects such access;
-        // a writable volume must open the DIRECTORY as a directory handle.
-        if ((createOptions & 1u) != 0)
+        // Explorer F2/Directory.Move opens an EXISTING directory with
+        // DELETE (0x10000) and SYNCHRONIZE (0x100000), but createOptions
+        // does not necessarily have FILE_DIRECTORY_FILE (0x1) set.
+        // The old condition only checked that flag, then treated the
+        // directory as a writable *file* and returned STATUS_ACCESS_DENIED.
+        var existingDirectory = _backend.Stat(fileName);
+        if ((createOptions & 1u) != 0 || existingDirectory?.IsDirectory == true)
         {
             fileNode = null!; fileDesc = null!; info = default; normalizedName = null!;
-            var directory = _backend.Stat(fileName);
+            var directory = existingDirectory;
             if (directory is null) return NotFound;
             if (!directory.IsDirectory) return AccessDenied;
             fileNode = directory;
@@ -498,8 +523,11 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             }
             var original = _backend.Stat(from);
             if (original is null) return NotFound;
-            _writes.RenameWithVerifiedReplacement(from, to,
-                original.ETag, replaceIfExists);
+            if (original.IsDirectory)
+                _writes.RenameDirectory(from, to, original.ETag, replaceIfExists);
+            else
+                _writes.RenameWithVerifiedReplacement(from, to,
+                    original.ETag, replaceIfExists);
             _overlay.TryRemove(from, out _);
             if (fileDesc is WriteDescriptor active)
             {

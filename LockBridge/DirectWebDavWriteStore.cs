@@ -606,6 +606,59 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         _read.Invalidate(path);
     }
 
+    internal void RenameDirectory(string from, string to, string? originalEtag,
+        bool replaceIfExists)
+    {
+        from = DirectWebDavReadOnlyBackend.Normalize(from);
+        to = DirectWebDavReadOnlyBackend.Normalize(to);
+        if (from == "/" || to == "/" ||
+            from.Equals(to, StringComparison.OrdinalIgnoreCase) ||
+            to.StartsWith(from.TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Invalid directory rename destination");
+
+        // A WebDAV collection (folder) does not always have a strong ETag.
+        // The FILE-specific Get/conditional-PUT/DELETE replacement path must
+        // never be used for directories. Preserve the subtree atomically via
+        // a MOVE with Overwrite:F; never replace another user's folder.
+        var source = _read.Stat(from);
+        if (source is null || !source.IsDirectory)
+            throw new FileNotFoundException("Directory rename source not found");
+        if (_read.Stat(to) is not null)
+            throw new IOException("Destination already exists");
+        if (replaceIfExists)
+        {
+            // Explorer may set this flag for a normal rename. Do not honor
+            // it for folders: replacing an existing collection can lose data.
+        }
+        using var request = new HttpRequestMessage(new HttpMethod("MOVE"), Remote(from));
+        request.Headers.TryAddWithoutValidation("Destination", Remote(to).AbsoluteUri);
+        request.Headers.TryAddWithoutValidation("Overwrite", "F");
+        if (StrongEtag(originalEtag))
+            request.Headers.TryAddWithoutValidation("If-Match", originalEtag);
+        using var result = _http.Send(request, HttpCompletionOption.ResponseHeadersRead);
+        if (result.StatusCode is not (HttpStatusCode.Created or HttpStatusCode.NoContent))
+            throw new IOException("WebDAV directory MOVE failed HTTP " +
+                (int)result.StatusCode);
+        _read.Invalidate(from);
+        _read.Invalidate(to);
+        for (int attempt = 0; attempt < 5; attempt++)
+        {
+            var renamed = _read.Stat(to);
+            var previous = _read.Stat(from);
+            if (renamed?.IsDirectory == true && previous is null)
+            {
+                Console.WriteLine("DIRECT_WEBDAV_DIRECTORY_MOVE_VERIFIED");
+                return;
+            }
+            if (attempt < 4) Thread.Sleep(150 * (attempt + 1));
+            _read.Invalidate(from);
+            _read.Invalidate(to);
+        }
+        // The server accepted the MOVE, so never retry it automatically:
+        // a delayed PROPFIND response does not prove it did not happen.
+        throw new IOException("WebDAV directory MOVE accepted but destination verification pending");
+    }
+
     internal void RenameNewDestination(string from, string to, string? originalEtag)
     {
         RequireVerifiedConditionalWrites();
