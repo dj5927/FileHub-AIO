@@ -27,6 +27,18 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Validate one-time publisher Google OAuth onboarding (offline)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $result = & 'tools/Test-GooglePublisherOAuthBootstrap.ps1' 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or
+              $result -notmatch 'GOOGLE_PUBLISHER_OAUTH_ONCE_SECURE_BOOTSTRAP_POLICY_PASS' -or
+              $result -notmatch 'GOOGLE_PUBLISHER_OAUTH_CI_BRANCH_PUSH_FALLBACK_PASS') {
+            throw ('Publisher OAuth onboarding flow failed: ' + $result)
+          }
+          Write-Output 'GOOGLE_PUBLISHER_OAUTH_ONCE_SECURE_BOOTSTRAP_POLICY_PASS'
+
       - name: Build FileHub and direct WinFsp bridge
         shell: pwsh
         run: |
