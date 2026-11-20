@@ -21,6 +21,13 @@ internal static partial class RemoteMount
             GoogleEngineRoute.NativeGoogleReady :
             GoogleEngineRoute.NativeGoogleNeedsBrowserGrant;
 
+    internal static string GoogleWinFspModeArgument(NasProfile p) =>
+        p.Protocol != "GoogleDrive"
+            ? throw new ArgumentException("Not a Google profile")
+            : p.AllowUnprotectedWrites
+                ? "--direct-google-profile-folder-pilot"
+                : "--direct-google-profile-readonly-pilot";
+
     internal static void DirectOnlyRoutingPolicyTest()
     {
         var google = new NasProfile
@@ -33,9 +40,14 @@ internal static partial class RemoteMount
         };
         if (GoogleRouteFor(google) !=
                 GoogleEngineRoute.NativeGoogleNeedsBrowserGrant ||
-            GoogleRouteFor(webdav) != GoogleEngineRoute.OtherProtocol)
+            GoogleRouteFor(webdav) != GoogleEngineRoute.OtherProtocol ||
+            GoogleWinFspModeArgument(google) != "--direct-google-profile-readonly-pilot")
             throw new InvalidOperationException("Google mount silently fell back to rclone");
+        google.AllowUnprotectedWrites = true;
+        if (GoogleWinFspModeArgument(google) != "--direct-google-profile-folder-pilot")
+            throw new InvalidOperationException("Google write mode did not follow user setting");
         Console.WriteLine("GOOGLE_NATIVE_ONLY_NO_RCLONE_FALLBACK_POLICY_PASS");
+        Console.WriteLine("GOOGLE_NATIVE_READ_ONLY_AND_NEW_FILE_WRITE_MODE_PASS");
     }
 
     private static string? PersistedGoogleRecoveryAlert(Guid id)
@@ -105,7 +117,7 @@ internal static partial class RemoteMount
         };
         foreach (string argument in new[]
         {
-            "--direct-google-profile-folder-pilot", p.Id.ToString("D"),
+            GoogleWinFspModeArgument(p), p.Id.ToString("D"),
             p.Letter.ToUpperInvariant() + ":", prefix
         }) psi.ArgumentList.Add(argument);
 

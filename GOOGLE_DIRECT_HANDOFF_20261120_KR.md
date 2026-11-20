@@ -183,6 +183,13 @@ Runtime improvements in this continuation:
 - `GOOGLE_NATIVE_EXPLORER_REQUEST_CAP_AND_FAST_FAIL_PASS` exercises 24
   simultaneous fake metadata reads and a transport outage with no network
   access or user data; actual Windows WinFsp integration remains tested.
+- The Google mount command now honors the profile's read-only/new-file-write
+  selection; previously it launched the writable WinFsp command regardless
+  of what was selected in the connection editor. The editor describes the
+  actual supported scope: folder/new-file write, not Office overwrite.
+- The editor's Google text is concise and uses a single Chrome-account
+  connection description; all NAS server/password fields remain hidden for
+  the Google profile.
 - If a clean browser grant is unavailable because publisher OAuth was not
   packaged, the GUI does not display a disabled developer dialog. It shows
   one short app-update message instead. No end-user setup can solve a

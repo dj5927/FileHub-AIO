@@ -39,6 +39,7 @@ jobs:
           $out = & $app --google-direct-api-policy-test 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0 -or
               $out -notmatch 'GOOGLE_NATIVE_ONLY_NO_RCLONE_FALLBACK_POLICY_PASS' -or
+              $out -notmatch 'GOOGLE_NATIVE_READ_ONLY_AND_NEW_FILE_WRITE_MODE_PASS' -or
               $out -notmatch 'GOOGLE_DIRECT_DPAPI_OAUTH_ROUNDTRIP_AND_BACKUP_PASS' -or
               $out -notmatch 'GOOGLE_NATIVE_EXPLORER_REQUEST_CAP_AND_FAST_FAIL_PASS' -or
               $out -notmatch 'GOOGLE_DIRECT_CRASH_JOURNAL_EXPORT_NO_OVERWRITE_PASS' -or

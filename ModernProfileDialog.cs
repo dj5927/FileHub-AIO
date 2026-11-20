@@ -868,6 +868,8 @@ internal sealed class ModernProfileDialog : Form
             "클라우드 드라이브 안내" : "파일 접근 및 잠금 안내";
         infoText.Text = protocol == "MyBox" ?
             "업로드/수정 지원 · Excel 직접 편집과 PC 간 파일잠금 미검증" :
+            protocol == "GoogleDrive" ?
+            "Google 직접 연결 · 새 파일 저장 지원 · 기존 문서 수정은 검증 중" :
             protocol is "GoogleDrive" or "OneDrive" or "TeraBox" ?
             "클라우드 문서 잠금 미지원 · 중요 파일은 백업 후 편집" :
             "FileHub AIO 전용 잠금 · 저장 후 업로드 완료를 확인하세요.";
@@ -908,7 +910,7 @@ internal sealed class ModernProfileDialog : Form
         googleInfo.Text = mybox ? "MYBOX · 업로드/수정 지원 · 파일잠금 미지원" :
             tera ? "TeraBox 비공식 연동 · ndus 쿠키 필요 · 파일잠금 미지원" :
             oneDrive ? "Microsoft 계정 연결 · PC 간 파일잠금 미지원" :
-            "Google 계정 연결 · PC 간 파일잠금 미지원";
+            "Google Drive · Chrome에서 계정 선택 후 연결";
         googleAccount.Visible = cloud;
         googleAccount.Text = mybox ? "PAT 발급 방법은 입력칸 옆 [?] 버튼에서 확인하세요." :
             tera ? "[자동 불러오기]로 로그인하거나 ndus를 직접 입력하세요." :
@@ -959,7 +961,7 @@ internal sealed class ModernProfileDialog : Form
         // Match WebDAV's compact toggles. Their actual enabled/disabled
         // semantics are explained by the tooltips below; longer strings
         // would overrun the fixed, adjacent radio/checkbox positions.
-        modes[0].Text = cloud ? "쓰기 허용" : "파일잠금";
+        modes[0].Text = google ? "새 파일 쓰기" : cloud ? "쓰기 허용" : "파일잠금";
         modes[1].Text = "읽기전용";
         if (ftp || sftp)
         {
