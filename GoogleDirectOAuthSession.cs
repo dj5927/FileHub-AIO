@@ -6,14 +6,9 @@ using System.Text.RegularExpressions;
 namespace NASMount;
 
 /// <summary>
-/// Direct Google API token refresh using the user's own Desktop OAuth
-/// client. Does not run rclone. Existing per-profile .conf credentials may
-/// be IMPORTED, read-only, only if they already contain a custom client_id.
-/// Shared rclone OAuth must never be used for the direct engine: real user
-/// logs demonstrated HTTP 403 rateLimitExceeded on that client.
-///
-/// A native FileHub OAuth onboarding UI and isolated token store are still
-/// required before switching normal Google profiles from rclone.
+/// Direct Google API token refresh for FileHub's publisher-owned Desktop OAuth
+/// client. Uses the isolated encrypted native token store and never runs
+/// rclone or imports another application's credentials.
 /// </summary>
 internal sealed class GoogleDirectOAuthSession
 {
@@ -80,6 +75,8 @@ internal sealed class GoogleDirectOAuthSession
         await _refreshGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            try
+            {
             if (!string.IsNullOrWhiteSpace(_accessToken) &&
                 DateTimeOffset.UtcNow + TimeSpan.FromMinutes(2) < _expiry)
                 return _accessToken;
@@ -94,16 +91,24 @@ internal sealed class GoogleDirectOAuthSession
             {
                 Content = form
             };
+            // Token renewal runs on the Explorer path when a saved grant
+            // expires. Do not read unbounded proxy/error response bodies.
             using var response = await _http.SendAsync(request,
+                HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
                 throw new IOException("Google Desktop OAuth refresh HTTP " +
                     (int)response.StatusCode);
+            await response.Content.LoadIntoBufferAsync(256 * 1024,
+                cancellationToken).ConfigureAwait(false);
             using var data = await JsonDocument.ParseAsync(
                 await response.Content.ReadAsStreamAsync(cancellationToken),
                 cancellationToken: cancellationToken).ConfigureAwait(false);
             var body = data.RootElement;
-            string? fresh = body.GetProperty("access_token").GetString();
+            string? fresh = body.ValueKind == JsonValueKind.Object &&
+                body.TryGetProperty("access_token", out var access) &&
+                access.ValueKind == JsonValueKind.String
+                    ? access.GetString() : null;
             if (string.IsNullOrWhiteSpace(fresh))
                 throw new IOException("Google OAuth refresh returned no access token");
             int seconds = body.TryGetProperty("expires_in", out var duration) &&
@@ -124,6 +129,24 @@ internal sealed class GoogleDirectOAuthSession
             _refreshToken = nextRefresh;
             _expiry = expires;
             return _accessToken;
+            }
+            catch (HttpRequestException ex)
+            {
+                throw new IOException("Google OAuth refresh network unavailable", ex);
+            }
+            catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new IOException("Google OAuth refresh network timed out", ex);
+            }
+            catch (JsonException ex)
+            {
+                throw new IOException("Google OAuth refresh reply was malformed", ex);
+            }
+            catch (Exception ex) when (ex is KeyNotFoundException or
+                InvalidOperationException)
+            {
+                throw new IOException("Google OAuth refresh data was invalid", ex);
+            }
         }
         finally { _refreshGate.Release(); }
     }

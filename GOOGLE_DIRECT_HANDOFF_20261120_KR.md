@@ -309,3 +309,17 @@ read/write, disconnect/reconnect and Office save tests all pass.
   fake-API integration tests pass. Publisher OAuth still does not exist in
   this environment. A successful CI must NOT be described as successful
   live Google sign-in or an installable ZIP.
+
+## Google OAuth refresh bounded-error pass
+
+- Native refresh requests now use `ResponseHeadersRead`, check status first,
+  and buffer a maximum of 256 KiB of successful OAuth JSON. This avoids
+  buffering an unbounded error page on the Explorer callback path.
+- Network failures, request timeouts, malformed refresh JSON, wrong JSON
+  types and missing access tokens are normalized to recoverable `IOException`
+  instead of allowing an unexpected exception to escape WinFsp callbacks.
+- A separate fake token server exercises HTTP 502/HTML, malformed JSON,
+  missing token, network failure, timeout and oversized response. Marker:
+  `GOOGLE_NATIVE_OAUTH_REFRESH_INVALID_RESPONSE_FAIL_CLOSED_PASS`.
+- Only the existing FileHub-native Desktop OAuth client can refresh its own
+  token. There is still NO implicit rclone credential import or fallback.

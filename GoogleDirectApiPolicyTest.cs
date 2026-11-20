@@ -322,9 +322,54 @@ internal static class GoogleDirectApiPolicyTest
         }
     }
 
+    private sealed class InvalidOAuthRefreshServer : HttpMessageHandler
+    {
+        internal int Mode;
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (Mode == 3)
+                throw new HttpRequestException("FAKE_OAUTH_OFFLINE");
+            if (Mode == 4)
+                throw new TaskCanceledException("FAKE_OAUTH_TIMEOUT");
+            var result = Mode switch
+            {
+                0 => new HttpResponseMessage(HttpStatusCode.BadGateway)
+                { Content = new StringContent("<html>gateway</html>") },
+                1 => new HttpResponseMessage(HttpStatusCode.OK)
+                { Content = new StringContent("not-json") },
+                2 => new HttpResponseMessage(HttpStatusCode.OK)
+                { Content = new StringContent("""{"expires_in":3600}""") },
+                _ => new HttpResponseMessage(HttpStatusCode.OK)
+                { Content = new ByteArrayContent(new byte[256 * 1024 + 1]) }
+            };
+            return Task.FromResult(result);
+        }
+    }
+
     internal static async Task RunAsync()
     {
         await GoogleDirectBrowserOAuthPolicyLab.RunAsync();
+        using (var brokenOAuth = new InvalidOAuthRefreshServer())
+        using (var brokenHttp = new HttpClient(brokenOAuth))
+        {
+            for (int mode = 0; mode <= 5; mode++)
+            {
+                brokenOAuth.Mode = mode;
+                var brokenSession = new GoogleDirectOAuthSession(
+                    brokenHttp, "TEST_CLIENT", "TEST_SECRET", "TEST_REFRESH", "",
+                    DateTimeOffset.MinValue,
+                    new Uri("http://127.0.0.1:18221/token"));
+                try
+                {
+                    await brokenSession.AccessTokenAsync();
+                    throw new InvalidOperationException(
+                        "Malformed Google OAuth response was treated as a token");
+                }
+                catch (IOException) { }
+            }
+        }
+        Console.WriteLine("GOOGLE_NATIVE_OAUTH_REFRESH_INVALID_RESPONSE_FAIL_CLOSED_PASS");
         using (var bad = new InvalidMetadataFakeServer())
         using (var badHttp = new HttpClient(bad))
         {
