@@ -130,12 +130,18 @@ internal sealed class DirectWebDavWriteStore : IDisposable
     // returned HTTP 201 and overwrote the file! Therefore optimistic headers
     // are insufficient. Probe EXCLUSIVELY on a unique application-owned file
     // before allowing any user-document update. Deny all writes on failure.
-    internal void RequireVerifiedConditionalWrites()
+    internal void RequireVerifiedConditionalWrites(string probeDirectory = "/")
     {
         lock (_capabilityGate)
         {
             if (_conditionalWritesVerified) return;
-            string name = "/.filehub-conditional-probe-" + Guid.NewGuid().ToString("N");
+            // The root of a Synology WebDAV mount is usually only a list of
+            // shared folders. PUT to / is forbidden even when PUT inside an
+            // individual share works perfectly. Probe in an accessible
+            // subfolder instead of confusing root ACLs with HTTP capability.
+            string directory = DirectWebDavReadOnlyBackend.Normalize(probeDirectory);
+            string name = (directory == "/" ? "" : directory) +
+                "/.filehub-conditional-probe-" + Guid.NewGuid().ToString("N");
             Uri url = Remote(name);
             byte[] original = Encoding.UTF8.GetBytes("filehub-probe-original:" + name);
             byte[] forbidden = Encoding.UTF8.GetBytes("filehub-should-never-overwrite:" + name);
@@ -147,7 +153,8 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     create.Content = new ByteArrayContent(original);
                     using var result = _http.Send(create);
                     if (!result.IsSuccessStatusCode)
-                        throw new IOException("Conditional PUT not supported: create failed");
+                        throw new IOException("Conditional probe create HTTP " +
+                            (int)result.StatusCode);
                 }
                 // A second creation attempt MUST be rejected. This proves
                 // new-file creation cannot overwrite a concurrent creator.
@@ -184,19 +191,22 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         }
     }
 
-    internal void RequireExclusiveLockDirectory()
+    internal void RequireExclusiveLockDirectory(string probeDirectory = "/")
     {
         lock (_capabilityGate)
         {
             if (_exclusiveMkcolVerified) return;
-            string name = "/.filehub-mkcol-probe-" + Guid.NewGuid().ToString("N");
+            string directory = DirectWebDavReadOnlyBackend.Normalize(probeDirectory);
+            string name = (directory == "/" ? "" : directory) +
+                "/.filehub-mkcol-probe-" + Guid.NewGuid().ToString("N");
             Uri url = Remote(name);
             try
             {
                 using (var first = new HttpRequestMessage(new HttpMethod("MKCOL"), url))
                 using (var response = _http.Send(first))
                     if (response.StatusCode != HttpStatusCode.Created)
-                        throw new IOException("Server did not create exclusive WebDAV lock directory");
+                        throw new IOException("Exclusive lock probe MKCOL HTTP " +
+                            (int)response.StatusCode);
                 using (var second = new HttpRequestMessage(new HttpMethod("MKCOL"), url))
                 using (var response = _http.Send(second))
                     if (response.StatusCode is not (

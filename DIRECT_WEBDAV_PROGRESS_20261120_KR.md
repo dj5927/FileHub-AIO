@@ -1,5 +1,49 @@
 # FileHub AIO PC — 단일 WinFsp 전용 WebDAV 엔진 작업 기록
 
+## 2026-11-20 v1.3.118 긴급 WebDAV 연결 호환성 수정
+
+사용자 실NAS에서 두 WebDAV 프로필이 `Direct WebDAV server did not authorize a safe mount`
+오류로 연결되지 않았다. 로그는 `RequireVerifiedConditionalWrites()`의
+`Conditional PUT not supported: create failed`에서 발생했다. FTP는 사용자가
+재확인한 결과 정상 연결됐으므로 FTP 코드는 변경하지 않았다.
+
+분석: Synology WebDAV `/` 경로는 공유폴더를 표시하는 가상 루트이기 때문에
+하위 공유폴더에 쓰기 권한이 있어도 `/`에 직접 `PUT/MKCOL` 생성이 거부될 수 있다.
+기존 v1.3.117은 최상위 `/`만 검사해 서버가 조건부 저장을 지원하지 않는다고
+잘못 판정했고, 쓰기 가능한 다른 공유폴더를 검사하지 않고 연결 자체를 거부했다.
+Synology 공식 문서도 공유폴더별 권한 설정을 안내한다.
+
+v1.3.118 수정:
+
+- `LockBridge/DirectWebDavWriteStore.cs`: 조건부 `PUT` 및 배타적 `MKCOL`
+  임시 검사 위치를 전달받도록 변경; 결과 HTTP 코드 포함. 임시 검사 파일은
+  난수 이름만 사용하고 cleanup에서 삭제하며 사용자 파일을 덮어쓰지 않는다.
+- `LockBridge/ManagedDirectWebDavHost.cs`: 기존 공유폴더 최대 8곳에서
+  조건부 쓰기/배타적 잠금을 우선 시험하고 마지막에 `/` 시험. 서버가 명시적으로
+  `If-Match/If-None-Match`를 무시하면 다른 폴더까지 반복하지 않고 즉시 호환 전환.
+- 강제 덮어쓰기는 허용하지 않음. 서버에서 안전한 조건부 저장을 입증할 수 없으면
+  **마운트를 시작하기 전에** 코드 24와 `DIRECT_WEBDAV_COMPATIBILITY_REQUIRED`를
+  반환하여 기본 FileHub가 기존 rclone+LockBridge 호환 경로로 자동 연결한다.
+- `RemoteMount.cs`: 해당 코드 24에서만 호환 경로로 전환. 네트워크 연결 오류,
+  로그인 오류나 별도 이상 종료는 임의로 안전검사를 건너뛰지 않는다.
+- `MainForm.cs`: 실제 단일 WinFsp로 연결했을 때만 해당 방식이라고 표시한다.
+  호환 경로로 연결되면 기존 방식의 연결/잠금 상태를 표시한다.
+- `tests/strict_webdav_conditional_proxy.py`: `/`의 파일 생성만 HTTP 403으로
+  차단하고 공유폴더 안의 쓰기는 허용하는 Synology 가상 루트 환경 재현.
+- `tests/direct_webdav_managed_lifecycle_lab.ps1`: 이 가상 루트에서 실제
+  단일 WinFsp 파일 저장·열린 핸들 종료 거부·정상 해제 시험 성공.
+- `tests/direct_webdav_compatibility_gui_lab.ps1`: 서버가 조건부 PUT을
+  무시하는 상황을 재현하고, FileHub GUI가 자동으로 기존 rclone 호환 드라이브로
+  연결해 파일을 읽고 안전하게 연결 해제하는 시험 성공.
+- `.github/workflows/publish-pc.yml`: 실제 WinFsp 드라이버 설치 및 위 두
+  호환성 통합 검사를 PC 릴리스 이전 필수 단계로 추가.
+
+**중요:** 사용자 실제 Synology 계정으로 쓰기 권한을 확인한 것은 아니다.
+단일 WinFsp가 적용될지는 실제 NAS가 요청 조건을 충족하는지에 달려 있다.
+지원하지 않으면 v1.3.116과 동일한 구형 호환 드라이브를 사용하며,
+그 경우 EXE 폴더 지연·Excel 재저장 문제가 재현될 가능성은 남는다.
+검증되지 않은 향상 효과를 완료라고 표시하지 말 것.
+
 기록일: 2026-11-20 / 브랜치: `pc/direct-webdav-engine`
 
 ## 1. 요청 목적

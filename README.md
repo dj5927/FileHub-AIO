@@ -4,8 +4,8 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 버전과 업데이트
 
-- PC 버전: v1.3.117, 이후 v1.3.117 / v1.3.118...
-- PC 전용 GitHub 릴리즈 태그: pc-v1.3.117 / pc-v1.3.117 ...
+- PC 버전: v1.3.118, 이후 v1.3.118 / v1.3.118...
+- PC 전용 GitHub 릴리즈 태그: pc-v1.3.118 / pc-v1.3.118 ...
 - Android 버전: v0.1.x — Windows 업데이트와 별개로 운영
 - 프로그램 실행 시 트레이 업데이트 알림 / 환경 설정 → PC 업데이트 확인
 - 새 PC 버전을 받으면 GitHub 릴리즈 ZIP SHA-256 검증 → 사용자의 설치 승인 → 원격 드라이브 안전 해제 → 프로그램 업데이트 후 재실행
@@ -13,7 +13,7 @@ Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
 ## 설치
 
-GitHub Releases에서 FileHub-AIO-PC-1.3.117-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.117를 설치할 수 있습니다.
+GitHub Releases에서 FileHub-AIO-PC-1.3.118-win-x64.zip 같은 Windows 전용 ZIP을 받습니다. 압축을 별도 폴더에 풀고 FileHubAIO.exe를 실행합니다. 기존 PC 버전에서는 업데이트 확인으로 v1.3.118를 설치할 수 있습니다.
 
 업데이트 설치 전에는 Excel/Word 등 열린 문서를 모두 저장하고 닫아야 합니다. 안전하게 해제하지 못한 NAS 드라이브가 있으면 프로그램 교체를 중단합니다. 이전 버전은 사용자 백업 폴더에 보관합니다.
 
@@ -33,6 +33,15 @@ PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj 
 
 두 프로젝트를 컴파일하는 것만으로 전체 배포본이 완성되는 것은 아닙니다. rclone, 확장 엔진, WinFsp 배포 파일은 GitHub Actions에서 공식 릴리즈로부터 수집합니다.
 
+## v1.3.118 WebDAV Synology shared-folder compatibility and automatic fallback
+
+- Fixed WebDAV connections blocked before mount because conditional PUT was tested at the Synology shared-folder listing `/`, a virtual root that cannot create files. The direct one-WinFsp writer now probes existing shared folders first and falls back to root only if appropriate.
+- WebDAV servers that do not enforce conditional PUT/If-Match or exclusive MKCOL are no longer completely rejected: the GUI automatically returns to FileHub's existing rclone + LockBridge WebDAV compatibility mount before any direct drive is exposed, preserving the previous working connection and Excel guard behavior.
+- Never silently disable server conditional-write checks in the new native writer. A malformed password or genuine connection failure is NOT treated as permission for unsafe writes or as a trigger for automatic fallback.
+- An explicit ignored If-Match/If-None-Match condition short-circuits duplicate probes for faster connection. Only WebDAV is changed: FTP, SFTP, Google Drive, TeraBox and Android release remain unaffected.
+- The status dialog now reports the engine that ACTUALLY connected, rather than assuming direct mode after compatibility fallback.
+- Local Windows QA: Synology-like virtual root with writable `/Shared` passed single-WinFsp write/lock/disconnect; intentionally nonconditional WebDAV server passed automatic GUI compatibility mount, file read and safe disconnect.
+- Actual remote Synology endpoints remain untested without available account credentials. The old compatibility engine may retain old VFS/EXE performance limitations until server capabilities are verified.
 ## v1.3.117 Dedicated single-WinFsp WebDAV engine
 
 - WebDAV mounts now use a dedicated FileHub WinFsp filesystem and direct HTTP provider, not two stacked WinFsp/rclone layers. Existing FTP, SFTP, Google, TeraBox and other backends are unchanged.

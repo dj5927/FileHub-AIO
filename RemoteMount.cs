@@ -43,6 +43,14 @@ internal static class RemoteMount
     internal static bool UsesDirectWebDav(NasProfile profile) =>
         profile.Protocol == "WebDAV" && !profile.UseNativeWebDavLocks;
 
+    internal static string CurrentWebDavEngine(Guid id)
+    {
+        lock (Guard)
+            return Running.TryGetValue(id, out var instance)
+                ? instance.DirectWebDav ? "direct-single-winfsp" : "legacy-compatible"
+                : "not-connected";
+    }
+
     private static async Task<string> DirectCommandAsync(Guid id, string command,
         CancellationToken cancellationToken = default)
     {
@@ -141,7 +149,16 @@ internal static class RemoteMount
                     return OperationResult.Fail("Direct WebDAV connection was not ready within 45 seconds; " +
                         "the engine is retained for safe diagnosis/disconnect.");
                 }
+                int exitCode = process.ExitCode;
                 process.Dispose();
+                if (exitCode == 24)
+                {
+                    // The direct engine declined to mount before touching
+                    // user files, so the legacy compatibility path is safe.
+                    AppStore.Log("WEBDAV_NATIVE_CAPABILITY_AUTO_FALLBACK id=" + p.Id +
+                        " reason=conditional-put-or-exclusive-lock-unavailable");
+                    return OperationResult.Fail("DIRECT_WEBDAV_COMPATIBILITY_REQUIRED");
+                }
                 return OperationResult.Fail("Direct WebDAV server did not authorize a safe mount (" +
                     string.Join(",", messages.Distinct().Take(3)) +
                     "). The server must enforce conditional writes and exclusive locks.");
@@ -1394,7 +1411,17 @@ internal static class RemoteMount
                 d.StartsWith(p.Letter.ToUpperInvariant() + ":", StringComparison.OrdinalIgnoreCase)))
             return OperationResult.Fail(p.Letter + ": 드라이브가 다른 프로그램에서 사용 중입니다.");
         if (UsesDirectWebDav(p))
-            return await ConnectDirectWebDavAsync(p, password);
+        {
+            var direct = await ConnectDirectWebDavAsync(p, password);
+            if (direct.Success ||
+                direct.Message != "DIRECT_WEBDAV_COMPATIBILITY_REQUIRED")
+                return direct;
+            // This exact server cannot enforce the direct engine's
+            // conditional-write protocol. Reuse the previous WebDAV mount
+            // path instead of refusing the whole drive connection.
+            AppStore.Log("WEBDAV_AUTO_COMPATIBILITY_MOUNT_BEGIN id=" + p.Id +
+                " legacyLockBridge=" + p.UseLockBridge);
+        }
         string? exe = BackendExecutable(p);
         if (exe == null)
             return OperationResult.Fail("rclone.exe가 없습니다. 프로그램 폴더의 tools\\rclone.exe에 배치하세요.");

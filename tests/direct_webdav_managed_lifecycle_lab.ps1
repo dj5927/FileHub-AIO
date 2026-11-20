@@ -1,13 +1,18 @@
-param([int]$Port = 18872)
+param([int]$Port = 18872, [switch]$SynologyVirtualRoot)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
-$rclone = 'E:\NASMount_Releases\NASMount_1_3_35_ICON_TITLEBAR\tools\rclone.exe'
-$engine = Join-Path $repo 'LockBridge\bin\Release\net10.0-windows\win-x64\NASMountLockBridge.exe'
+$rclone = if($env:FILEHUB_LAB_RCLONE){$env:FILEHUB_LAB_RCLONE}else{
+ 'E:\NASMount_Releases\NASMount_1_3_35_ICON_TITLEBAR\tools\rclone.exe'
+}
+$engine = if($env:FILEHUB_TEST_PUBLISHED_BRIDGE){$env:FILEHUB_TEST_PUBLISHED_BRIDGE}else{
+ Join-Path $repo 'LockBridge\bin\Release\net10.0-windows\win-x64\NASMountLockBridge.exe'
+}
 $root = Join-Path $env:TEMP ('FileHubManagedOneWinFsp_' + [Guid]::NewGuid().ToString('N'))
 $server = Join-Path $root 'server'
 $logs = Join-Path $root 'logs'
 [IO.Directory]::CreateDirectory($server)|Out-Null
 [IO.Directory]::CreateDirectory($logs)|Out-Null
+if($SynologyVirtualRoot){[IO.Directory]::CreateDirectory((Join-Path $server 'Shared'))|Out-Null}
 $used = @([Environment]::GetLogicalDrives() | ForEach-Object {$_.Substring(0,1)})
 $letter = @('V','W','Q','P','T','U','M') | Where-Object {$used -notcontains $_} | Select-Object -First 1
 if(!$letter){throw 'No free Windows drive letter'}
@@ -16,6 +21,7 @@ $id = [Guid]::NewGuid().ToString('D')
 $webdav = $null; $proxy = $null; $managed = $null; $file = $null
 $env:FILEHUB_STRICT_DAV_BACKEND = [string]$Port
 $env:FILEHUB_STRICT_DAV_FRONT = [string]($Port+1)
+$env:FILEHUB_STRICT_DAV_DENY_ROOT_WRITES = $(if($SynologyVirtualRoot){'1'}else{'0'})
 Write-Output ('MANAGED_QA_ROOT='+$root)
 Write-Output ('MANAGED_QA_PROFILE_ID='+$id)
 
@@ -68,7 +74,8 @@ try {
  if($response -notmatch '^READY [0-9]+ .* (SAFE|BUSY)$'){
    throw ('Unexpected status command '+$response)}
  Write-Output 'DIRECT_MANAGED_STATUS_PIPE_PASS'
- $target=Join-Path $drive 'live-open.txt'
+ $relative=$(if($SynologyVirtualRoot){'Shared\live-open.txt'}else{'live-open.txt'})
+ $target=Join-Path $drive $relative
  $file=[IO.FileStream]::new($target,[IO.FileMode]::CreateNew,
    [IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
  $payload=[Text.Encoding]::UTF8.GetBytes('managed-direct-webdav-content')
@@ -79,7 +86,7 @@ try {
    throw ('Unsafe unmount accepted while file open: '+$response)}
  Write-Output 'DIRECT_MANAGED_OPEN_FILE_UNMOUNT_BLOCKED_PASS'
  $file.Dispose();$file=$null
- $remote=Join-Path $server 'live-open.txt'
+ $remote=Join-Path $server $relative
  $saved=$false
  for($n=0;$n -lt 30;$n++){
    Start-Sleep -Milliseconds 180
@@ -101,10 +108,12 @@ try {
  if(-not $managed.WaitForExit(14000)){throw 'Managed process did not exit after QUIT'}
  Write-Output 'DIRECT_MANAGED_SAFE_UNMOUNT_AND_PROCESS_EXIT_PASS'
  Write-Output 'DIRECT_MANAGED_WEBDAV_GUI_LIFECYCLE_LAB_PASS'
+ if($SynologyVirtualRoot){Write-Output 'DIRECT_SYNLOGY_VIRTUAL_ROOT_WRITABLE_SHARE_PASS'}
 } finally {
  if($file){$file.Dispose()}
  if($managed -and !$managed.HasExited){Stop-Process -Id $managed.Id -Force -ErrorAction SilentlyContinue}
  if($proxy -and !$proxy.HasExited){Stop-Process -Id $proxy.Id -Force -ErrorAction SilentlyContinue}
  if($webdav -and !$webdav.HasExited){Stop-Process -Id $webdav.Id -Force -ErrorAction SilentlyContinue}
+ Remove-Item Env:\FILEHUB_STRICT_DAV_DENY_ROOT_WRITES -ErrorAction SilentlyContinue
  Write-Output ('MANAGED_QA_LOGS='+$logs)
 }

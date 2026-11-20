@@ -12,6 +12,7 @@ import threading
 
 BACKEND = int(os.environ.get("FILEHUB_STRICT_DAV_BACKEND", "18785"))
 FRONT = int(os.environ.get("FILEHUB_STRICT_DAV_FRONT", "18786"))
+DENY_ROOT_WRITES = os.environ.get("FILEHUB_STRICT_DAV_DENY_ROOT_WRITES") == "1"
 WRITE_LOCK = threading.RLock()
 
 
@@ -62,6 +63,16 @@ class Handler(BaseHTTPRequestHandler):
         write = self.command in ("PUT", "DELETE", "MOVE", "MKCOL", "COPY")
         guard = WRITE_LOCK if write else threading.RLock()
         with guard:
+            # Synology's / is a virtual list of shared folders. Some NAS
+            # users can write to /Shared/* but not create files directly /.
+            if DENY_ROOT_WRITES and self.command in ("PUT", "MKCOL") and \
+                    len([p for p in urlsplit(request_path).path.split("/") if p]) == 1:
+                self.send_response(403)
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+                return
             if self.command == "MKCOL" and self.directory_exists(request_path):
                 self.send_response(405)
                 self.send_header("Content-Length", "0")

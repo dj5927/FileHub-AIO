@@ -44,8 +44,52 @@ internal static class ManagedDirectWebDavHost
         LeaseCoordinator? leases = null;
         if (writable)
         {
-            store!.RequireVerifiedConditionalWrites();
-            store.RequireExclusiveLockDirectory();
+            // A Synology WebDAV / root is a virtual listing of shares and
+            // often cannot accept PUT or MKCOL. Test inside a real share
+            // before deciding that the NAS lacks conditional writes.
+            var shares = backend.List("/").Where(e => e.IsDirectory)
+                .Select(e => e.Path).Take(8).ToList();
+            shares.Add("/"); // Supports ordinary servers with writable root.
+            bool verified = false;
+            foreach (string folder in shares.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    store!.RequireVerifiedConditionalWrites(folder);
+                    store.RequireExclusiveLockDirectory(folder);
+                    Console.WriteLine("DIRECT_WEBDAV_GUARDED_WRITE_PROBE_PASS " +
+                        (folder == "/" ? "root" : "shared-folder"));
+                    verified = true;
+                    break;
+                }
+                catch (IOException ex)
+                {
+                    // Log only the protocol failure category, not the full
+                    // NAS path, account information or probe payload.
+                    string reason = ex.Message.Contains("HTTP 403") ? "permission-403" :
+                        ex.Message.Contains("HTTP 401") ? "permission-401" :
+                        ex.Message.Contains("create failed") ? "write-disabled" :
+                        ex.Message.Contains("MKCOL") ? "exclusive-lock" :
+                        ex.Message.Contains("If-") ? "conditional-write" :
+                        "conditional-probe";
+                    Console.WriteLine("DIRECT_WEBDAV_GUARDED_WRITE_PROBE_SKIPPED " + reason);
+                    // If the server accepted an explicitly stale or duplicate
+                    // conditional request, probing more folders only adds
+                    // delays. Switch to the existing compatibility engine.
+                    if (ex.Message.Contains("Server ignores If-", StringComparison.Ordinal) ||
+                        ex.Message.Contains("duplicate MKCOL", StringComparison.Ordinal))
+                        break;
+                }
+            }
+            if (!verified)
+            {
+                // Exit *before mounting* so the GUI can automatically use
+                // its established WebDAV+rclone+LockBridge compatibility
+                // path. Never silently allow unconditional overwrites.
+                Console.WriteLine("DIRECT_WEBDAV_COMPATIBILITY_REQUIRED");
+                Console.Out.Flush();
+                return 24;
+            }
             leases = new LeaseCoordinator(profile, password,
                 TimeSpan.FromSeconds(5), uploadSafe: () => true);
             // Automatic crash replay is allowed only with an acquired Office

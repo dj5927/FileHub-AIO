@@ -92,7 +92,7 @@ internal sealed partial class MainForm : Form
             {
                 AppStore.Log("AUTOSTART_TARGET_MIGRATION_SKIPPED " + ex.GetType().Name);
             }
-            AppStore.Log("NASMOUNT_START VERSION=1.3.117 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
+            AppStore.Log("NASMOUNT_START VERSION=1.3.118 PRODUCT=FileHubAIO SFTP_POLICY=PINNED_HOST_KEYS " +
                 "EXE=" + Environment.ProcessPath);
         }
     }
@@ -1690,7 +1690,7 @@ internal sealed partial class MainForm : Form
     {
         var p = Selected();
         if (p is null || p.Protocol != "WebDAV") return;
-        if (RemoteMount.UsesDirectWebDav(p))
+        if (RemoteMount.CurrentWebDavEngine(p.Id) == "direct-single-winfsp")
         {
             var state = IsConnected(p)
                 ? await RemoteMount.CheckPersistentMount(p)

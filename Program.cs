@@ -39,6 +39,53 @@ internal static class Program
             }
             return;
         }
+        if (args.Length == 2 && args[0] == "--direct-webdav-gui-compatibility-flow-lab")
+        {
+            try
+            {
+                if (!int.TryParse(args[1], out int port) || port is < 1024 or > 65535)
+                    throw new ArgumentException("Invalid local WebDAV test port");
+                string? letter = Enumerable.Range(0, 21)
+                    .Select(i => ((char)('Z' - i)).ToString())
+                    .FirstOrDefault(x => !Environment.GetLogicalDrives().Any(d =>
+                        d.StartsWith(x + ":", StringComparison.OrdinalIgnoreCase)));
+                if (letter is null) throw new IOException("No free loopback test drive letter");
+                var profile = new NasProfile {
+                    Id = Guid.NewGuid(), Host = "127.0.0.1", Port = port,
+                    Protocol = "WebDAV", Letter = letter, DisplayName = "CompatibilityLab",
+                    IsAnonymous = true, WebDavUseHttp = true,
+                    UseLockBridge = false, AllowUnprotectedWrites = true
+                };
+                Environment.SetEnvironmentVariable("NASMOUNT_LAB_DIRECT_MANAGED", "1");
+                try
+                {
+                    var result = RemoteMount.Connect(profile, "").GetAwaiter().GetResult();
+                    if (!result.Success)
+                        throw new IOException("Automatic WebDAV compatibility connection: " + result.Message);
+                    if (RemoteMount.CurrentWebDavEngine(profile.Id) != "legacy-compatible")
+                        throw new IOException("Unsupported conditional WebDAV did not use legacy backend");
+                    Console.WriteLine("WEBDAV_AUTOMATIC_LEGACY_COMPATIBILITY_MOUNT_PASS");
+                    var health = RemoteMount.CheckMountedHealthAsync(profile).GetAwaiter().GetResult();
+                    if (!health.Success)
+                        throw new IOException("Compatibility mount health: " + health.Message);
+                    string seed = File.ReadAllText(letter + @":\read-only-test.txt");
+                    if (seed != "fallback-readable")
+                        throw new IOException("WebDAV compatibility driver returned wrong data");
+                    Console.WriteLine("WEBDAV_COMPATIBILITY_FILE_READ_PASS");
+                    var stop = RemoteMount.Disconnect(profile).GetAwaiter().GetResult();
+                    if (!stop.Success) throw new IOException("Compatibility disconnect: " + stop.Message);
+                    Console.WriteLine("WEBDAV_COMPATIBILITY_SAFE_DISCONNECT_PASS");
+                    Console.WriteLine("WEBDAV_UNSUPPORTED_CONDITIONAL_GUI_AUTOFALLBACK_PASS");
+                }
+                finally { Environment.SetEnvironmentVariable("NASMOUNT_LAB_DIRECT_MANAGED", null); }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("WEBDAV_GUI_AUTOFALLBACK_TEST_FAIL " + ex);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
         if (args.Length == 2 && args[0] == "--direct-webdav-gui-managed-flow-lab")
         {
             try
