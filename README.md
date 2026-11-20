@@ -1,4 +1,4 @@
-# FileHub AIO PC for Windows
+## v1.3.113 FileHub AIO PC for Windows
 
 Windows 10/11용 NAS·클라우드 드라이브 마운트 프로그램입니다.
 
@@ -32,6 +32,13 @@ GitHub Actions는 공식 릴리즈 파일과 컴파일된 실행 파일의 SHA-2
 PowerShell에서 dotnet restore NASMount.csproj, dotnet publish NASMount.csproj -c Release -r win-x64 --self-contained true -o publish, dotnet publish LockBridge/LockBridge.csproj -c Release -r win-x64 --self-contained true -o bridge 를 순서대로 실행합니다.
 
 두 프로젝트를 컴파일하는 것만으로 전체 배포본이 완성되는 것은 아닙니다. rclone, 확장 엔진, WinFsp 배포 파일은 GitHub Actions에서 공식 릴리즈로부터 수집합니다.
+
+## v1.3.114 WebDAV LockBridge repeated Excel save stability
+
+- Office documents on a WebDAV LockBridge mount use a 30-minute rclone directory metadata cache instead of the previous six-second refresh. This prevents an unnecessary remote metadata re-import between consecutive Excel saves while retaining the verified local WinFsp write-back data.
+- The LockBridge independently checks recently opened NAS directories every two seconds. Its proven real external changes still invoke an explicit targeted rclone refresh and native WinFsp change notifications. Non-bridge WebDAV mounts keep their previous six-second metadata policy.
+- The bounded per-workbook record of locally saved payload hashes is retained for up to two hours. A remote ETag echo is ignored only when the actual remote bytes were independently downloaded and verified against an exact local SHA-256; mismatching edits and server rollback are not ignored.
+- The local Excel/WinFsp lab covers multiple consecutive saves and a separate real external add/modify/remove test with the 30-minute VFS cache. Actual Synology NAS confirmation remains necessary because the local loopback server did not reproduce the original warning.
 
 ## v1.3.113 Batched Explorer notifications / Google startup diagnosis
 

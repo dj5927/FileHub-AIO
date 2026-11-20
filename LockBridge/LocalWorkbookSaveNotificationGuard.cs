@@ -24,7 +24,13 @@ internal sealed class LocalWorkbookSaveNotificationGuard
     private readonly ConcurrentDictionary<string, History> _histories =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Func<DateTimeOffset> _clock;
-    private static readonly TimeSpan ReceiptLifetime = TimeSpan.FromMinutes(5);
+    // Synology/WebDAV may re-announce an unchanged workbook with a fresh
+    // ETag well after rclone's delayed upload. Keep a bounded history while
+    // an Office document is in use, so even a later server echo can be
+    // checked by SHA-256 against our own saved bytes. This does NOT grant a
+    // blanket ignore window: every differing server revision must be GETed
+    // and hashed before an event can be suppressed.
+    private static readonly TimeSpan ReceiptLifetime = TimeSpan.FromHours(2);
     private static readonly TimeSpan EchoWindow = TimeSpan.FromSeconds(20);
     private const int MaxReceipts = 24;
 
@@ -230,7 +236,7 @@ internal sealed class LocalWorkbookSaveNotificationGuard
         // Content-matched verified receipts may still suppress an ETag echo,
         // but a DIFFERENT SHA can NEVER be identified as local by the
         // independent remote SHA comparison done by the monitor.
-        now += TimeSpan.FromMinutes(6);
+        now += TimeSpan.FromHours(2).Add(TimeSpan.FromMinutes(1));
         if (guard.Candidates(document, before, after).Count != 0 ||
             guard.Acknowledge(document, ticket))
             throw new Exception("Expired local receipts were reused");

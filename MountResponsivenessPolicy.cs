@@ -11,10 +11,19 @@ namespace NASMount;
 internal static class MountResponsivenessPolicy
 {
     internal static string DirectoryCacheTime(string protocol,
-        bool fastRead, bool officeRead)
+        bool fastRead, bool officeRead, bool lockBridge = false)
     {
         if (officeRead) return "20s";
         if (fastRead) return "15s";
+        // The WebDAV LockBridge independently observes the actual NAS with
+        // PROPFIND every 2s, then explicitly refreshes rclone only for a
+        // proven external change. With a six-second rclone directory cache,
+        // a server's asynchronous write-back/mtime normalization of OUR OWN
+        // first Excel save gets re-imported between Ctrl+S operations and
+        // can be misread by Excel as another user's write. Keep the local
+        // VFS view stable while its monitored external-change path remains
+        // active. Never use this policy for unbridged WebDAV mounts.
+        if (protocol == "WebDAV" && lockBridge) return "30m";
         return protocol switch
         {
             "WebDAV" => "6s",
@@ -32,6 +41,9 @@ internal static class MountResponsivenessPolicy
     internal static void PolicyTest()
     {
         if (DirectoryCacheTime("WebDAV", false, false) != "6s" ||
+            DirectoryCacheTime("WebDAV", false, false, true) != "30m" ||
+            DirectoryCacheTime("WebDAV", true, false, true) != "15s" ||
+            DirectoryCacheTime("SFTP", false, false, true) != "5s" ||
             DirectoryCacheTime("GoogleDrive", false, false) != "30m" ||
             DirectoryCacheTime("OneDrive", false, false) != "20s" ||
             DirectoryCacheTime("TeraBox", false, false) != "15s" ||
@@ -40,5 +52,6 @@ internal static class MountResponsivenessPolicy
             DirectoryCacheTime("WebDAV", false, true) != "20s")
             throw new InvalidOperationException("VFS metadata cache policy failed");
         Console.WriteLine("MOUNT_DIRECTORY_CACHE_RESPONSIVENESS_POLICY_PASS");
+        Console.WriteLine("WEBDAV_LOCKBRIDGE_EXCEL_OWN_SAVE_METADATA_STABLE_POLICY_PASS");
     }
 }

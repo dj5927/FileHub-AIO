@@ -1326,7 +1326,7 @@ internal static class RemoteMount
                 args.Add("1");
             }
             string directoryCacheTime = MountResponsivenessPolicy.DirectoryCacheTime(
-                p.Protocol, fastRead, officeRead);
+                p.Protocol, fastRead, officeRead, p.UseLockBridge);
             args.Add("--dir-cache-time");
             args.Add(directoryCacheTime);
             args.Add("--poll-interval");
