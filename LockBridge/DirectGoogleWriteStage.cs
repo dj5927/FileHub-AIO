@@ -26,11 +26,46 @@ internal sealed class DirectGoogleWriteStage : IDisposable
     private bool _uploaded;
     private bool _discarded;
     private bool _closed;
+    private int _cleanupHandles;
+    private int _closeHandles;
     internal string LocalDataPath => _dataPath;
     internal bool Uploaded => _uploaded;
     internal bool Discarded => _discarded;
     internal FileStream Local { get; }
     internal long Length => Local.Length;
+
+    // Multiple WinFsp handles may write and flush the same new file.
+    // Upload only after final Cleanup; release local storage at final Close.
+    internal void RegisterHandle()
+    {
+        lock (_gate)
+        {
+            if (_closed || _discarded)
+                throw new IOException("Google write stage is no longer available");
+            _cleanupHandles++;
+            _closeHandles++;
+        }
+    }
+
+    internal bool LastCleanup()
+    {
+        lock (_gate)
+        {
+            if (_cleanupHandles <= 0)
+                throw new InvalidOperationException("Google stage cleanup mismatch");
+            return --_cleanupHandles == 0;
+        }
+    }
+
+    internal bool LastClose()
+    {
+        lock (_gate)
+        {
+            if (_closeHandles <= 0)
+                throw new InvalidOperationException("Google stage close mismatch");
+            return --_closeHandles == 0;
+        }
+    }
 
     internal DirectGoogleWriteStage(GoogleDirectApiClient api, string stageDirectory,
         string parentId, string name)

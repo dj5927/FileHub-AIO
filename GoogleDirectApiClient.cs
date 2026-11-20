@@ -32,7 +32,8 @@ internal sealed class GoogleDirectApiClient
 
     internal sealed record Item(string Id, string Name, bool IsFolder,
         long Size, string? Version, DateTimeOffset? Modified,
-        string MimeType = "", string? Md5Checksum = null);
+        string MimeType = "", string? Md5Checksum = null,
+        string? HeadRevisionId = null);
     private sealed record CachedChildren(DateTimeOffset Expires, IReadOnlyList<Item> Items);
 
     internal GoogleDirectApiClient(HttpClient http,
@@ -139,10 +140,13 @@ internal sealed class GoogleDirectApiClient
             v.GetString() : null;
         string? md5 = value.TryGetProperty("md5Checksum", out var check) ?
             check.GetString() : null;
+        string? head = value.TryGetProperty("headRevisionId", out var rev) ?
+            rev.GetString() : null;
         DateTimeOffset? modified = value.TryGetProperty("modifiedTime", out var date) &&
             DateTimeOffset.TryParse(date.GetString(), out var parsedTime) ?
                 parsedTime : null;
-        return new Item(id, name, mime == FolderMime, size, version, modified, mime, md5);
+        return new Item(id, name, mime == FolderMime, size, version,
+            modified, mime, md5, head);
     }
 
     internal async Task<IReadOnlyList<Item>> ListChildrenAsync(
@@ -165,7 +169,7 @@ internal sealed class GoogleDirectApiClient
                 string relative = "files?pageSize=1000&supportsAllDrives=true&" +
                     "includeItemsFromAllDrives=true&q=" + Uri.EscapeDataString(query) +
                     "&fields=" + Uri.EscapeDataString(
-                        "nextPageToken,files(id,name,mimeType,size,modifiedTime,version,md5Checksum)");
+                        "nextPageToken,files(id,name,mimeType,size,modifiedTime,version,md5Checksum,headRevisionId)");
                 if (token is not null)
                     relative += "&pageToken=" + Uri.EscapeDataString(token);
                 using var doc = await SendJsonAsync(HttpMethod.Get, relative, null,
@@ -192,7 +196,7 @@ internal sealed class GoogleDirectApiClient
         fileId = ValidId(fileId);
         using var request = new HttpRequestMessage(HttpMethod.Get,
             new Uri(_api, "files/" + fileId +
-                "?fields=id,name,mimeType,size,modifiedTime,version,md5Checksum&supportsAllDrives=true"));
+                "?fields=id,name,mimeType,size,modifiedTime,version,md5Checksum,headRevisionId&supportsAllDrives=true"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer",
             await _accessToken(cancel).ConfigureAwait(false));
         using var result = await _http.SendAsync(request,
@@ -365,6 +369,135 @@ internal sealed class GoogleDirectApiClient
             empty = false;
         }
         throw new IOException("Google resumable upload not confirmed; local stage retained");
+    }
+
+    internal async Task<Item> PinCurrentBinaryRevisionAsync(string fileId,
+        string expectedHeadRevision, string expectedMd5,
+        CancellationToken cancel = default)
+    {
+        fileId = ValidId(fileId);
+        string revision = ValidId(expectedHeadRevision);
+        var current = await GetFileAsync(fileId, cancel).ConfigureAwait(false);
+        if (current is null || current.IsFolder ||
+            current.MimeType.StartsWith("application/vnd.google-apps.",
+                StringComparison.OrdinalIgnoreCase) ||
+            current.HeadRevisionId != revision ||
+            !string.Equals(current.Md5Checksum, expectedMd5,
+                StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Google existing file changed; refusing edit");
+        using var pinned = await SendJsonAsync(HttpMethod.Patch,
+            "files/" + fileId + "/revisions/" + revision +
+                "?fields=id,keepForever,md5Checksum",
+            new { keepForever = true }, cancel).ConfigureAwait(false);
+        if (pinned.RootElement.GetProperty("id").GetString() != revision ||
+            pinned.RootElement.GetProperty("keepForever").GetBoolean() != true)
+            throw new IOException("Google previous binary revision was not pinned");
+        var afterPin = await GetFileAsync(fileId, cancel).ConfigureAwait(false);
+        if (afterPin?.HeadRevisionId != revision ||
+            !string.Equals(afterPin.Md5Checksum, expectedMd5,
+                StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Google content changed while backing up revision");
+        // A revision remains permanently recoverable. This is NOT an
+        // atomic compare-and-swap for concurrent Google clients.
+        return afterPin;
+    }
+
+    internal async Task<Item> UploadExistingAsync(string fileId, string expectedMd5,
+        string expectedRevision, Stream data, CancellationToken cancel = default)
+    {
+        fileId = ValidId(fileId);
+        if (!data.CanSeek || data.Position != 0)
+            throw new ArgumentException("Existing Google upload requires a seekable stream at zero");
+        var current = await GetFileAsync(fileId, cancel).ConfigureAwait(false);
+        if (current is null || current.HeadRevisionId != expectedRevision ||
+            !string.Equals(current.Md5Checksum, expectedMd5,
+                StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Google existing file changed before uploading new revision");
+        Uri upload = new(_api, "../../upload/drive/v3/files/" + fileId +
+            "?uploadType=resumable&supportsAllDrives=true&" +
+            "fields=id,name,mimeType,size,modifiedTime,version,md5Checksum,headRevisionId");
+        using var request = new HttpRequestMessage(HttpMethod.Patch, upload)
+        { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer", await _accessToken(cancel).ConfigureAwait(false));
+        request.Headers.TryAddWithoutValidation("X-Upload-Content-Type",
+            "application/octet-stream");
+        request.Headers.TryAddWithoutValidation("X-Upload-Content-Length",
+            data.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var initiated = await _http.SendAsync(request,
+            HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+        if (!initiated.IsSuccessStatusCode || initiated.Headers.Location is not { } location)
+            throw new IOException("Google existing revision session failed HTTP " +
+                (int)initiated.StatusCode);
+        if (!location.IsAbsoluteUri ||
+            !string.Equals(location.Host, _api.Host, StringComparison.OrdinalIgnoreCase) ||
+            (location.Scheme != Uri.UriSchemeHttps &&
+                !(_api.IsLoopback && location.IsLoopback &&
+                  location.Scheme == Uri.UriSchemeHttp)))
+            throw new IOException("Invalid Google existing revision upload endpoint");
+        // Re-check immediately before sending bytes. Another client can
+        // still race this point, but the previous revision is pinned.
+        current = await GetFileAsync(fileId, cancel).ConfigureAwait(false);
+        if (current?.HeadRevisionId != expectedRevision ||
+            !string.Equals(current?.Md5Checksum, expectedMd5,
+                StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Google existing file changed during upload setup");
+        const int chunkSize = 8 * 1024 * 1024;
+        long sent = 0;
+        int stalls = 0;
+        bool empty = data.Length == 0;
+        while (sent < data.Length || empty)
+        {
+            data.Position = sent;
+            int size = empty ? 0 : (int)Math.Min(chunkSize, data.Length - sent);
+            byte[] chunk = new byte[size];
+            int loaded = 0;
+            while (loaded < size)
+            {
+                int got = await data.ReadAsync(chunk.AsMemory(loaded), cancel);
+                if (got <= 0) throw new EndOfStreamException("Edited Google file truncated");
+                loaded += got;
+            }
+            using var put = new HttpRequestMessage(HttpMethod.Put, location)
+            { Content = new ByteArrayContent(chunk) };
+            put.Headers.Authorization = new AuthenticationHeaderValue("Bearer",
+                await _accessToken(cancel).ConfigureAwait(false));
+            put.Content.Headers.ContentType =
+                new MediaTypeHeaderValue("application/octet-stream");
+            put.Content.Headers.ContentRange = empty
+                ? new ContentRangeHeaderValue(0)
+                : new ContentRangeHeaderValue(sent, sent + size - 1, data.Length);
+            using var response = await _http.SendAsync(put,
+                HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+            if (response.IsSuccessStatusCode)
+            {
+                using var doc = await JsonDocument.ParseAsync(
+                    await response.Content.ReadAsStreamAsync(cancel),
+                    cancellationToken: cancel).ConfigureAwait(false);
+                var result = ParseItem(doc.RootElement);
+                if (result.Id != fileId)
+                    throw new IOException("Google modified a different file than expected");
+                return result;
+            }
+            if ((int)response.StatusCode != 308)
+                throw new IOException("Google existing revision upload HTTP " +
+                    (int)response.StatusCode + "; recovery retained");
+            string range = response.Headers.TryGetValues("Range", out var ranges)
+                ? ranges.FirstOrDefault() ?? "" : "";
+            var match = System.Text.RegularExpressions.Regex.Match(
+                range, @"^bytes=0-(\d+)$");
+            if (!match.Success ||
+                !long.TryParse(match.Groups[1].Value, out long last))
+                throw new IOException("Google resumable update lacks a valid byte-range ACK");
+            long acknowledged = last + 1;
+            if (acknowledged < sent || acknowledged > data.Length ||
+                (acknowledged == sent && ++stalls > 2))
+                throw new IOException("Google resumable update failed to advance");
+            if (acknowledged > sent) stalls = 0;
+            sent = acknowledged;
+            empty = false;
+        }
+        throw new IOException("Google existing revision upload not confirmed");
     }
 
     internal async Task<Item> CreateFolderAsync(string parentId, string name,

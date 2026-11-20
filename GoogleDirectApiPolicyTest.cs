@@ -17,6 +17,8 @@ internal static class GoogleDirectApiPolicyTest
         internal int Uploads;
         internal int UploadStarts;
         internal int GeneratedIds;
+        internal bool ExistingRevisionPinned;
+        internal bool ExistingRevisionUpdated;
         internal bool Limit;
 
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -31,6 +33,62 @@ internal static class GoogleDirectApiPolicyTest
             if (Limit)
                 return Response(HttpStatusCode.Forbidden,
                     """{"error":{"status":"PERMISSION_DENIED","errors":[{"reason":"rateLimitExceeded"}]}}""");
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri.AbsolutePath.EndsWith("/files/fileA_1") &&
+                !request.RequestUri.Query.Contains("alt=media"))
+            {
+                string md5 = ExistingRevisionUpdated
+                    ? Convert.ToHexString(System.Security.Cryptography.MD5.HashData(
+                        Encoding.ASCII.GetBytes("EDITED"))).ToLowerInvariant()
+                    : Convert.ToHexString(System.Security.Cryptography.MD5.HashData(
+                        Encoding.ASCII.GetBytes("BASE"))).ToLowerInvariant();
+                return Response(HttpStatusCode.OK, JsonSerializer.Serialize(new
+                {
+                    id = "fileA_1", name = "sample.xlsx",
+                    mimeType = "application/octet-stream",
+                    size = ExistingRevisionUpdated ? "6" : "4",
+                    version = ExistingRevisionUpdated ? "13" : "12",
+                    headRevisionId = ExistingRevisionUpdated ? "rev_new" : "rev_old",
+                    md5Checksum = md5
+                }));
+            }
+            if (request.Method == HttpMethod.Patch &&
+                request.RequestUri.AbsolutePath.EndsWith("/files/fileA_1/revisions/rev_old"))
+            {
+                ExistingRevisionPinned = true;
+                return Response(HttpStatusCode.OK,
+                    """{"id":"rev_old","keepForever":true}""");
+            }
+            if (request.Method == HttpMethod.Patch &&
+                request.RequestUri.AbsolutePath.EndsWith("/upload/drive/v3/files/fileA_1"))
+            {
+                if (!ExistingRevisionPinned)
+                    throw new InvalidOperationException(
+                        "Google existing-file edit started without preserving old revision");
+                var answer = Response(HttpStatusCode.OK, "{}");
+                answer.Headers.Location = new Uri("http://127.0.0.1:18220/session/edit");
+                return answer;
+            }
+            if (request.Method == HttpMethod.Put &&
+                request.RequestUri.AbsolutePath == "/session/edit")
+            {
+                byte[] bytes = await request.Content!
+                    .ReadAsByteArrayAsync(cancellationToken);
+                if (Encoding.ASCII.GetString(bytes) != "EDITED")
+                    throw new InvalidOperationException(
+                        "Existing Drive revision upload content corrupted");
+                ExistingRevisionUpdated = true;
+                return Response(HttpStatusCode.OK,
+                    JsonSerializer.Serialize(new
+                    {
+                        id = "fileA_1", name = "sample.xlsx",
+                        mimeType = "application/octet-stream", size = "6",
+                        version = "13", headRevisionId = "rev_new",
+                        md5Checksum = Convert.ToHexString(
+                            System.Security.Cryptography.MD5.HashData(bytes))
+                            .ToLowerInvariant()
+                    }));
+            }
             if (request.Method == HttpMethod.Get &&
                 request.RequestUri.AbsolutePath.EndsWith("/files/generateIds"))
             {
@@ -183,6 +241,31 @@ internal static class GoogleDirectApiPolicyTest
             fake.Uploads != 1 || fake.GeneratedIds != 1)
             throw new InvalidOperationException("Direct Google new-file upload failed");
         Console.WriteLine("GOOGLE_DIRECT_API_RANGE_READ_AND_NEW_RESUMABLE_UPLOAD_PASS");
+
+        string originalMd5 = Convert.ToHexString(
+            System.Security.Cryptography.MD5.HashData(
+                Encoding.ASCII.GetBytes("BASE"))).ToLowerInvariant();
+        var pinned = await api.PinCurrentBinaryRevisionAsync(
+            "fileA_1", "rev_old", originalMd5);
+        if (!fake.ExistingRevisionPinned ||
+            pinned.HeadRevisionId != "rev_old")
+            throw new InvalidOperationException("Existing Google binary was not backed up");
+        using var edited = new MemoryStream(Encoding.ASCII.GetBytes("EDITED"));
+        var revised = await api.UploadExistingAsync(
+            "fileA_1", originalMd5, "rev_old", edited);
+        if (!fake.ExistingRevisionUpdated ||
+            revised.HeadRevisionId != "rev_new" || revised.Id != "fileA_1")
+            throw new InvalidOperationException("Existing Google revision was not updated");
+        try
+        {
+            await api.PinCurrentBinaryRevisionAsync(
+                "fileA_1", "rev_old", originalMd5);
+            throw new InvalidOperationException("Stale Google edit was allowed");
+        }
+        catch (IOException ex) when (ex.Message.Contains(
+            "Google existing file changed", StringComparison.Ordinal)) { }
+        Console.WriteLine(
+            "GOOGLE_DIRECT_EXISTING_BINARY_PIN_OLD_REVISION_AND_CONFLICT_POLICY_PASS");
 
         fake.Limit = true;
         api.InvalidateFolder("root");

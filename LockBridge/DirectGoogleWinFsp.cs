@@ -54,7 +54,10 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
         new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, DirectGoogleWriteStage> _newFiles = new(
         StringComparer.OrdinalIgnoreCase);
-    private sealed record NewFile(Entry Entry, DirectGoogleWriteStage Stage);
+    private sealed record NewFile(Entry Entry, DirectGoogleWriteStage Stage)
+    {
+        internal int Cleaned;
+    }
 
     internal DirectGoogleWinFsp(GoogleDirectApiClient api,
         string localAclDirectory, bool allowFolderMutations,
@@ -291,6 +294,7 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
             if (_newFiles.TryGetValue(Canonical(fileName), out var localStage))
             {
                 var provisional = Find(fileName)!;
+                localStage.RegisterHandle();
                 var writable = new NewFile(provisional, localStage);
                 fileNode = writable; fileDesc = writable;
                 info = Describe(writable);
@@ -321,7 +325,9 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
         {
             try
             {
-                if (!staged.Stage.Uploaded && !staged.Stage.Discarded)
+                if (Interlocked.Exchange(ref staged.Cleaned, 1) == 0 &&
+                    staged.Stage.LastCleanup() &&
+                    !staged.Stage.Uploaded && !staged.Stage.Discarded)
                     staged.Stage.Commit();
             }
             catch (Exception error) when (error is IOException or HttpRequestException)
@@ -330,9 +336,12 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
             }
             finally
             {
-                _newFiles.TryRemove(staged.Entry.Path, out _);
-                _recent.TryRemove(staged.Entry.Path, out _);
-                staged.Stage.Dispose();
+                if (staged.Stage.LastClose())
+                {
+                    _newFiles.TryRemove(staged.Entry.Path, out _);
+                    _recent.TryRemove(staged.Entry.Path, out _);
+                    staged.Stage.Dispose();
+                }
                 Interlocked.Decrement(ref _opened);
             }
             return;
@@ -457,6 +466,7 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
                     return Exists;
                 }
                 var pendingEntry = Find(target)!;
+                stage.RegisterHandle();
                 var writer = new NewFile(pendingEntry, stage);
                 fileNode = writer; fileDesc = writer; info = Describe(writer);
                 Interlocked.Increment(ref _opened);
@@ -515,8 +525,8 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
         try
         {
             file.Stage.FlushLocal();
-            // On explicit Windows Flush an upload error MUST be reported.
-            file.Stage.Commit();
+            // Flush durably saves local bytes but must not finalize a remote
+            // upload: Office can flush repeatedly before its final write.
             info = Describe(file);
             return Ok;
         }
@@ -576,23 +586,30 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
             return;
         }
         if (fileDesc is not NewFile file) return;
+        if (Interlocked.Exchange(ref file.Cleaned, 1) != 0) return;
         if ((flags & 1u) != 0)
         {
             try { file.Stage.Discard(); }
             catch (IOException ex) { Failure(ex, "DiscardNewFile"); }
-            _newFiles.TryRemove(file.Entry.Path, out _);
+            file.Stage.LastCleanup();
             return;
         }
         try
         {
-            // Cleanup is the last Windows handle, before the cache manager
-            // eventually sends Close. The remote file is committed here.
-            file.Stage.Commit();
-            if (file.Stage.Uploaded)
+            // Only the last Cleanup can commit the file. Other handles
+            // may still be writing after their sibling handle closes.
+            if (file.Stage.LastCleanup())
             {
-                _newFiles.TryRemove(file.Entry.Path, out _);
-                _recent.TryRemove(file.Entry.Path, out _);
-                file.Stage.Dispose();
+                file.Stage.Commit();
+                if (file.Stage.Uploaded)
+                {
+                    _newFiles.TryRemove(file.Entry.Path, out _);
+                    _recent.TryRemove(file.Entry.Path, out _);
+                    // WinFsp Close can be delayed by the Windows cache
+                    // manager. The final Cleanup guarantees that no live
+                    // handle can write; remove committed recovery bytes now.
+                    file.Stage.Dispose();
+                }
             }
         }
         catch (Exception ex) when (ex is IOException or HttpRequestException)

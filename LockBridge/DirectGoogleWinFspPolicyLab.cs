@@ -209,7 +209,21 @@ internal static class DirectGoogleWinFspPolicyLab
         Console.WriteLine("GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_FOLDER_CREATE_RENAME_PASS");
         const string payload = "Google FileHub native WinFsp upload!";
         string newFile = Path.Combine(root, "upload-from-pc.txt");
-        File.WriteAllText(newFile, payload, Encoding.UTF8);
+        byte[] payloadBytes = Encoding.UTF8.GetBytes(payload);
+        using (var first = new FileStream(newFile, FileMode.CreateNew,
+            FileAccess.ReadWrite, FileShare.ReadWrite))
+        {
+            int midpoint = payloadBytes.Length / 2;
+            first.Write(payloadBytes, 0, midpoint);
+            first.Flush(flushToDisk: true);
+            if (fake.UploadCompletions != 0)
+                throw new IOException("Google Flush uploaded unfinished new file");
+            first.Write(payloadBytes, midpoint,
+                payloadBytes.Length - midpoint);
+            first.Flush(flushToDisk: true);
+            if (fake.UploadCompletions != 0)
+                throw new IOException("Google second Flush prematurely uploaded file");
+        }
         string uploadedText = fake.UploadedContent is null ? "" :
             Encoding.UTF8.GetString(fake.UploadedContent).TrimStart('\uFEFF');
         if (fake.UploadCompletions != 1 || fake.UploadInitiations != 1 ||
@@ -229,6 +243,7 @@ internal static class DirectGoogleWinFspPolicyLab
             Directory.GetFiles(isolated, "*.json").Length != 0)
             throw new IOException("Committed Google stage not released after Close");
         Console.WriteLine("GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_NEW_FILE_UPLOAD_PASS");
+        Console.WriteLine("GOOGLE_DIRECT_WINFSP_MULTIFLUSH_BEFORE_COMMIT_PASS");
         File.Move(Path.Combine(root, "hello.txt"),
             Path.Combine(root, "hello-renamed.txt"));
         if (fake.SourceName != "hello-renamed.txt")
