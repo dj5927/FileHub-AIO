@@ -135,6 +135,7 @@ final class NasShareApi {
 
     private final Models.RemoteProfile profile;
     private final HttpUrl base;
+    private final OkHttpClient transport;
     private String synoToken = "";
 
     NasShareApi(Models.RemoteProfile profile) {
@@ -145,6 +146,10 @@ final class NasShareApi {
             throw new IllegalArgumentException("Synology/QNAP 관리 서버 설정이 없습니다.");
         this.profile = profile;
         this.base = HttpUrl.get(NasSharePolicy.validateApiBase(profile.nasApiBase) + "/");
+        this.transport = "https".equals(base.scheme())
+                ? CLIENT.newBuilder().hostnameVerifier(
+                    WebDavTlsAliasPolicy.forNasManagement(base.host(), true)).build()
+                : CLIENT;
     }
 
     interface AuthAction<T> { T run(String sid) throws Exception; }
@@ -181,7 +186,7 @@ final class NasShareApi {
             u.addQueryParameter("SynoToken", csrfToken);
         Request request = new Request.Builder().url(u.build()).post(body)
                 .header("Cache-Control", "no-store").build();
-        try (Response response = CLIENT.newCall(request).execute()) {
+        try (Response response = transport.newCall(request).execute()) {
             if (!response.isSuccessful() || response.body() == null)
                 throw new Failure("DSM/QTS 관리 API HTTP " + response.code() +
                         " 오류입니다. HTTPS 포트/역방향 프록시/API 권한을 확인하세요.");

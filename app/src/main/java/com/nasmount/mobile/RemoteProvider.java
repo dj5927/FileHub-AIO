@@ -42,6 +42,15 @@ final class RemoteProvider {
             .readTimeout(35, TimeUnit.SECONDS)
             .writeTimeout(35, TimeUnit.SECONDS).build();
 
+    // Relax only WebDAV's DNS-alias name comparison after normal platform
+    // CA trust-chain verification. Other protocols keep standard TLS.
+    private static OkHttpClient webClient(Models.RemoteProfile p) {
+        if (!"WebDAV".equals(p.protocol) || !p.ssl) return HTTP;
+        return HTTP.newBuilder()
+                .hostnameVerifier(WebDavTlsAliasPolicy.forProfile(p))
+                .build();
+    }
+
     static final class UntrustedHostKey extends IOException {
         final String fingerprint;
         UntrustedHostKey(String fingerprint) {
@@ -267,7 +276,7 @@ final class RemoteProvider {
                                 "<d:propfind xmlns:d='DAV:'><d:allprop/></d:propfind>",
                                 MediaType.parse("application/xml; charset=utf-8")))
                         .build();
-                try (Response response = HTTP.newCall(request).execute()) {
+                try (Response response = webClient(p).newCall(request).execute()) {
                     if (response.code() != 207 || response.body() == null)
                         throw new WebDavHttpFailure(response.code());
                     return sort(WebDavXml.parse(response.body().byteStream(),
@@ -317,7 +326,7 @@ final class RemoteProvider {
                 }
                 return;
             case "WebDAV":
-                try (Response response = HTTP.newCall(webRequest(p, normalized, false)
+                try (Response response = webClient(p).newCall(webRequest(p, normalized, false)
                         .get().build()).execute()) {
                     if (!response.isSuccessful() || response.body() == null)
                         throw new IOException("WebDAV 다운로드 실패 (HTTP " +
@@ -419,7 +428,7 @@ final class RemoteProvider {
             case "WebDAV": {
                 Request.Builder request = webRequest(p, normalized, false).get();
                 if (position > 0) request.header("Range", "bytes=" + position + "-");
-                Response response = HTTP.newCall(request.build()).execute();
+                Response response = webClient(p).newCall(request.build()).execute();
                 if (!response.isSuccessful() || response.body() == null ||
                         (position > 0 && response.code() != 206)) {
                     int code = response.code();
@@ -592,7 +601,7 @@ final class RemoteProvider {
                     }
                 };
                 Request upload = webRequest(p, tempPath, false).put(body).build();
-                try (Response resp = HTTP.newCall(upload).execute()) {
+                try (Response resp = webClient(p).newCall(upload).execute()) {
                     if (!resp.isSuccessful()) throw new IOException("WebDAV PUT HTTP " +
                             resp.code());
                 }
@@ -602,12 +611,12 @@ final class RemoteProvider {
                             .header("Overwrite", overwrite ? "T" : "F")
                             .method("MOVE", RequestBody.create(new byte[0], null))
                             .build();
-                    try (Response resp = HTTP.newCall(move).execute()) {
+                    try (Response resp = webClient(p).newCall(move).execute()) {
                         if (!resp.isSuccessful())
                             throw new IOException("WebDAV MOVE HTTP " + resp.code());
                     }
                 } catch (Exception error) {
-                    try (Response ignored = HTTP.newCall(webRequest(p, tempPath, false)
+                    try (Response ignored = webClient(p).newCall(webRequest(p, tempPath, false)
                             .delete().build()).execute()) {}
                     catch (Exception ignored) {}
                     throw error;
@@ -644,7 +653,7 @@ final class RemoteProvider {
             case "WebDAV":
                 Request r = webRequest(p, folder, true).method("MKCOL",
                         RequestBody.create(new byte[0], null)).build();
-                try (Response resp = HTTP.newCall(r).execute()) {
+                try (Response resp = webClient(p).newCall(r).execute()) {
                     if (!resp.isSuccessful()) throw new IOException("MKCOL HTTP " +
                             resp.code());
                 } return;
@@ -693,7 +702,7 @@ final class RemoteProvider {
                         .header("Overwrite", "F")
                         .method("MOVE", RequestBody.create(new byte[0], null))
                         .build();
-                try (Response response = HTTP.newCall(move).execute()) {
+                try (Response response = webClient(p).newCall(move).execute()) {
                     if (!response.isSuccessful())
                         throw new IOException("WebDAV 이름 변경 실패 (HTTP " +
                                 response.code() + ")");
@@ -731,7 +740,7 @@ final class RemoteProvider {
                     else sftp.rm(absolute(p, path));
                 } return;
             case "WebDAV":
-                try (Response resp = HTTP.newCall(
+                try (Response resp = webClient(p).newCall(
                         webRequest(p, path, directory).delete().build()).execute()) {
                     if (!resp.isSuccessful())
                         throw new IOException("WebDAV DELETE HTTP " + resp.code());
