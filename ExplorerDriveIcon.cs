@@ -85,15 +85,13 @@ internal static class ExplorerDriveIcon
         p.Protocol != "SMB" &&
         (p.UseLockBridge || RemoteMount.UsesNetworkDriveMode(p));
 
-    // WinFsp's provider can register a THREE-letter network share in
-    // MountPoints2 even when --volname specifies a full name (real example:
-    // ##NASMount-f15d6c50-d9016a70#Goo for "Google Drive"). Looking for
-    // ##NASMount-...#Google Drive never finds it, so the raw UNC leaks into
-    // Explorer. Only consider the exact live random-session server and a
-    // prefix of the configured share label. Exact names shorter than three
-    // characters must still match (e.g. Korean two-character WebDAV labels);
-    // short partial prefixes of a longer label must not match.
-    // Never CREATE a Shell ghost.
+    // WinFsp can register a truncated share name of only ONE UTF-16
+    // character (observed on the actual user's Google mount). Older code
+    // required >=3 characters, so the exact LIVE MountPoints2 entry was
+    // ignored and Explorer showed "name(\\NASMount-...)". Accept ANY
+    // nonempty prefix only when BOTH the full random-session server and
+    // configured profile label match. Never CREATE a Shell ghost or match
+    // a different profile/vendor.
     internal static bool IsCurrentMountPointKey(
         string key, string serverName, string configuredLabel)
     {
@@ -104,8 +102,6 @@ internal static class ExplorerDriveIcon
         return share.Length >= 1 &&
             share.Length <= configuredLabel.Length &&
             configuredLabel.StartsWith(share, StringComparison.OrdinalIgnoreCase) &&
-            (share.Length >= 3 || string.Equals(share, configuredLabel,
-                StringComparison.OrdinalIgnoreCase)) &&
             !share.Contains('#') && !share.Contains('\\');
     }
 
@@ -158,6 +154,60 @@ internal static class ExplorerDriveIcon
     // a working root. Keep retrying the label in a dedicated STA worker
     // rather than displaying "Google Drive(\\NASMount-...)" forever.
     private static readonly ConcurrentDictionary<Guid, byte> LabelRepairRunning = new();
+    // Windows Explorer may re-register the same live UNC after our first
+    // label correction. Keep ONLY this owned mount's registry label repaired
+    // while it is connected; no Shell COM or remote Google API is used.
+    private sealed class LiveLabelGuard(NasProfile profile)
+    {
+        internal readonly NasProfile Profile = profile;
+        internal System.Threading.Timer? Timer;
+        internal int Polls;
+    }
+    private static readonly ConcurrentDictionary<Guid, LiveLabelGuard> LiveLabelGuards = new();
+
+    private static void StopLiveLabelGuard(Guid id)
+    {
+        if (LiveLabelGuards.TryRemove(id, out var guard))
+            guard.Timer?.Dispose();
+    }
+
+    private static void MaintainLiveLabel(object? state)
+    {
+        if (state is not LiveLabelGuard guard ||
+            !LiveLabelGuards.TryGetValue(guard.Profile.Id, out var current) ||
+            !ReferenceEquals(current, guard)) return;
+        NasProfile profile = guard.Profile;
+        if (!RemoteMount.IsMounted(profile) ||
+            RemoteMount.HasVerifiedOtherVendorMapping(profile))
+        {
+            StopLiveLabelGuard(profile.Id);
+            return;
+        }
+        try
+        {
+            bool found = WriteCurrentMountPointLabel(profile, out bool changed);
+            int tick = Interlocked.Increment(ref guard.Polls);
+            if (changed || (found && tick <= 3))
+                NotifyDriveItemChanged(profile.Letter);
+            if (changed)
+                AppStore.Log("OWNED_NETWORK_LABEL_RECOVERED id=" +
+                    profile.Id + " letter=" + profile.Letter + " poll=" + tick);
+        }
+        catch (Exception ex)
+        {
+            AppStore.Log("OWNED_NETWORK_LABEL_GUARD_WARNING id=" +
+                profile.Id + " type=" + ex.GetType().Name);
+        }
+    }
+
+    private static void StartLiveLabelGuard(NasProfile profile)
+    {
+        if (profile.Protocol != "GoogleDrive" && !profile.UseLockBridge) return;
+        var guard = new LiveLabelGuard(profile);
+        if (!LiveLabelGuards.TryAdd(profile.Id, guard)) return;
+        guard.Timer = new System.Threading.Timer(MaintainLiveLabel, guard,
+            TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(10));
+    }
     internal static void ScheduleNetworkLabelRepair(NasProfile profile)
     {
         // For Google, never call Shell.Application.NameSpace().Self.Name:
@@ -165,8 +215,9 @@ internal static class ExplorerDriveIcon
         // rclone mount and stall Explorer. Use only the exact owned,
         // existing MountPoints2 key, without inventing any registry entry.
         if (!HasOwnedNetworkPresentation(profile) ||
-            !RemoteMount.IsMounted(profile) ||
-            !LabelRepairRunning.TryAdd(profile.Id, 1)) return;
+            !RemoteMount.IsMounted(profile)) return;
+        StartLiveLabelGuard(profile);
+        if (!LabelRepairRunning.TryAdd(profile.Id, 1)) return;
         var worker = new Thread(() =>
         {
             try
@@ -366,10 +417,14 @@ internal static class ExplorerDriveIcon
             !IsCurrentMountPointKey(
             "##RaiDrive-UserK#Google Drive",
             "NASMount-f15d6c50-d9016a70", "Google Drive") &&
-            !IsCurrentMountPointKey(
+            IsCurrentMountPointKey(
             "##NASMount-f15d6c50-d9016a70#Go",
             "NASMount-f15d6c50-d9016a70", "Google Drive"),
-            "foreign, stale or too-short shares must not be touched");
+            "foreign or stale shares must not be touched; short live prefix must work");
+        Assert(IsCurrentMountPointKey(
+            "##NASMount-f15d6c50-d9016a70#구",
+            "NASMount-f15d6c50-d9016a70", "구글 드라이브"),
+            "One-character live Korean WinFsp share must be repaired");
         Assert(MountPointName(mybox) == "##NASMount-11112222#네이버",
             "MYBOX exact owned share");
         Assert(MountPointName(oneDrive) ==
@@ -510,6 +565,7 @@ internal static class ExplorerDriveIcon
     internal static void Restore(NasProfile p)
     {
         if (p.Letter.Length != 1) return;
+        StopLiveLabelGuard(p.Id);
         try
         {
             DriveLabelLease.Restore(p);
@@ -884,6 +940,7 @@ internal static class ExplorerDriveIcon
                 profile.Id + " letter=" + profile.Letter);
             return false;
         }
+        StopLiveLabelGuard(profile.Id);
         NotifyDisconnected(profile);
         BroadcastVolumeChange(profile.Letter, arrival: false);
         NotifyComputerChanged();

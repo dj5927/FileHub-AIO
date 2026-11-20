@@ -446,6 +446,18 @@ internal static class Program
             }
             return;
         }
+        if (args.Contains("--google-direct-api-policy-test",
+                StringComparer.OrdinalIgnoreCase))
+        {
+            try { GoogleDirectApiPolicyTest.RunAsync().GetAwaiter().GetResult(); }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("GOOGLE_DIRECT_API_POLICY_FAILED " +
+                    ex.GetType().Name);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
         if (args.Contains("--google-cold-start-policy-test",
                 StringComparer.OrdinalIgnoreCase))
         {
