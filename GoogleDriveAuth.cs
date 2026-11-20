@@ -608,10 +608,14 @@ internal sealed class GoogleDriveLoginDialog : Form
                     }
                 });
             };
-            string token = await GoogleDirectBrowserAuth.AuthorizeAsync(
-                clientId, clientSecret, update, browser, cts.Token);
-            await GoogleDriveAuth.SaveNativeBrowserAuthorizationAsync(
-                profile, token, clientId, clientSecret, cts.Token);
+            // Browser success must mean the user's permission has actually
+            // been verified against Drive AND stored in FileHub's encrypted
+            // token store. Do not show a false 200 OK before persistence.
+            _ = await GoogleDirectBrowserAuth.AuthorizeAsync(
+                clientId, clientSecret, update, browser, cts.Token,
+                finalizeGrant: (token, cancel) =>
+                    GoogleDriveAuth.SaveNativeBrowserAuthorizationAsync(
+                        profile, token, clientId, clientSecret, cancel));
             busy = false;
             DialogResult = DialogResult.OK;
             Close();

@@ -41,6 +41,7 @@ jobs:
               $out -notmatch 'GOOGLE_NATIVE_ONLY_NO_RCLONE_FALLBACK_POLICY_PASS' -or
               $out -notmatch 'GOOGLE_NATIVE_READ_ONLY_AND_NEW_FILE_WRITE_MODE_PASS' -or
               $out -notmatch 'GOOGLE_BROWSER_LOOPBACK_TOKEN_EXCHANGE_BEFORE_SUCCESS_PASS' -or
+              $out -notmatch 'GOOGLE_BROWSER_GRANT_DPAPI_SAVE_BEFORE_SUCCESS_PASS' -or
               $out -notmatch 'GOOGLE_NATIVE_SHORT_RANGE_AND_STALE_FILE_FAIL_CLOSED_PASS' -or
               $out -notmatch 'GOOGLE_DIRECT_DPAPI_OAUTH_ROUNDTRIP_AND_BACKUP_PASS' -or
               $out -notmatch 'GOOGLE_NATIVE_EXPLORER_REQUEST_CAP_AND_FAST_FAIL_PASS' -or

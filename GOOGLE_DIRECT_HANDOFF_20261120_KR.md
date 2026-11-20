@@ -271,3 +271,19 @@ read/write, disconnect/reconnect and Office save tests all pass.
   Google live OAuth was not executed because a publisher-owned OAuth Client
   ID is still absent. The user's existing legacy Google OAuth credentials
   must NOT be copied, rewritten or treated as a native FileHub login.
+
+## Native Chrome login persistence semantics (continuation)
+
+- Chrome's localhost success page now means more than an OAuth code being
+  accepted: FileHub has exchanged the code, made its read-only Drive About
+  permission check and durably saved the native OAuth grant via DPAPI.
+- `AuthorizeAsync` accepts a publisher-controlled completion callback for
+  Drive verification and encrypted persistence. The GUI uses it before the
+  local browser's HTTP 200 success response. Failed refresh-grant storage
+  returns an error page rather than falsely reporting a connected account.
+- Isolated fake browser/Google token tests cover success, rejected consent
+  and an injected failure during final grant persistence. Marker:
+  `GOOGLE_BROWSER_GRANT_DPAPI_SAVE_BEFORE_SUCCESS_PASS`.
+- No publisher OAuth identity was invented or copied. The final real-account
+  Chrome login, sustained I/O, Office saves and working download remain
+  blocked and MUST NOT be described as production-ready.

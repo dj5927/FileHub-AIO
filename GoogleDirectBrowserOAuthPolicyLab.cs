@@ -50,12 +50,13 @@ internal static class GoogleDirectBrowserOAuthPolicyLab
         return Uri.UnescapeDataString(pair[1]);
     }
 
-    private static async Task ScenarioAsync(bool deny)
+    private static async Task ScenarioAsync(bool deny, bool failPersistence = false)
     {
         using var endpoint = new FakeTokenEndpoint { Deny = deny };
         using var tokenClient = new HttpClient(endpoint);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(12));
         Task<HttpResponseMessage>? callback = null;
+        bool encryptedGrantSaved = false;
         var authorize = GoogleDirectBrowserAuth.AuthorizeAsync(
             "123456789012-test-desktop.apps.googleusercontent.com",
             "OFFLINE_SECRET", _ => { },
@@ -70,13 +71,20 @@ internal static class GoogleDirectBrowserOAuthPolicyLab
                         "?code=FAKE_CODE&state=" + Uri.EscapeDataString(state),
                         timeout.Token);
                 });
-            }, timeout.Token, tokenClient);
+            }, timeout.Token, tokenClient,
+            finalizeGrant: (_, _) =>
+            {
+                if (failPersistence)
+                    throw new IOException("FAKE_DPAPI_SAVE_FAILURE");
+                encryptedGrantSaved = true;
+                return Task.CompletedTask;
+            });
         await endpoint.Received.Task.WaitAsync(timeout.Token);
         if (callback is null || callback.IsCompleted)
             throw new InvalidOperationException(
                 "Browser was told login finished before token verification");
         endpoint.Release.TrySetResult(true);
-        if (deny)
+        if (deny || failPersistence)
         {
             bool rejected = false;
             try { await authorize.WaitAsync(timeout.Token); }
@@ -91,19 +99,39 @@ internal static class GoogleDirectBrowserOAuthPolicyLab
             if (token.RootElement.GetProperty("access_token").GetString() !=
                 "OFFLINE_TEST")
                 throw new InvalidOperationException("OAuth grant had wrong access token");
+            if (!encryptedGrantSaved)
+                throw new InvalidOperationException("Browser login did not save the grant");
         }
         using var response = await callback.WaitAsync(timeout.Token);
-        if (response.IsSuccessStatusCode == deny)
+        bool failed = deny || failPersistence;
+        if (response.IsSuccessStatusCode == failed)
             throw new InvalidOperationException("Browser callback displayed incorrect status");
         string body = await response.Content.ReadAsStringAsync(timeout.Token);
-        if (body.Contains("로그인 완료", StringComparison.Ordinal) == deny)
+        if (body.Contains("로그인 완료", StringComparison.Ordinal) == failed)
             throw new InvalidOperationException("Browser completion text did not match token grant");
     }
 
     internal static async Task RunAsync()
     {
-        await ScenarioAsync(false);
-        await ScenarioAsync(true);
+        try { await ScenarioAsync(false); }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("GOOGLE_OAUTH_LAB_SUCCESS_CASE_FAILED " + ex.Message);
+            throw;
+        }
+        try { await ScenarioAsync(true); }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("GOOGLE_OAUTH_LAB_REJECTION_CASE_FAILED " + ex.Message);
+            throw;
+        }
+        try { await ScenarioAsync(false, failPersistence: true); }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("GOOGLE_OAUTH_LAB_DPAPI_FAILURE_CASE_FAILED " + ex.Message);
+            throw;
+        }
         Console.WriteLine("GOOGLE_BROWSER_LOOPBACK_TOKEN_EXCHANGE_BEFORE_SUCCESS_PASS");
+        Console.WriteLine("GOOGLE_BROWSER_GRANT_DPAPI_SAVE_BEFORE_SUCCESS_PASS");
     }
 }

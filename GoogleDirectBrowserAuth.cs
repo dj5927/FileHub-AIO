@@ -106,7 +106,8 @@ internal static class GoogleDirectBrowserAuth
     internal static async Task<string> AuthorizeAsync(string clientId,
         string clientSecret, Action<string> progress,
         Action<string> openBrowser, CancellationToken cancel,
-        HttpClient? tokenClient = null)
+        HttpClient? tokenClient = null,
+        Func<string, CancellationToken, Task>? finalizeGrant = null)
     {
         GoogleOAuthClientFile.ValidateDesktopCredentials(clientId, clientSecret);
         using var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -173,10 +174,20 @@ internal static class GoogleDirectBrowserAuth
                     tokenJson = await ExchangeAuthorizationCodeAsync(client,
                         grant, clientId, clientSecret, redirect, verifier,
                         deadline.Token).ConfigureAwait(false);
+                    if (finalizeGrant is not null)
+                        await finalizeGrant(tokenJson, deadline.Token)
+                            .ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ex is IOException or HttpRequestException
-                    or JsonException or TaskCanceledException)
-                { exchangeError = ex; }
+                    or JsonException or TaskCanceledException or
+                    UnauthorizedAccessException or CryptographicException)
+                {
+                    // Token exchange may have succeeded while Drive
+                    // validation or DPAPI persistence failed. Never send
+                    // HTTP 200 for an uncommitted FileHub authorization.
+                    tokenJson = null;
+                    exchangeError = ex;
+                }
             }
             string html = tokenJson is not null
                 ? "<!doctype html><meta charset=utf-8><title>FileHub AIO</title>" +
