@@ -8,6 +8,41 @@ namespace NASMount;
 /// Never touches a user account, real Drive files or OAuth tokens.</summary>
 internal static class GoogleDirectApiPolicyTest
 {
+    private sealed class SlowFakeGoogleServer : HttpMessageHandler
+    {
+        internal int Active;
+        internal int Peak;
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            int now = Interlocked.Increment(ref Active);
+            int peak;
+            do { peak = Peak; }
+            while (now > peak && Interlocked.CompareExchange(ref Peak, now, peak) != peak);
+            try
+            {
+                await Task.Delay(75, cancellationToken);
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"id":"file_1","name":"sample","mimeType":"text/plain","size":"1"}""",
+                        Encoding.UTF8, "application/json")
+                };
+            }
+            finally { Interlocked.Decrement(ref Active); }
+        }
+    }
+
+    private sealed class OfflineFakeGoogleServer : HttpMessageHandler
+    {
+        internal int Requests;
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref Requests);
+            throw new HttpRequestException("OFFLINE_FAKE_TEST");
+        }
+    }
     private sealed class FakeGoogleServer : HttpMessageHandler
     {
         internal int Lists;
@@ -199,6 +234,40 @@ internal static class GoogleDirectApiPolicyTest
 
     internal static async Task RunAsync()
     {
+        using (var slow = new SlowFakeGoogleServer())
+        using (var boundedHttp = new HttpClient(slow))
+        {
+            var bounded = new GoogleDirectApiClient(boundedHttp,
+                _ => Task.FromResult("TEST_TOKEN"),
+                new Uri("http://127.0.0.1:18220/drive/v3/"), maxRetries: 0);
+            var parallelFiles = await Task.WhenAll(
+                Enumerable.Range(0, 24).Select(index =>
+                    bounded.GetFileAsync("file_" + index)));
+            if (parallelFiles.Any(file => file?.Name != "sample") || slow.Peak > 8)
+                throw new InvalidOperationException(
+                    "Google Drive API did not bound concurrent Explorer requests");
+        }
+        using (var offline = new OfflineFakeGoogleServer())
+        using (var offlineHttp = new HttpClient(offline))
+        {
+            var client = new GoogleDirectApiClient(offlineHttp,
+                _ => Task.FromResult("TEST_TOKEN"),
+                new Uri("http://127.0.0.1:18220/drive/v3/"), maxRetries: 0);
+            for (int i = 0; i < 4; i++)
+            {
+                try
+                {
+                    await client.GetFileAsync("file_1");
+                    throw new InvalidOperationException("Offline Google API did not fail");
+                }
+                catch (IOException) { }
+            }
+            if (offline.Requests != 3)
+                throw new InvalidOperationException(
+                    "Offline Google API continued network requests during fail-fast window");
+        }
+        Console.WriteLine("GOOGLE_NATIVE_EXPLORER_REQUEST_CAP_AND_FAST_FAIL_PASS");
+
         using var fake = new FakeGoogleServer();
         using var http = new HttpClient(fake);
         var api = new GoogleDirectApiClient(http,

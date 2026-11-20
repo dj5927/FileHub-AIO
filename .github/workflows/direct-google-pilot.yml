@@ -40,6 +40,7 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or
               $out -notmatch 'GOOGLE_NATIVE_ONLY_NO_RCLONE_FALLBACK_POLICY_PASS' -or
               $out -notmatch 'GOOGLE_DIRECT_DPAPI_OAUTH_ROUNDTRIP_AND_BACKUP_PASS' -or
+              $out -notmatch 'GOOGLE_NATIVE_EXPLORER_REQUEST_CAP_AND_FAST_FAIL_PASS' -or
               $out -notmatch 'GOOGLE_DIRECT_CRASH_JOURNAL_EXPORT_NO_OVERWRITE_PASS' -or
               $out -notmatch 'GOOGLE_DIRECT_API_RANGE_READ_AND_NEW_RESUMABLE_UPLOAD_PASS') {
             throw 'Direct Google API/DPAPI/PKCE policy failed: ' + $out
@@ -96,7 +97,22 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Google WinFsp native API test failed' }
           Write-Output $output
 
+      - name: Check publisher Google OAuth readiness
+        id: publisher
+        shell: pwsh
+        env:
+          GOOGLE_DESKTOP_OAUTH_JSON_BASE64: ${{ secrets.FILEHUB_GOOGLE_DESKTOP_OAUTH_JSON_BASE64 }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GOOGLE_DESKTOP_OAUTH_JSON_BASE64)) {
+            'configured=false' >> $env:GITHUB_OUTPUT
+            Write-Output 'PUBLISHER_OAUTH_NOT_CONFIGURED: Native tests passed; downloadable Google login build is intentionally unavailable.'
+          }
+          else {
+            'configured=true' >> $env:GITHUB_OUTPUT
+          }
+
       - name: Package isolated Google direct pilot (not a stable release)
+        if: steps.publisher.outputs.configured == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -201,6 +217,7 @@ jobs:
           Write-Output "EXPERIMENTAL_PILOT_ZIP_SHA256=$hash"
 
       - name: Upload experimental pilot artifact
+        if: steps.publisher.outputs.configured == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: FileHubAIO-PC-GoogleDirect-EXPERIMENTAL

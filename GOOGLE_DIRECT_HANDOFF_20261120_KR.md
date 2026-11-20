@@ -150,3 +150,50 @@
   not found in this environment or the repository. Therefore no valid live
   Chrome authentication can be claimed until that credential is supplied
   through the publisher's deployment channel and tested against Google.
+
+## RaiDrive-like single-path cleanup and official OpenList broker review
+
+User-facing contract: **Add Google Drive -> Chrome account picker -> approve -> ready**.
+No developer credentials, JSON pickers, manual token copy, rclone fallback,
+or surprise browser windows at startup. Regular WebDAV/TeraBox providers
+are unchanged; Google runs through its own direct API and WinFsp mount only.
+
+The official OpenList-APIPages Google flow was inspected directly from
+`OpenListTeam/OpenList-APIPages/src/driver/googleui_oa.ts` and its frontend
+`frontend/src/pages/TokenPage.tsx` (read-only checkout outside the repo).
+It exchanges Google codes server-side and redirects to the OpenList **own**
+web page with `/#<base64-json>` containing the tokens. The page displays
+the tokens. No documented, authenticated return URI or secure local app
+handoff was implemented in these sources. Consequently launching the
+public web page from FileHub does **not** automatically complete native
+login, and requiring the customer to copy tokens would violate the UX.
+We did not automate Chrome DevTools, scrape other tabs, reuse private
+third-party OAuth keys, or leak tokens through a redirect workaround.
+OpenList public service permission and cross-client quotas remain unproven.
+Its source is AGPL-3.0, so incorporating its code may carry license duties.
+
+Runtime improvements in this continuation:
+
+- Google REST transport now holds its max-8 request semaphore **until the
+  response body is fully buffered**, not just headers, and normalizes timeout
+  and transport failures into recoverable I/O errors.
+- After 3 consecutive network transport errors, a 5-second fail-fast window
+  prevents an offline Google session from starving Windows Explorer; no
+  uncapped reattempts are made by the WinFsp host.
+- `GOOGLE_NATIVE_EXPLORER_REQUEST_CAP_AND_FAST_FAIL_PASS` exercises 24
+  simultaneous fake metadata reads and a transport outage with no network
+  access or user data; actual Windows WinFsp integration remains tested.
+- If a clean browser grant is unavailable because publisher OAuth was not
+  packaged, the GUI does not display a disabled developer dialog. It shows
+  one short app-update message instead. No end-user setup can solve a
+  missing publisher OAuth identity.
+- GitHub native tests always run. Experimental release packaging is skipped
+  (not falsely reported as a runnable Google ZIP) until the publisher
+  `FILEHUB_GOOGLE_DESKTOP_OAUTH_JSON_BASE64` secret is configured. When
+  set, invalid credentials still fail the package check.
+
+External completion gates remain actual publisher OAuth app identity or an
+explicitly supported/approved OpenList desktop callback contract, live
+Chrome login, repeated large directory and file I/O benchmarks, and
+multi-PC Office conflict recovery. Do not ship/claim a finished Google
+production feature without these gates.

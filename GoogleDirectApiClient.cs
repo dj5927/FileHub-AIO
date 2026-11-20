@@ -8,15 +8,9 @@ using System.Text.Json;
 namespace NASMount;
 
 /// <summary>
-/// First building block for the future rclone-free Google Drive backend.
-/// Uses the official Google Drive v3 REST API directly, a single reusable
-/// HttpClient, bounded backoff and cached directory metadata.
-///
-/// IMPORTANT: This is not yet a WinFsp filesystem, and is intentionally
-/// not selected by normal user profiles. Production selection requires
-/// dedicated OAuth, cross-client change tracking and safe full file writes.
-/// Existing Google mounts continue to use the established engine until
-/// those invariants have tests.
+/// Native Google Drive REST transport shared by the direct WinFsp filesystem.
+/// Never starts rclone. FileHub's native OAuth grant is required for normal
+/// connections. Existing-file overwrite remains behind a separate safety gate.
 /// </summary>
 internal sealed class GoogleDirectApiClient
 {
@@ -33,6 +27,8 @@ internal sealed class GoogleDirectApiClient
     // Bound network concurrency so a slow Drive response cannot queue
     // hundreds of simultaneous callbacks and stall the whole desktop.
     private readonly SemaphoreSlim _requestSlots = new(8, 8);
+    private long _unavailableUntil;
+    private int _transportFailures;
 
     internal sealed record Item(string Id, string Name, bool IsFolder,
         long Size, string? Version, DateTimeOffset? Modified,
@@ -92,19 +88,43 @@ internal sealed class GoogleDirectApiClient
     private async Task<HttpResponseMessage> SendBoundedAsync(
         HttpRequestMessage request, CancellationToken cancel)
     {
+        if (Stopwatch.GetTimestamp() < Interlocked.Read(ref _unavailableUntil))
+            throw new IOException("Google network is temporarily unavailable");
         if (!await _requestSlots.WaitAsync(TimeSpan.FromSeconds(2), cancel)
             .ConfigureAwait(false))
             throw new IOException("Google API request queue is busy; retry later");
         try
         {
-            return await _http.SendAsync(request,
-                HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+            // Keep the concurrency lease through the ENTIRE response body.
+            // ResponseHeadersRead released it as soon as headers arrived,
+            // allowing unlimited slow streaming responses to occupy WinFsp.
+            var response = await _http.SendAsync(request,
+                HttpCompletionOption.ResponseContentRead, cancel).ConfigureAwait(false);
+            Interlocked.Exchange(ref _transportFailures, 0);
+            return response;
         }
         catch (TaskCanceledException ex) when (!cancel.IsCancellationRequested)
         {
+            NoteTransportFailure();
             throw new IOException("Google API response timed out", ex);
         }
+        catch (HttpRequestException ex)
+        {
+            NoteTransportFailure();
+            throw new IOException("Google API network connection failed", ex);
+        }
         finally { _requestSlots.Release(); }
+    }
+
+    private void NoteTransportFailure()
+    {
+        if (Interlocked.Increment(ref _transportFailures) >= 3)
+        {
+            // Brief fail-fast window prevents an offline cloud from locking
+            // the entire Explorer callback pool for many parallel operations.
+            Interlocked.Exchange(ref _unavailableUntil,
+                Stopwatch.GetTimestamp() + Stopwatch.Frequency * 5L);
+        }
     }
 
     private async Task<JsonDocument> SendJsonAsync(HttpMethod method,

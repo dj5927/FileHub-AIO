@@ -547,6 +547,19 @@ internal sealed partial class MainForm : Form
                 retry[p.Id] = DateTime.UtcNow.AddMinutes(5);
                 return;
             }
+            // Do not show a disabled sign-in dialog or make end users
+            // configure a Google Cloud application. This is a publisher
+            // packaging problem, not a setting the customer can repair.
+            if (!GoogleOAuthClientFile.TryReadPackagedClient(out _, out _))
+            {
+                status.Text = "Google 계정 연결 기능이 준비되지 않았습니다.";
+                MessageBox.Show(this,
+                    "현재 버전에는 Google 계정 로그인 기능이 준비되지 않았습니다. " +
+                    "새 업데이트가 배포되면 다시 연결해 주세요.",
+                    "Google Drive", MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
             status.Text = "Google 직접 API 연결을 위한 Chrome 계정 승인이 필요합니다.";
             using var directLogin = new GoogleDriveLoginDialog(p);
             if (directLogin.ShowDialog(this) != DialogResult.OK) return;
