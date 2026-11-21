@@ -1,0 +1,39 @@
+name: Publish signed FileHub Android v0.1.106 (verified)
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[ANDROID_BINARY_HANDOFF_20261121_V106]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Verify publisher-signed Android v0.1.106 APK SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --http1.1 --fail --location --retry 5 --retry-all-errors \
+            --retry-delay 3 --connect-timeout 15 --max-time 750 \
+            'https://kate-chester-walker-split.trycloudflare.com/FileHub-AIO-v0.1.106.apk' -o FileHub-AIO-v0.1.106.apk
+          echo 'A4E284FB47B0E9C3642E9AA9FCFEEFC93A8F129E800A8452FFECD3640374FC3F  FileHub-AIO-v0.1.106.apk' | sha256sum -c -
+          unzip -Z1 FileHub-AIO-v0.1.106.apk | grep -Fx AndroidManifest.xml
+          echo 'ANDROID_V106_PUBLISHER_APK_SHA256_PASS'
+      - name: Publish Android OTA latest release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.1.106 >/dev/null 2>&1; then
+            echo 'Android release already exists; refusing overwrite'
+            exit 1
+          fi
+          gh release create v0.1.106 FileHub-AIO-v0.1.106.apk \
+            --target "$GITHUB_SHA" --latest \
+            --title 'FileHub AIO Android v0.1.106' \
+            --notes $'versionCode: 107\n\n- Removed Android Google Drive folder picker and related verification notice; Google Drive and OneDrive are NOT supported on Android. Existing legacy data is preserved but hidden.\n- FTPS Explicit/Implicit with hostname/certificate verification, FTP Korean CP949/EUC-KR charset and PASV/active options.\n- WebDAV RFC4331 server quota and strong ETag conditional file replacement safeguards. Read-only remote profile protection.\n- Encrypted PC/Android compatible .fhbackup for SMB/WebDAV/FTP/SFTP/MYBOX/TeraBox connections. Windows-only Google and OneDrive auth excluded.\n- Android full unit tests and bidirectional real encrypted backup fixture tests passed.\n- v0.1.106 uses original Android signing certificate, versionCode 107 for in-place update.\n- SHA256: A4E284FB47B0E9C3642E9AA9FCFEEFC93A8F129E800A8452FFECD3640374FC3F'
+          gh release view v0.1.106 --json tagName,url,assets
+          echo 'ANDROID_V0_1_106_OFFICIAL_GITHUB_RELEASE_SUCCESS'
