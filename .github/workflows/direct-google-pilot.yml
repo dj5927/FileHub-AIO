@@ -1,0 +1,179 @@
+name: Direct Google WinFsp pilot safety tests
+
+on:
+  push:
+    branches:
+      - pc/direct-google-pilot
+      - pc/google-direct-stage-recovery-20261120
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: filehub-google-direct-pilot
+  cancel-in-progress: true
+
+jobs:
+  google-direct:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out pilot branch
+        uses: actions/checkout@v7
+
+      - name: Install .NET 10
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Validate one-time publisher Google OAuth onboarding (offline)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $result = & 'tools/Test-GooglePublisherOAuthBootstrap.ps1' 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or
+              $result -notmatch 'GOOGLE_PUBLISHER_OAUTH_ONCE_SECURE_BOOTSTRAP_POLICY_PASS' -or
+              $result -notmatch 'GOOGLE_PUBLISHER_OAUTH_CI_BRANCH_PUSH_FALLBACK_PASS') {
+            throw ('Publisher OAuth onboarding flow failed: ' + $result)
+          }
+          Write-Output 'GOOGLE_PUBLISHER_OAUTH_ONCE_SECURE_BOOTSTRAP_POLICY_PASS'
+
+      - name: Build FileHub and direct WinFsp bridge
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet build NASMount.csproj -c Release -nologo
+          if ($LASTEXITCODE -ne 0) { throw 'Main app failed to compile' }
+          dotnet build LockBridge/LockBridge.csproj -c Release -nologo
+          if ($LASTEXITCODE -ne 0) { throw 'Direct Google WinFsp bridge failed to compile' }
+          $app = 'bin/Release/net10.0-windows/win-x64/FileHubAIO.exe'
+          function Invoke-FileHubPolicy([string]$mode) {
+            $stamp = [guid]::NewGuid().ToString('N')
+            $stdout = Join-Path $env:RUNNER_TEMP ($stamp + '.out')
+            $stderr = Join-Path $env:RUNNER_TEMP ($stamp + '.err')
+            try {
+              $process = Start-Process -FilePath $app -ArgumentList $mode -Wait `
+                -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+              $text = Get-Content -LiteralPath $stdout -Raw
+              if ($process.ExitCode -ne 0) {
+                throw ('Policy failed: ' + $mode + ' exit=' + $process.ExitCode + ' ' +
+                  (Get-Content -LiteralPath $stderr -Raw))
+              }
+              return $text
+            }
+            finally { Remove-Item -LiteralPath $stdout,$stderr -Force -ErrorAction SilentlyContinue }
+          }
+          $out = Invoke-FileHubPolicy '--google-direct-api-policy-test'
+          if (
+              $out -notmatch 'GOOGLE_NATIVE_ONLY_NO_RCLONE_FALLBACK_POLICY_PASS' -or
+              $out -notmatch 'GOOGLE_NATIVE_READ_ONLY_AND_NEW_FILE_WRITE_MODE_PASS' -or
+              $out -notmatch 'GOOGLE_BROWSER_LOOPBACK_TOKEN_EXCHANGE_BEFORE_SUCCESS_PASS' -or
+              $out -notmatch 'GOOGLE_BROWSER_GRANT_DPAPI_SAVE_BEFORE_SUCCESS_PASS' -or
+              $out -notmatch 'GOOGLE_NATIVE_SHORT_RANGE_AND_STALE_FILE_FAIL_CLOSED_PASS' -or
+              $out -notmatch 'GOOGLE_DIRECT_DPAPI_OAUTH_ROUNDTRIP_AND_BACKUP_PASS' -or
+              $out -notmatch 'GOOGLE_NATIVE_EXPLORER_REQUEST_CAP_AND_FAST_FAIL_PASS' -or
+              $out -notmatch 'GOOGLE_NATIVE_STALE_DIRECTORY_OFFLINE_VISIBLE_PASS' -or
+              $out -notmatch 'GOOGLE_NATIVE_INVALID_HTTP_JSON_AND_OVERSIZED_METADATA_FAIL_CLOSED_PASS' -or
+              $out -notmatch 'GOOGLE_NATIVE_OAUTH_REFRESH_INVALID_RESPONSE_FAIL_CLOSED_PASS' -or
+              $out -notmatch 'GOOGLE_NATIVE_IDLE_PREEMPTIVE_OAUTH_REFRESH_NO_SECOND_LOGIN_PASS' -or
+              $out -notmatch 'GOOGLE_NATIVE_IDLE_OAUTH_REFRESH_TRANSIENT_RETRY_PASS' -or
+              $out -notmatch 'GOOGLE_PUBLISHER_ONLY_AUTH_REJECTS_BROKER_GRANTS_PASS' -or
+              $out -notmatch 'GOOGLE_NATIVE_REPEATED_PAGINATION_LOOP_PREVENTION_PASS' -or
+              $out -notmatch 'GOOGLE_NATIVE_BOUNDED_RANGE_READ_NO_FULL_FILE_BUFFER_PASS' -or
+              $out -notmatch 'GOOGLE_DIRECT_CRASH_JOURNAL_EXPORT_NO_OVERWRITE_PASS' -or
+              $out -notmatch 'GOOGLE_DIRECT_API_RANGE_READ_AND_NEW_RESUMABLE_UPLOAD_PASS') {
+            throw 'Direct Google API/DPAPI/PKCE policy failed: ' + $out
+          }
+          $loginUi = Invoke-FileHubPolicy '--google-login-ui-policy-test'
+          if (
+              $loginUi -notmatch 'GOOGLE_CHROME_ONLY_LOGIN_NO_USER_OAUTH_FIELDS_PASS' -or
+              $loginUi -notmatch 'GOOGLE_CONNECT_PUBLISHER_ONLY_AND_QUIET_STARTUP_PASS' -or
+              $loginUi -notmatch 'GOOGLE_UNREADABLE_NATIVE_GRANT_REAPPROVAL_PRESERVES_BYTES_PASS') {
+            throw ('Google Connect/reapproval or browser-only UI policy failed: ' + $loginUi)
+          }
+          Write-Output $loginUi
+
+      - name: Install pinned official WinFsp driver
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi'
+          $file = Join-Path $env:RUNNER_TEMP 'winfsp-2.1.25156.msi'
+          Invoke-WebRequest -Uri $url -OutFile $file
+          $actual = (Get-FileHash $file -Algorithm SHA256).Hash
+          if ($actual -ne '073A70E00F77423E34BED98B86E600DEF93393BA5822204FAC57A29324DB9F7A') {
+            throw 'Pinned WinFsp MSI hash mismatch'
+          }
+          $proc = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            '/i', ('"' + $file + '"'), '/qn', '/norestart', 'INSTALLLEVEL=1000')
+          if ($proc.ExitCode -notin @(0,3010)) {
+            throw ('WinFsp installation failed code=' + $proc.ExitCode)
+          }
+          $dll = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'WinFsp/bin/winfsp-x64.dll'
+          if (!(Test-Path $dll)) { throw 'WinFsp x64 driver DLL missing' }
+
+      - name: Real WinFsp native Google file operations over isolated fake API
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bridge = 'LockBridge/bin/Release/net10.0-windows/win-x64/NASMountLockBridge.exe'
+          $stdout = Join-Path $env:RUNNER_TEMP 'google-winfsp-policy.out'
+          $stderr = Join-Path $env:RUNNER_TEMP 'google-winfsp-policy.err'
+          $process = Start-Process -FilePath $bridge `
+            -ArgumentList '--direct-google-winfsp-policy-test' -Wait -PassThru `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $output = Get-Content -LiteralPath $stdout -Raw
+          if ($process.ExitCode -ne 0) {
+            throw ('Google WinFsp native API test failed: ' +
+              (Get-Content -LiteralPath $stderr -Raw))
+          }
+          foreach ($required in @(
+            'GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_READ_PASS',
+            'GOOGLE_DIRECT_WINFSP_OWNED_NETWORK_DRIVE_PASS',
+            'GOOGLE_DIRECT_WINFSP_COALESCED_RANGE_READ_CACHE_PASS',
+            'GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_FOLDER_CREATE_RENAME_PASS',
+            'GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_NEW_FILE_UPLOAD_PASS',
+            'GOOGLE_DIRECT_WINFSP_MULTIFLUSH_BEFORE_COMMIT_PASS',
+            'GOOGLE_DIRECT_WINFSP_EXISTING_BINARY_EDIT_PIN_VERIFY_PASS',
+            'GOOGLE_DIRECT_WINFSP_EXISTING_BINARY_REPEAT_SAVE_PASS',
+            'GOOGLE_DIRECT_TWO_CLIENT_STALE_WRITE_RECOVERY_PASS',
+            'GOOGLE_DIRECT_EXISTING_PIN_403_LOCAL_RECOVERY_PASS',
+            'GOOGLE_DIRECT_WINFSP_REAL_WINDOWS_FILE_RENAME_TRASH_PASS',
+            'GOOGLE_DIRECT_UPLOAD_403_FAILURE_PRESERVES_LOCAL_RECOVERY_PASS'
+          )) {
+            if ($output -notmatch $required) {
+              throw ('Google WinFsp operation failed: ' + $required + ' ' + $output)
+            }
+          }
+          Write-Output $output
+
+      - name: Regress local Windows packaging with synthetic OAuth (no ZIP uploaded)
+        # DryRun exercises a Windows publish and required component checks
+        # without creating any downloadable build with the fake identity.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixture = Join-Path $env:RUNNER_TEMP 'filehub-publisher-test-only.json'
+          try {
+            $fake = @{
+              installed = @{
+                client_id = '123456789012-test-desktop.apps.googleusercontent.com'
+                client_secret = 'GOCSPX-synthetic-for-ci-only'
+              }
+            } | ConvertTo-Json -Compress
+            [IO.File]::WriteAllText($fixture, $fake)
+            $result = & 'tools/Build-GoogleDirectLocalPilot.ps1' `
+              -CredentialFile $fixture -DryRun 2>&1 | Out-String
+            if ($result -notmatch 'GOOGLE_PUBLISHER_LOCAL_PILOT_PACKAGE_DRY_RUN_PASS') {
+              throw ('Windows publisher bundle did not pass fake-credential packaging checks: ' + $result)
+            }
+            Write-Output 'GOOGLE_PUBLISHER_LOCAL_PILOT_PACKAGE_DRY_RUN_PASS'
+          }
+          finally { Remove-Item -LiteralPath $fixture -Force -ErrorAction SilentlyContinue }
+
+      - name: Report test scope
+        shell: pwsh
+        run: |
+          Write-Output 'GOOGLE_PUBLISHER_TESTS_ONLY_NO_LOGIN_ZIP'
+          Write-Output 'Synthetic tests passed. Actual Google consent and Drive access are not verified.'

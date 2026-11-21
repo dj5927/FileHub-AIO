@@ -446,13 +446,264 @@ internal static class Program
             }
             return;
         }
+        if (args.Contains("--google-openlist-live-readiness-test",
+                StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                GoogleOpenListChromeAuth.CheckPublicProviderAsync()
+                    .GetAwaiter().GetResult();
+                // Anonymous pre-consent reachability only; this does not
+                // claim an actual account grant or any Drive I/O succeeded.
+                Console.WriteLine("GOOGLE_OPENLIST_LIVE_AUTH_ENTRY_READY");
+            }
+            catch (GoogleOpenListChromeAuth.AuthorizationException ex)
+            {
+                Console.Error.WriteLine("GOOGLE_OPENLIST_LIVE_AUTH_UNAVAILABLE code=" + ex.ErrorCode);
+                Environment.ExitCode = 1;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("GOOGLE_OPENLIST_LIVE_AUTH_UNCONFIRMED type=" +
+                    ex.GetType().Name);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
+        if (args.Contains("--google-openlist-chrome-lab-test",
+                StringComparer.OrdinalIgnoreCase))
+        {
+            try { GoogleOpenListChromeAuthLab.RunAsync().GetAwaiter().GetResult(); }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("GOOGLE_OPENLIST_CHROME_LAB_FAILED " + ex.GetType().Name);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
         if (args.Contains("--google-direct-api-policy-test",
                 StringComparer.OrdinalIgnoreCase))
         {
-            try { GoogleDirectApiPolicyTest.RunAsync().GetAwaiter().GetResult(); }
+            try
+            {
+                GoogleDirectBrowserAuth.PolicyTest();
+                GoogleDirectApiPolicyTest.RunAsync().GetAwaiter().GetResult();
+                GoogleDirectCredentialStore.SelfTest();
+                GoogleDirectRecovery.PolicyTest();
+                RemoteMount.DirectOnlyRoutingPolicyTest();
+            }
             catch (Exception ex)
             {
                 Console.Error.WriteLine("GOOGLE_DIRECT_API_POLICY_FAILED " +
+                    ex.GetType().Name);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
+        if (args.Length == 2 && args[0].Equals(
+                "--google-direct-live-smoke-test", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (!Guid.TryParse(args[1], out var profileId) ||
+                    profileId == Guid.Empty)
+                    throw new ArgumentException("Invalid Google profile ID");
+                GoogleDirectLiveLab.RunAsync(profileId).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("GOOGLE_DIRECT_LIVE_SMOKE_FAILED category=" +
+                    ex.GetType().Name);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
+        if (args.Contains("--google-publisher-live-readiness-test",
+                StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (!GoogleOAuthClientFile.TryReadPackagedClient(
+                        out var clientId, out var clientSecret))
+                {
+                    Console.Error.WriteLine(
+                        "GOOGLE_PUBLISHER_LIVE_AUTH_UNAVAILABLE code=publisher_not_configured");
+                    Environment.ExitCode = 1;
+                    return;
+                }
+                GoogleDirectBrowserAuth.CheckPublisherAsync(clientId, clientSecret)
+                    .GetAwaiter().GetResult();
+                // Anonymous entry only. A real account grant and Drive I/O
+                // still require the user's normal Google approval.
+                Console.WriteLine("GOOGLE_PUBLISHER_LIVE_AUTH_ENTRY_READY");
+            }
+            catch (GoogleDirectBrowserAuth.AuthorizationException ex)
+            {
+                Console.Error.WriteLine(
+                    "GOOGLE_PUBLISHER_LIVE_AUTH_UNAVAILABLE code=" + ex.ErrorCode);
+                Environment.ExitCode = 1;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("GOOGLE_PUBLISHER_LIVE_AUTH_UNCONFIRMED type=" +
+                    ex.GetType().Name);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
+        if (args.Contains("--google-publisher-oauth-policy-test",
+                StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (!GoogleOAuthClientFile.TryReadPackagedClient(
+                    out var id, out var secret))
+                    throw new InvalidDataException(
+                        "Publisher Google Desktop OAuth client is missing");
+                GoogleOAuthClientFile.ValidateDesktopCredentials(id, secret);
+                Console.WriteLine("GOOGLE_PUBLISHER_OAUTH_PACKAGED_POLICY_PASS");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("GOOGLE_PUBLISHER_OAUTH_PACKAGED_POLICY_FAILED " +
+                    ex.GetType().Name + " configFile=" +
+                    (File.Exists(GoogleOAuthClientFile.PackagedClientPath) ?
+                        "present" : "missing") + " reason=" +
+                    (ex is InvalidDataException ? ex.Message : "not-disclosed"));
+                // WinForms application shutdown can reset ExitCode. A
+                // packaging gate must fail the CI job deterministically.
+                Environment.Exit(1);
+            }
+            return;
+        }
+        if (args.Contains("--google-login-ui-policy-test",
+                StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                using (var editor = new ModernProfileDialog(new NasProfile {
+                    Id = Guid.NewGuid(),
+                    Protocol = "GoogleDrive",
+                    DisplayName = "Google Drive"
+                }, isExisting: false))
+                {
+                    editor.Show();
+                    Application.DoEvents();
+                    if (editor.SelectedProtocol != "GoogleDrive" ||
+                        !editor.GoogleReviewNoticeVisible ||
+                        !editor.GoogleReviewNoticeText.Contains(
+                            "인증 심사", StringComparison.Ordinal) ||
+                        !editor.GoogleReviewNoticeText.Contains(
+                            "관리자에게 문의", StringComparison.Ordinal) ||
+                        !editor.GoogleWriteModeTextFits)
+                        throw new InvalidOperationException(
+                            "Google review notice or write-mode caption is clipped");
+                    editor.SelectProtocol("WebDAV");
+                    Application.DoEvents();
+                    if (editor.GoogleReviewNoticeVisible)
+                        throw new InvalidOperationException(
+                            "Google review notice leaked into other providers");
+                }
+                Console.WriteLine("GOOGLE_SETTINGS_REVIEW_WARNING_AND_LABEL_FIT_PASS");
+                var google = new NasProfile
+                {
+                    Id = Guid.NewGuid(), Protocol = "GoogleDrive",
+                    DisplayName = "Google Drive"
+                };
+                using var form = MainForm.GoogleBrowserLoginFor(google, explicitRequest: true) ??
+                    throw new InvalidOperationException("Connect did not open Google browser login");
+                if (!form.BrowserOnlyUi ||
+                    form.Controls.Cast<Control>().Any(c =>
+                        c.Text.Contains("Client ID", StringComparison.OrdinalIgnoreCase) ||
+                        c.Text.Contains("Client Secret", StringComparison.OrdinalIgnoreCase) ||
+                        c.Text.Contains("JSON 가져오기", StringComparison.OrdinalIgnoreCase) ||
+                        c.Text.Contains("발급 안내", StringComparison.OrdinalIgnoreCase)) ||
+                    form.UsesOpenListBroker ||
+                    form.LoginEnabled != form.PublisherConfigured)
+                    throw new InvalidOperationException(
+                        "Google browser-only login is missing or exposes developer credentials");
+                Console.WriteLine("GOOGLE_CHROME_ONLY_LOGIN_NO_USER_OAUTH_FIELDS_PASS");
+                using var startupLogin = MainForm.GoogleBrowserLoginFor(
+                    google, explicitRequest: false);
+                if (startupLogin is not null || form.UsesOpenListBroker)
+                    throw new InvalidOperationException(
+                        "Google Connect publisher-only entry or quiet startup regressed");
+                Console.WriteLine("GOOGLE_CONNECT_PUBLISHER_ONLY_AND_QUIET_STARTUP_PASS");
+
+                // Only this GUID-owned synthetic file is touched. Exercise
+                // real DPAPI failure without reading any saved user grant.
+                string syntheticPath = Path.Combine(AppStore.DirectoryPath,
+                    "google-direct-auth", google.Id.ToString("N") + ".token");
+                Directory.CreateDirectory(Path.GetDirectoryName(syntheticPath)!);
+                byte[] invalidGrant = System.Text.Encoding.UTF8.GetBytes(
+                    "SYNTHETIC_UNDECRYPTABLE_GOOGLE_GRANT");
+                using (var synthetic = new FileStream(syntheticPath, FileMode.CreateNew,
+                    FileAccess.Write, FileShare.None))
+                    synthetic.Write(invalidGrant);
+                try
+                {
+                    if (RemoteMount.GoogleRouteFor(google) !=
+                        RemoteMount.GoogleEngineRoute.NativeGoogleNeedsBrowserGrant)
+                        throw new InvalidOperationException(
+                            "Unreadable Google authorization bypassed reapproval");
+                    using var recovery = MainForm.GoogleBrowserLoginFor(
+                        google, explicitRequest: true);
+                    if (recovery is null || recovery.LoginEnabled != form.LoginEnabled ||
+                        !recovery.BrowserOnlyUi ||
+                        recovery.PublisherConfigured != form.PublisherConfigured ||
+                        recovery.UsesOpenListBroker != form.UsesOpenListBroker ||
+                        !File.ReadAllBytes(syntheticPath).AsSpan().SequenceEqual(invalidGrant))
+                        throw new InvalidOperationException(
+                            "Google reauthorization disabled login or altered the old grant");
+                    Console.WriteLine("GOOGLE_UNREADABLE_NATIVE_GRANT_REAPPROVAL_PRESERVES_BYTES_PASS");
+
+                    // Exercise the configured own-client UI using only this
+                    // GUID-owned fake grant. Constructing the dialog never
+                    // opens a browser; automatic login starts on Shown.
+                    GoogleDirectCredentialStore.SaveBrowserGrant(google,
+                        "{\"access_token\":\"SYNTHETIC_UI_ACCESS\",\"refresh_token\":\"SYNTHETIC_UI_REFRESH\",\"expires_in\":3600}",
+                        "123456789012-ui-test.apps.googleusercontent.com",
+                        "GOCSPX-synthetic-ui-only");
+                    using var configured = new GoogleDriveLoginDialog(google);
+                    using var unnecessaryLogin = MainForm.GoogleBrowserLoginFor(
+                        google, explicitRequest: true);
+                    if (!configured.PublisherConfigured || !configured.LoginEnabled ||
+                        !configured.BrowserOnlyUi || configured.UsesOpenListBroker ||
+                        unnecessaryLogin is not null ||
+                        RemoteMount.GoogleRouteFor(google) !=
+                            RemoteMount.GoogleEngineRoute.NativeGoogleReady)
+                        throw new InvalidOperationException(
+                            "Stored publisher grant did not preserve browser-only automatic reconnect");
+                    Console.WriteLine("GOOGLE_PUBLISHER_SAVED_GRANT_AUTOMATIC_RECONNECT_PASS");
+                }
+                finally
+                {
+                    File.Delete(syntheticPath);
+                    File.Delete(syntheticPath + ".previous");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("GOOGLE_LOGIN_UI_POLICY_FAILED type=" +
+                    ex.GetType().Name);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
+        if (args.Length == 3 &&
+            args[0].Equals("--google-direct-recovery-export",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (!Guid.TryParse(args[1], out var id) || id == Guid.Empty)
+                    throw new ArgumentException("Invalid Google profile ID");
+                int count = GoogleDirectRecovery.Export(id, args[2]);
+                Console.WriteLine("GOOGLE_DIRECT_RECOVERY_EXPORTED=" + count);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("GOOGLE_DIRECT_RECOVERY_EXPORT_FAILED " +
                     ex.GetType().Name);
                 Environment.ExitCode = 1;
             }

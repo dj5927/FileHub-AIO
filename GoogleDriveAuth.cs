@@ -34,12 +34,19 @@ internal static class GoogleDriveAuth
         ConfigPath(p) + ".previous-auth.bak";
     internal static bool HasPreviousAuthorization(NasProfile p) =>
         p.Protocol == "GoogleDrive" &&
-        File.Exists(PreviousAuthorizationPath(p));
+        (GoogleDirectCredentialStore.HasBackup(p) ||
+         File.Exists(PreviousAuthorizationPath(p)));
 
     internal static void RestorePreviousAuthorization(NasProfile p)
     {
         if (p.Protocol != "GoogleDrive")
             throw new InvalidOperationException("Google Drive 프로필이 아닙니다.");
+        if (GoogleDirectCredentialStore.HasBackup(p))
+        {
+            GoogleDirectCredentialStore.RestoreBackup(p);
+            AppStore.Log("GOOGLE_DIRECT_DPAPI_PREVIOUS_AUTH_RESTORED profile=" + p.Id);
+            return;
+        }
         SecureDirectory();
         string original = ConfigPath(p);
         string backup = PreviousAuthorizationPath(p);
@@ -67,50 +74,19 @@ internal static class GoogleDriveAuth
     // This distinguishes a cold OAuth refresh from root-folder/API pacing.
     internal static bool? IsStoredAccessTokenExpired(NasProfile p)
     {
-        if (p.Protocol != "GoogleDrive") return null;
-        try
-        {
-            string config = File.ReadAllText(ConfigPath(p), Encoding.UTF8);
-            var expiry = Regex.Match(config,
-                @"""expiry""\s*:\s*""([^""]+)""").Groups[1].Value;
-            if (DateTimeOffset.TryParse(expiry, out var timestamp))
-                return timestamp <= DateTimeOffset.UtcNow.AddMinutes(2);
-        }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
-        return null;
+        return GoogleDirectCredentialStore.TryLoadPublisher(p, out var saved)
+            ? saved.Expiry <= DateTimeOffset.UtcNow.AddMinutes(2) : null;
     }
 
     internal static bool IsAuthorized(NasProfile p)
     {
-        if (p.Protocol != "GoogleDrive") return false;
-        try
-        {
-            string path = ConfigPath(p);
-            if (!File.Exists(path)) return false;
-            string contents = File.ReadAllText(path, Encoding.UTF8);
-            if (!contents.Contains("[" + RemoteName(p) + "]", StringComparison.Ordinal)) return false;
-            return contents.Contains("type = drive", StringComparison.Ordinal) &&
-                   contents.Contains("refresh_token", StringComparison.Ordinal);
-        }
-        catch { return false; }
+        return GoogleDirectCredentialStore.TryLoadPublisher(p, out _);
     }
 
     // Expose only the OAuth client mode to UI/logs; never the credentials.
     internal static string ClientMode(NasProfile p)
     {
-        if (!IsAuthorized(p)) return "not-authorized";
-        try
-        {
-            string contents = File.ReadAllText(ConfigPath(p), Encoding.UTF8);
-            var client = Regex.Match(contents,
-                @"(?m)^\s*client_id\s*=\s*([^\r\n]+?)\s*$");
-            return client.Success &&
-                !string.IsNullOrWhiteSpace(client.Groups[1].Value)
-                ? "custom" : "shared";
-        }
-        catch (IOException) { return "unknown"; }
-        catch (UnauthorizedAccessException) { return "unknown"; }
+        return IsAuthorized(p) ? "publisher-native" : "not-authorized";
     }
 
     internal static string BuildConfig(NasProfile p, string jsonToken,
@@ -167,6 +143,33 @@ internal static class GoogleDriveAuth
         string temporary = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
         File.WriteAllText(temporary, contents, new UTF8Encoding(false));
         File.Move(temporary, destination, overwrite: true);
+    }
+
+    // Browser PKCE can validate and preserve an account without executing
+    // rclone. Only swap the previous credential after a successful read-only
+    // Google Drive REST request.
+    internal static async Task SaveNativeBrowserAuthorizationAsync(
+        NasProfile profile, string jsonToken, string clientId, string clientSecret,
+        CancellationToken cancellationToken)
+    {
+        using var json = JsonDocument.Parse(jsonToken);
+        string? access = json.RootElement.GetProperty("access_token").GetString();
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            "https://www.googleapis.com/drive/v3/about?fields=user(permissionId)");
+        request.Headers.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", access);
+        using var response = await http.SendAsync(request, cancellationToken)
+            .ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            throw new IOException("Google direct OAuth validation HTTP " +
+                (int)response.StatusCode + ". Previous login is unchanged.");
+        // Separate DPAPI store: native Google auth never writes a rclone
+        // config. Previous legacy credentials remain untouched for rollback.
+        GoogleDirectCredentialStore.SaveBrowserGrant(
+            profile, jsonToken, clientId, clientSecret);
+        AppStore.Log("GOOGLE_NATIVE_BROWSER_DPAPI_AUTH_SAVED profile=" +
+            profile.Id + " rcloneAuth=false previousPreserved=true");
     }
 
     // A token acquired for a new OAuth app must be tested before replacing
@@ -409,24 +412,26 @@ internal static class GoogleDriveAuth
     }
 }
 
-/// <summary>First-time user-controlled OAuth consent. No sign-in on app startup.</summary>
+/// <summary>
+/// One-click Google account selection. Publisher-owned OAuth settings are
+/// supplied by the application package, never by end users.
+/// </summary>
 internal sealed class GoogleDriveLoginDialog : Form
 {
     private readonly NasProfile profile;
-    private readonly TextBox idBox = new();
-    private readonly TextBox secretBox = new() { UseSystemPasswordChar = true };
-    private readonly CheckBox sharedClientConsent = new();
     private readonly Label state = new();
     private readonly Button login;
     private readonly CancellationTokenSource cts = new();
+    private readonly string clientId = "";
+    private readonly string clientSecret = "";
     private bool busy;
+    private bool automaticLoginStarted;
 
     internal GoogleDriveLoginDialog(NasProfile p)
     {
         profile = p;
         Text = "Google Drive 계정 연결";
-        ClientSize = new Size(670, 474);
-        MinimumSize = MaximumSize = Size;
+        ClientSize = new Size(515, 260);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;
         StartPosition = FormStartPosition.CenterParent;
@@ -435,150 +440,190 @@ internal sealed class GoogleDriveLoginDialog : Form
         ForeColor = ModernTheme.Text;
         Font = new Font("Malgun Gothic", 9f);
         ModernTheme.EnableDarkTitleBar(this);
-        void Caption(string value, int top, int height, bool bold = false) {
-            var label = ModernTheme.Label(value, bold ? 11f : 9f, bold);
-            label.SetBounds(24, top, 620, height);
-            Controls.Add(label);
-        }
-        Caption("Google Drive 전용 OAuth 연결", 18, 30, true);
-        string mode = GoogleDriveAuth.ClientMode(p);
-        Caption(mode switch
-        {
-            "custom" => "현재 인증: 전용 Google OAuth Client ID 사용 중",
-            "shared" => "현재 인증: rclone 공용 Client ID (API 제한 및 연결 지연 위험)",
-            _ => "현재 인증: 계정 미연결"
-        }, 53, 28);
-        Caption("Google Cloud에서 '데스크톱 앱'용 OAuth JSON을 발급받아 가져오세요.", 83, 27);
-        Caption("전용 인증은 API 요청 제한을 줄일 수 있으나 연결 속도를 보장하지는 않습니다.", 111, 27);
-        Caption("Google OAuth Client ID", 167, 24);
-        idBox.SetBounds(24, 193, 618, 27);
-        idBox.BackColor = ModernTheme.Field; idBox.ForeColor = ModernTheme.Text;
-        Controls.Add(idBox);
-        Caption("Client Secret (직접 입력 또는 JSON 가져오기)", 225, 24);
-        secretBox.SetBounds(24, 252, 618, 27);
-        secretBox.BackColor = ModernTheme.Field; secretBox.ForeColor = ModernTheme.Text;
-        Controls.Add(secretBox);
-        var import = ModernTheme.Button("OAuth JSON 가져오기", 178,
-            ImportOAuthJson, height: 33);
-        import.SetBounds(24, 291, 178, 33);
-        Controls.Add(import);
-        var guide = ModernTheme.Button("Google 발급 안내", 150,
-            ShowOAuthInstructions, height: 33);
-        guide.SetBounds(211, 291, 150, 33);
-        Controls.Add(guide);
-        sharedClientConsent.Text = "공용 rclone 인증으로 계속 (403 제한·연결 지연 위험, 권장하지 않음)";
-        sharedClientConsent.AutoSize = false;
-        sharedClientConsent.SetBounds(24, 334, 615, 28);
-        sharedClientConsent.ForeColor = ModernTheme.Text;
-        sharedClientConsent.BackColor = ModernTheme.Background;
-        Controls.Add(sharedClientConsent);
+
+        var title = ModernTheme.Label("Google Drive 계정 연결", 14f, true);
+        title.SetBounds(25, 24, 465, 36);
+        Controls.Add(title);
+
+        var hint = ModernTheme.Label(
+            "Google 계정 연결을 누르면 Chrome에서 계정을 선택하고" +
+            "\nFileHub AIO의 Google Drive 접근을 승인합니다.",
+            10f, false);
+        hint.SetBounds(25, 72, 470, 62);
+        Controls.Add(hint);
+
         state.ForeColor = ModernTheme.Muted;
-        state.Text = "전용 Client ID와 Secret을 입력하거나 OAuth JSON을 가져오세요.";
-        state.SetBounds(24, 367, 617, 45);
+        state.SetBounds(25, 145, 460, 48);
         Controls.Add(state);
-        login = ModernTheme.Button("Google 계정 연결", 166, () => _ = BeginAuthAsync(), accent: true, height: 34);
-        login.SetBounds(346, 423, 166, 34);
+
+        login = ModernTheme.Button("Google 계정 연결", 180,
+            () => _ = BeginAuthAsync(), accent: true, height: 36);
+        login.SetBounds(210, 209, 180, 36);
         Controls.Add(login);
-        var cancel = ModernTheme.Button("취소", 114, () => {
+
+        var cancel = ModernTheme.Button("취소", 90, () =>
+        {
             cts.Cancel();
-            if (!busy) { DialogResult = DialogResult.Cancel; Close(); }
-        }, height: 34);
-        cancel.SetBounds(520, 423, 114, 34);
+            if (!busy)
+            {
+                DialogResult = DialogResult.Cancel;
+                Close();
+            }
+        }, height: 36);
+        cancel.SetBounds(399, 209, 90, 36);
         Controls.Add(cancel);
-        idBox.TextChanged += (_, _) => RefreshLoginAvailability();
-        secretBox.TextChanged += (_, _) => RefreshLoginAvailability();
-        sharedClientConsent.CheckedChanged += (_, _) => RefreshLoginAvailability();
+
+        try
+        {
+            if (GoogleOAuthClientFile.TryReadPackagedClient(
+                out string bundledId, out string bundledSecret))
+            {
+                clientId = bundledId;
+                clientSecret = bundledSecret;
+                state.Text = "계정 선택과 승인만 진행합니다. 별도 설정은 필요하지 않습니다.";
+            }
+            else if (GoogleDirectCredentialStore.TryLoadPublisher(profile, out var saved))
+            {
+                // Existing native grants can reauthorize with the same app ID
+                // without an end-user JSON picker.
+                clientId = saved.ClientId;
+                clientSecret = saved.ClientSecret;
+                state.Text = "기존 FileHub 인증으로 Chrome 계정 선택을 진행합니다.";
+            }
+            else
+            {
+                state.Text = "이 빌드에는 FileHub Google 로그인 설정이 포함되어 있지 않습니다.";
+            }
+        }
+        catch (Exception ex) when (ex is IOException or ArgumentException)
+        {
+            AppStore.Log("GOOGLE_PUBLISHER_OAUTH_CONFIG_INVALID type=" +
+                ex.GetType().Name);
+            state.Text = "프로그램의 Google 인증 설정을 확인할 수 없습니다." +
+                "\n프로그램 배포 구성 오류입니다.";
+        }
         RefreshLoginAvailability();
-        FormClosing += (_, e) => { if (busy) { cts.Cancel(); e.Cancel = true; } };
-    }
-
-    private void RefreshLoginAvailability()
-    {
-        if (login is null) return;
-        bool hasId = !string.IsNullOrWhiteSpace(idBox.Text);
-        bool hasSecret = !string.IsNullOrWhiteSpace(secretBox.Text);
-        login.Enabled = !busy &&
-            ((hasId && hasSecret) ||
-             (!hasId && !hasSecret && sharedClientConsent.Checked));
-    }
-
-    private void ImportOAuthJson()
-    {
-        using var picker = new OpenFileDialog
+        Shown += (_, _) =>
         {
-            Title = "Google Cloud 데스크톱 OAuth JSON 선택",
-            Filter = "Google OAuth JSON (*.json)|*.json",
-            CheckFileExists = true,
-            Multiselect = false,
-            RestoreDirectory = true
+            if (!automaticLoginStarted && AutoStartsBrowser)
+            {
+                automaticLoginStarted = true;
+                _ = BeginAuthAsync();
+            }
         };
-        if (picker.ShowDialog(this) != DialogResult.OK) return;
-        try
+        FormClosing += (_, e) =>
         {
-            var (clientId, clientSecret) =
-                GoogleOAuthClientFile.ReadDesktopFile(picker.FileName);
-            idBox.Text = clientId;
-            secretBox.Text = clientSecret;
-            sharedClientConsent.Checked = false;
-            state.Text = "전용 OAuth 설정을 가져왔습니다. 계정 연결을 누르면 브라우저에서 승인합니다.";
-        }
-        catch (Exception ex) when (ex is IOException or ArgumentException or
-                                  UnauthorizedAccessException)
-        {
-            state.Text = "Google Cloud에서 발급한 데스크톱 앱 JSON을 선택하세요.";
-            MessageBox.Show(this, ex.Message, "Google OAuth JSON 오류",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        }
+            if (busy)
+            {
+                cts.Cancel();
+                e.Cancel = true;
+            }
+        };
     }
 
-    private void ShowOAuthInstructions()
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo(
-                GoogleOAuthClientFile.GoogleSetupUrl)
-            { UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(this, ex.Message, "Google OAuth 발급 안내",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        }
-    }
+    // Regression check: regular users must never get ID/Secret/JSON inputs.
+    internal bool BrowserOnlyUi =>
+        !Controls.OfType<TextBox>().Any() &&
+        !Controls.OfType<CheckBox>().Any() &&
+        !Controls.OfType<LinkLabel>().Any();
+
+    internal bool PublisherConfigured =>
+        !string.IsNullOrWhiteSpace(clientId) &&
+        !string.IsNullOrWhiteSpace(clientSecret);
+
+    internal bool LoginEnabled => login.Enabled;
+    internal bool UsesOpenListBroker => false;
+    internal bool AutoStartsBrowser => PublisherConfigured;
+
+    private void RefreshLoginAvailability() =>
+        login.Enabled = !busy && PublisherConfigured;
 
     private async Task BeginAuthAsync()
     {
-        if (busy) return;
+        if (busy || !login.Enabled) return;
         busy = true;
-        login.Enabled = false;
+        RefreshLoginAvailability();
         try
         {
-            state.Text = "구글 인증 주소를 준비 중입니다...";
-            await GoogleDriveAuth.AuthorizeAsync(profile, idBox.Text, secretBox.Text,
-                message => { if (!IsDisposed) BeginInvoke(() => state.Text = message); },
-                url => {
-                    if (IsDisposed) return;
-                    BeginInvoke(() => {
-                        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
-                        catch (Exception ex) { state.Text = "브라우저를 열지 못했습니다: " + ex.Message; }
-                    });
-                }, cts.Token);
-            // Clear busy BEFORE Close(): FormClosing cancels a close while
-            // OAuth is still running. The token is already persisted here.
+            state.Text = "Chrome에서 Google 계정 선택 화면을 여는 중...";
+            Action<string> update = message =>
+            {
+                if (!IsDisposed && IsHandleCreated)
+                    BeginInvoke(() => state.Text = message);
+            };
+            Action<string> browser = url =>
+            {
+                cts.Token.ThrowIfCancellationRequested();
+                if (IsDisposed || !IsHandleCreated)
+                    throw new GoogleDirectBrowserAuth.AuthorizationException("browser_launch_failed");
+                // Opening a normal browser does not require the UI thread.
+                // Return a launch failure to the awaiting authorization task
+                // immediately instead of leaving its callback listener idle.
+                try
+                {
+                    var chrome = new ProcessStartInfo("chrome.exe")
+                    {
+                        UseShellExecute = true
+                    };
+                    chrome.ArgumentList.Add(url);
+                    using var launched = Process.Start(chrome);
+                    return;
+                }
+                catch (Exception) { /* Try the registered normal browser. */ }
+                try
+                {
+                    using var launched = Process.Start(new ProcessStartInfo(url)
+                        { UseShellExecute = true });
+                }
+                catch (Exception)
+                {
+                    throw new GoogleDirectBrowserAuth.AuthorizationException("browser_launch_failed");
+                }
+            };
+            // Browser success must mean the user's permission has actually
+            // been verified against Drive AND stored in FileHub's encrypted
+            // token store. Do not show a false 200 OK before persistence.
+            _ = await GoogleDirectBrowserAuth.AuthorizeAsync(
+                clientId, clientSecret, update, browser, cts.Token,
+                finalizeGrant: (token, cancel) =>
+                    GoogleDriveAuth.SaveNativeBrowserAuthorizationAsync(
+                        profile, token, clientId, clientSecret, cancel));
             busy = false;
             DialogResult = DialogResult.OK;
             Close();
         }
-        catch (OperationCanceledException) { state.Text = "인증이 취소되었습니다."; }
-        catch (Exception ex) {
-            state.Text = "인증에 실패했습니다. OAuth 설정이나 로그인 승인을 확인하세요.";
-            MessageBox.Show(this, ex.Message, "Google Drive 인증 오류",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        catch (OperationCanceledException)
+        {
+            state.Text = "Google 계정 연결이 취소됐습니다.";
         }
-        finally {
+        catch (GoogleDirectBrowserAuth.AuthorizationException ex)
+        {
+            state.Text = "Google 인증을 완료할 수 없습니다.\n오류: " + ex.ErrorCode;
+            AppStore.Log("GOOGLE_BROWSER_AUTH_REJECTED code=" + ex.ErrorCode);
+            MessageBox.Show(this, ex.Message,
+                "Google Drive 인증 오류", MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        catch (Exception ex)
+        {
+            state.Text = "Google 인증에 실패했습니다. 다시 시도하세요.";
+            AppStore.Log("GOOGLE_BROWSER_AUTH_FAILED type=" +
+                ex.GetType().Name);
+            MessageBox.Show(this,
+                "Chrome에서 Google 계정 승인에 실패했습니다." +
+                "\n오류 분류: " + ex.GetType().Name,
+                "Google Drive 연결 오류", MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
             busy = false;
             RefreshLoginAvailability();
-            if (cts.IsCancellationRequested) { DialogResult = DialogResult.Cancel; Close(); }
+            if (cts.IsCancellationRequested && !IsDisposed)
+            {
+                DialogResult = DialogResult.Cancel;
+                Close();
+            }
         }
     }
 }

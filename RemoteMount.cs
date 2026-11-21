@@ -11,16 +11,18 @@ namespace NASMount;
 
 // Remote protocols use rclone/WinFsp for the filesystem. This DOES NOT enforce
 // cross-machine Office document locks; a lock-aware filesystem layer is still needed.
-internal static class RemoteMount
+internal static partial class RemoteMount
 {
     private sealed record Instance(Process Process, int RcPort, string RcUser,
         string RcPassword, Process? Bridge, MyBoxBetaGateway? MyBoxGateway = null,
         LegacyCharsetGateway? LegacyGateway = null,
         NativeWebDavGateway? NativeGateway = null,
-        bool DirectWebDav = false, Guid? DirectProfileId = null);
+        bool DirectWebDav = false, Guid? DirectProfileId = null,
+        bool DirectGoogle = false);
     private static readonly ConcurrentDictionary<Guid,string> IntegrityAlerts = new();
     internal static string? GetIntegrityAlert(Guid id) =>
-        IntegrityAlerts.TryGetValue(id, out var message) ? message : null;
+        IntegrityAlerts.TryGetValue(id, out var message)
+            ? message : PersistedGoogleRecoveryAlert(id);
     internal sealed record UploadState(int Queued, int Uploading, int Errors,
         bool OutOfSpace, string? BlockedReason = null)
     {
@@ -113,6 +115,14 @@ internal static class RemoteMount
                 if (e.Data is null) return;
                 if (e.Data.StartsWith("DIRECT_WEBDAV_MANAGED_READY ",
                         StringComparison.Ordinal)) ready.TrySetResult(true);
+                if (e.Data.StartsWith("DIRECT_WEBDAV_REMOTE_QUOTA_READY ",
+                        StringComparison.Ordinal))
+                {
+                    AppStore.Log("DIRECT_WEBDAV_REMOTE_QUOTA_DISPLAY_UPDATED id=" + p.Id);
+                    ExplorerDriveIcon.NotifyDriveItemChanged(p.Letter);
+                    ExplorerDriveIcon.NotifyComputerChanged();
+                    return;
+                }
                 AppStore.Log("DIRECT_WEBDAV_ENGINE " + e.Data);
             };
             process.ErrorDataReceived += (_, e) =>
@@ -331,6 +341,27 @@ internal static class RemoteMount
     {
         Instance? instance;
         lock (Guard) Running.TryGetValue(profile.Id, out instance);
+        if (instance is { DirectGoogle: true })
+        {
+            if (instance.Process.HasExited)
+                return OperationResult.Fail("Google 직접 WinFsp 엔진이 종료됐습니다.");
+            try
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+                string reply = await DirectGoogleCommandAsync(profile.Id,
+                    "PING", timeout.Token);
+                if (!reply.StartsWith("READY ", StringComparison.Ordinal) ||
+                    !reply.Contains("rclone=false", StringComparison.Ordinal))
+                    return OperationResult.Fail("Google 직접 엔진 상태 응답이 올바르지 않습니다.");
+                LastHealthy[profile.Id] = DateTime.UtcNow;
+                return OperationResult.Ok("Google 직접 WinFsp 엔진 실행 중.");
+            }
+            catch (Exception ex)
+            {
+                return OperationResult.Fail("Google 직접 엔진 상태 확인 실패: " +
+                    ex.GetType().Name);
+            }
+        }
         if (instance is { DirectWebDav: true })
         {
             if (instance.Process.HasExited)
@@ -825,6 +856,25 @@ internal static class RemoteMount
         CancellationToken cancellationToken = default, int attempts = 1,
         int timeoutSeconds = 6)
     {
+        if (instance.DirectGoogle)
+        {
+            if (instance.DirectProfileId is not Guid id)
+                throw new IOException("Google direct profile ID missing");
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+            string text = await DirectGoogleCommandAsync(id,
+                "STATUS", timeout.Token);
+            string[] fields = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (fields.Length != 4 || fields[0] != "READY" ||
+                fields[2] != "PENDING" ||
+                !int.TryParse(fields[1], out int opened) ||
+                !int.TryParse(fields[3], out int pending) ||
+                opened < 0 || pending < 0)
+                throw new IOException("Invalid Google direct status reply");
+            return new UploadState(0, 0, pending, false,
+                opened > 0 ? "열린 Google 파일 " + opened + "개" : null);
+        }
         if (instance.DirectWebDav)
         {
             if (instance.DirectProfileId is not Guid profileId)
@@ -1327,6 +1377,30 @@ internal static class RemoteMount
                 return OperationResult.Fail("MYBOX API 인증/목록 조회 실패: " + e.Message);
             }
         }
+        if (GoogleRouteFor(p) != GoogleEngineRoute.OtherProtocol)
+        {
+            if (GoogleRouteFor(p) != GoogleEngineRoute.NativeGoogleReady)
+                return OperationResult.Fail(
+                    "Google 직접 API 인증이 없습니다. Chrome에서 Google 계정을 다시 승인하세요. " +
+                    "구형 rclone 인증으로 자동 전환하지 않습니다.");
+            try
+            {
+                using var http = new HttpClient
+                { Timeout = TimeSpan.FromSeconds(20) };
+                var token = GoogleDirectOAuthSession.ImportCustomProfile(http, p);
+                var direct = new GoogleDirectApiClient(http, token.AccessTokenAsync);
+                var files = await direct.ListChildrenAsync("root");
+                return OperationResult.Ok("Google 직접 API 인증 및 폴더 조회 성공 (" +
+                    files.Count + "개). rclone을 사용하지 않았습니다.");
+            }
+            catch (Exception ex)
+            {
+                AppStore.Log("GOOGLE_DIRECT_DIAGNOSE_FAILED type=" +
+                    ex.GetType().Name + " profile=" + p.Id);
+                return OperationResult.Fail("Google 직접 API 인증·조회 실패: " +
+                    ex.GetType().Name);
+            }
+        }
         if (p.Protocol == "SFTP" && !SftpHostKeyTrust.HasTrustedKey(p))
             return OperationResult.Fail(
                 "SFTP(SSH) 서버 호스트 키가 아직 승인되지 않았습니다. " +
@@ -1485,6 +1559,17 @@ internal static class RemoteMount
         if (Environment.GetLogicalDrives().Any(d =>
                 d.StartsWith(p.Letter.ToUpperInvariant() + ":", StringComparison.OrdinalIgnoreCase)))
             return OperationResult.Fail(p.Letter + ": 드라이브가 다른 프로그램에서 사용 중입니다.");
+        // Google is direct-only. Never silently fall through to rclone
+        // when a legacy/shared client or missing dedicated OAuth is found.
+        // That fallback was the reason the user continued to see 35-second
+        // startup stalls despite the native engine being implemented.
+        if (GoogleRouteFor(p) != GoogleEngineRoute.OtherProtocol)
+        {
+            AppStore.Log("GOOGLE_ENGINE_ROUTE_DIRECT_ONLY profile=" + p.Id +
+                " route=" + GoogleRouteFor(p) +
+                " rcloneFallback=false");
+            return await ConnectDirectGoogleAsync(p);
+        }
         if (UsesDirectWebDav(p))
         {
             var direct = await ConnectDirectWebDavAsync(p, password);
@@ -1998,6 +2083,8 @@ internal static class RemoteMount
     {
         Instance? directInstance;
         lock (Guard) Running.TryGetValue(p.Id, out directInstance);
+        if (directInstance is { DirectGoogle: true })
+            return await DisconnectDirectGoogleAsync(p, directInstance);
         if (directInstance is { DirectWebDav: true })
             return await DisconnectDirectWebDavAsync(p, directInstance);
         if (EmergencyPending(p.Id))

@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Xml;
 using System.Xml.Linq;
 
 namespace NASMount.LockBridge;
@@ -18,6 +20,7 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
 {
     internal sealed record Entry(string Path, string Name, bool IsDirectory,
         long Size, DateTime ModifiedUtc, string? ETag = null);
+    internal sealed record StorageQuota(long TotalBytes, long FreeBytes);
 
     private sealed record TimedEntry(Entry Value, DateTime ExpiresUtc);
     private sealed record TimedDirectory(Entry[] Values, DateTime ExpiresUtc);
@@ -43,6 +46,11 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
     {
     }
 
+    internal DirectWebDavReadOnlyBackend(Uri root, HttpClient testHttp)
+        : this(root, null, "", requireLoopback: true, testHttp: testHttp)
+    {
+    }
+
     // Only a persisted, user-configured WebDAV profile may authorize a
     // non-loopback host. The command-line test URI never gains this ability.
     internal DirectWebDavReadOnlyBackend(NasProfile profile, string password)
@@ -52,7 +60,7 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
     }
 
     private DirectWebDavReadOnlyBackend(Uri root, NasProfile? profile,
-        string password, bool requireLoopback)
+        string password, bool requireLoopback, HttpClient? testHttp = null)
     {
         if ((requireLoopback && (!root.IsLoopback || root.Scheme != Uri.UriSchemeHttp)) ||
             root.UserInfo.Length > 0 || root.Query.Length > 0 ||
@@ -62,14 +70,14 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
                 (profile.IsAnonymous == false && password.Length == 0))))
             throw new ArgumentException("Unsafe direct WebDAV endpoint or credentials");
         _root = new Uri(root.AbsoluteUri.TrimEnd('/') + "/");
-        _http = profile is not null
+        _http = testHttp ?? (profile is not null
             ? WebDavTlsPolicy.CreateClient(profile, TimeSpan.FromSeconds(25),
                 allowRedirect: false)
             : new HttpClient(new HttpClientHandler {
                 AllowAutoRedirect = false,
                 UseCookies = false,
                 AutomaticDecompression = DecompressionMethods.None
-            }) { Timeout = TimeSpan.FromSeconds(25) };
+            }) { Timeout = TimeSpan.FromSeconds(25) });
         if (profile is { IsAnonymous: false })
             _http.DefaultRequestHeaders.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Basic",
@@ -95,6 +103,61 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
         string escaped = string.Join('/', Normalize(path).Split('/',
             StringSplitOptions.RemoveEmptyEntries).Select(Uri.EscapeDataString));
         return new Uri(_root, escaped);
+    }
+
+    internal static StorageQuota? ParseStorageQuota(string xml)
+    {
+        // RFC 4331 quota properties are absent from ordinary allprop.
+        // Parse only successful DAV:propstat entries. A 404 or missing
+        // property is UNKNOWN, never "zero remaining".
+        using var input = new StringReader(xml);
+        using var reader = XmlReader.Create(input, new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit,
+            XmlResolver = null,
+            MaxCharactersInDocument = 65536
+        });
+        XDocument document = XDocument.Load(reader);
+        XNamespace dav = "DAV:";
+        foreach (var response in document.Descendants(dav + "response"))
+        foreach (var propstat in response.Elements(dav + "propstat"))
+        {
+            if (!(propstat.Element(dav + "status")?.Value ?? "")
+                    .Contains(" 200 ", StringComparison.Ordinal)) continue;
+            var properties = propstat.Element(dav + "prop");
+            if (properties is null) continue;
+            if (!long.TryParse(properties.Element(dav + "quota-used-bytes")?.Value,
+                    NumberStyles.None, CultureInfo.InvariantCulture, out long used) ||
+                !long.TryParse(properties.Element(dav + "quota-available-bytes")?.Value,
+                    NumberStyles.None, CultureInfo.InvariantCulture, out long free) ||
+                used < 0 || free < 0 || used > long.MaxValue - free)
+                continue;
+            long total = used + free;
+            if (total > 0) return new StorageQuota(total, free);
+        }
+        return null;
+    }
+
+    internal async Task<StorageQuota?> GetStorageQuotaAsync(
+        CancellationToken cancel = default)
+    {
+        // The exact configured root only; no directory enumeration or
+        // NAS vendor/port heuristics. Called from an async quota worker.
+        using var request = new HttpRequestMessage(new HttpMethod("PROPFIND"),
+            RemoteUrl("/"));
+        request.Headers.TryAddWithoutValidation("Depth", "0");
+        request.Content = new StringContent(
+            "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:prop>" +
+            "<d:quota-available-bytes/><d:quota-used-bytes/>" +
+            "</d:prop></d:propfind>", Encoding.UTF8, "application/xml");
+        using var reply = await _http.SendAsync(request,
+            HttpCompletionOption.ResponseHeadersRead, cancel).ConfigureAwait(false);
+        if ((int)reply.StatusCode != 207) return null;
+        await reply.Content.LoadIntoBufferAsync(65536, cancel).ConfigureAwait(false);
+        string xml = await reply.Content.ReadAsStringAsync(cancel)
+            .ConfigureAwait(false);
+        try { return ParseStorageQuota(xml); }
+        catch (XmlException) { return null; }
     }
 
     private Entry[] PropFind(string path, int depth)
@@ -337,5 +400,21 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
             catch (ArgumentException) { }
         }
         Console.WriteLine("DIRECT_WEBDAV_ONE_WINFSP_READONLY_PATH_POLICY_PASS");
+        const string realQuota =
+            "<d:multistatus xmlns:d=\"DAV:\"><d:response><d:propstat>" +
+            "<d:prop><d:quota-used-bytes>68000000000</d:quota-used-bytes>" +
+            "<d:quota-available-bytes>4932000000000</d:quota-available-bytes>" +
+            "</d:prop><d:status>HTTP/1.1 200 OK</d:status>" +
+            "</d:propstat></d:response></d:multistatus>";
+        var parsed = ParseStorageQuota(realQuota);
+        if (parsed?.TotalBytes != 5_000_000_000_000L ||
+            parsed.FreeBytes != 4_932_000_000_000L)
+            throw new IOException("RFC4331 WebDAV quota was not parsed correctly");
+        string absent = realQuota.Replace("HTTP/1.1 200 OK", "HTTP/1.1 404 Not Found");
+        if (ParseStorageQuota(absent) is not null ||
+            ParseStorageQuota(realQuota.Replace("4932000000000", "-1")) is not null ||
+            ParseStorageQuota(realQuota.Replace("4932000000000", "9223372036854775807")) is not null)
+            throw new IOException("Absent or invalid WebDAV quota was mistaken for real capacity");
+        Console.WriteLine("DIRECT_WEBDAV_RFC4331_QUOTA_PARSER_POLICY_PASS");
     }
 }

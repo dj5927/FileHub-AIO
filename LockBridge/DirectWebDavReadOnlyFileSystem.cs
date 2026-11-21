@@ -27,8 +27,43 @@ internal class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposable
     private System.Threading.Timer? _watchTimer;
     private int _polling;
     private int _activeFileHandles;
+    // WinFsp's virtual "unlimited" network volume is a PRESENTATION value,
+    // not an assertion about the NAS' physical free space. RaiDrive shows
+    // the same 7.99 EB style placeholder when WebDAV quota is unknown.
+    internal const long UnknownNetworkCapacityBytes = long.MaxValue;
+    private long _quotaTotal = UnknownNetworkCapacityBytes;
+    private long _quotaFree = UnknownNetworkCapacityBytes;
+    private long _nextQuotaRefreshTicks;
+    private int _quotaRefreshRunning;
+    private int _quotaDisposed;
+    private readonly CancellationTokenSource _quotaStop = new();
+    internal event Action<long, long>? QuotaUpdated;
     internal int ActiveHandles => Volatile.Read(ref _activeFileHandles);
     protected void RegisterOpenHandle() => Interlocked.Increment(ref _activeFileHandles);
+
+    private sealed class QuotaMockHandler(bool hasQuota) : HttpMessageHandler
+    {
+        internal int Requests;
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancel)
+        {
+            if (request.Method.Method != "PROPFIND" ||
+                !request.Headers.TryGetValues("Depth", out var depths) ||
+                !depths.Contains("0"))
+                throw new InvalidOperationException("WebDAV quota test escaped Depth: 0");
+            Interlocked.Increment(ref Requests);
+            string body = "<d:multistatus xmlns:d=\"DAV:\"><d:response><d:propstat>" +
+                "<d:prop><d:quota-used-bytes>68000000000</d:quota-used-bytes>" +
+                "<d:quota-available-bytes>4932000000000</d:quota-available-bytes></d:prop>" +
+                "<d:status>HTTP/1.1 " + (hasQuota ? "200 OK" : "404 Not Found") +
+                "</d:status></d:propstat></d:response></d:multistatus>";
+            return Task.FromResult(new HttpResponseMessage((System.Net.HttpStatusCode)207)
+            {
+                Content = new StringContent(body, System.Text.Encoding.UTF8,
+                    "application/xml")
+            });
+        }
+    }
 
     private sealed class DirectoryCursor
     {
@@ -167,6 +202,8 @@ internal class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposable
 
     public void Dispose()
     {
+        Volatile.Write(ref _quotaDisposed, 1);
+        _quotaStop.Cancel();
         _watchTimer?.Dispose();
         _host = null;
         _watchedFolders.Clear();
@@ -188,9 +225,60 @@ internal class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposable
 
     public override int GetVolumeInfo(out VolumeInfo info)
     {
-        // A lab must not invent a NAS quota. Unknown (0/0) is intentional.
         info = default;
+        // No calls to NAS or the local staging disk in Explorer callbacks.
+        // Unknown WebDAV quotas use the same virtual 7.99 EB presentation
+        // as the other NAS drive. FileHub must never label it a real quota.
+        info.TotalSize = (ulong)Interlocked.Read(ref _quotaTotal);
+        info.FreeSize = (ulong)Interlocked.Read(ref _quotaFree);
+        RequestQuotaRefresh();
         return Success;
+    }
+
+    internal void RequestQuotaRefresh()
+    {
+        if (Volatile.Read(ref _quotaDisposed) != 0) return;
+        if (DateTime.UtcNow.Ticks < Interlocked.Read(ref _nextQuotaRefreshTicks) ||
+            Interlocked.CompareExchange(ref _quotaRefreshRunning, 1, 0) != 0)
+            return;
+        Interlocked.Exchange(ref _nextQuotaRefreshTicks,
+            DateTime.UtcNow.AddMinutes(1).Ticks);
+        var cancel = _quotaStop.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var quota = await _backend.GetStorageQuotaAsync(cancel)
+                    .ConfigureAwait(false);
+                if (quota is null || cancel.IsCancellationRequested)
+                {
+                    // Unsupported WebDAV quota: keep the known virtual
+                    // unlimited placeholder, never substitute local C:.
+                    Interlocked.Exchange(ref _nextQuotaRefreshTicks,
+                        DateTime.UtcNow.AddMinutes(5).Ticks);
+                    return;
+                }
+                bool changed = Interlocked.Read(ref _quotaTotal) != quota.TotalBytes ||
+                    Interlocked.Read(ref _quotaFree) != quota.FreeBytes;
+                Interlocked.Exchange(ref _quotaTotal, quota.TotalBytes);
+                Interlocked.Exchange(ref _quotaFree, quota.FreeBytes);
+                Interlocked.Exchange(ref _nextQuotaRefreshTicks,
+                    DateTime.UtcNow.AddMinutes(5).Ticks);
+                if (changed && !cancel.IsCancellationRequested)
+                    QuotaUpdated?.Invoke(quota.TotalBytes, quota.FreeBytes);
+            }
+            catch (OperationCanceledException) when (cancel.IsCancellationRequested) { }
+            catch (Exception ex) when (ex is IOException or HttpRequestException
+                or System.Xml.XmlException or InvalidOperationException
+                or OperationCanceledException)
+            {
+                // Fail open only for the DISPLAY. Ordinary staged writes
+                // still use their existing journal and server safeguards.
+                Console.Error.WriteLine("DIRECT_WEBDAV_QUOTA_UNKNOWN type=" +
+                    ex.GetType().Name);
+            }
+            finally { Volatile.Write(ref _quotaRefreshRunning, 0); }
+        }, cancel);
     }
 
     protected static FileInfo Describe(DirectWebDavReadOnlyBackend.Entry entry)
@@ -333,5 +421,55 @@ internal class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposable
             (dir.FileAttributes & (uint)System.IO.FileAttributes.Directory) == 0)
             throw new InvalidOperationException("Direct WinFsp directory metadata mismatch");
         Console.WriteLine("DIRECT_WEBDAV_ONE_WINFSP_READONLY_METADATA_POLICY_PASS");
+        var handler = new QuotaMockHandler(hasQuota: true);
+        using (var http = new HttpClient(handler))
+        using (var backend = new DirectWebDavReadOnlyBackend(
+            new Uri("http://127.0.0.1:18993/"), http))
+        using (var volume = new DirectWebDavReadOnlyFileSystem(
+            backend, Path.GetTempPath()))
+        {
+            int notices = 0;
+            volume.QuotaUpdated += (_, _) => Interlocked.Increment(ref notices);
+            if (volume.GetVolumeInfo(out var initial) != 0 ||
+                initial.TotalSize != (ulong)UnknownNetworkCapacityBytes ||
+                initial.FreeSize != (ulong)UnknownNetworkCapacityBytes)
+                throw new IOException("Unknown WebDAV volume displayed staging disk");
+            if (!SpinWait.SpinUntil(() =>
+            {
+                volume.GetVolumeInfo(out var info);
+                return info.TotalSize == 5_000_000_000_000UL &&
+                    info.FreeSize == 4_932_000_000_000UL;
+            }, TimeSpan.FromSeconds(5)))
+                throw new IOException("WebDAV remote quota did not arrive asynchronously");
+            if (!SpinWait.SpinUntil(() => Volatile.Read(ref notices) == 1,
+                    TimeSpan.FromSeconds(2)))
+                throw new IOException("WebDAV remote quota notification missing");
+            for (int i = 0; i < 50; i++) volume.GetVolumeInfo(out _);
+            if (handler.Requests != 1 || notices != 1)
+                throw new IOException("Explorer callbacks refetched WebDAV quota");
+        }
+        Console.WriteLine("DIRECT_WEBDAV_WINFSP_REAL_QUOTA_NONBLOCKING_PASS");
+        var unknownHandler = new QuotaMockHandler(hasQuota: false);
+        using (var http = new HttpClient(unknownHandler))
+        using (var backend = new DirectWebDavReadOnlyBackend(
+            new Uri("http://127.0.0.1:18993/"), http))
+        using (var volume = new DirectWebDavReadOnlyFileSystem(
+            backend, Path.GetTempPath()))
+        {
+            volume.GetVolumeInfo(out _);
+            if (!SpinWait.SpinUntil(() => Volatile.Read(ref unknownHandler.Requests) == 1,
+                    TimeSpan.FromSeconds(3)))
+                throw new IOException("WebDAV unavailable quota probe never executed");
+            for (int i = 0; i < 50; i++)
+            {
+                volume.GetVolumeInfo(out var info);
+                if (info.TotalSize != (ulong)UnknownNetworkCapacityBytes ||
+                    info.FreeSize != (ulong)UnknownNetworkCapacityBytes)
+                    throw new IOException("Unknown NAS quota displayed local disk");
+            }
+            if (unknownHandler.Requests != 1)
+                throw new IOException("Unsupported WebDAV quota caused polling storm");
+        }
+        Console.WriteLine("DIRECT_WEBDAV_RAIDRIVE_STYLE_UNKNOWN_7_99EB_PASS");
     }
 }

@@ -39,6 +39,7 @@ internal sealed class ModernProfileDialog : Form
     private readonly Label advancedHeading;
     private readonly Label googleInfo;
     private readonly Label googleAccount;
+    private readonly Label googleReviewNotice;
     private readonly Button teraCookieHelp = new();
     private readonly Button teraAutoImport = new();
     private const string TeraCookieInstructions =
@@ -135,6 +136,13 @@ internal sealed class ModernProfileDialog : Form
         frame.Visible && passwordBox.Visible &&
         !googleAccount.Bounds.IntersectsWith(frame.Bounds);
     internal bool CloudNetworkOptionVisible => cloudNetworkBox.Visible;
+    internal bool GoogleReviewNoticeVisible => googleReviewNotice.Visible;
+    internal string GoogleReviewNoticeText => googleReviewNotice.Text;
+    internal bool GoogleWriteModeTextFits =>
+        modes[0].Width >= TextRenderer.MeasureText(modes[0].Text,
+            modes[0].Font, new Size(1000, 100),
+            TextFormatFlags.SingleLine | TextFormatFlags.NoPadding).Width + 36 &&
+        modes[0].Right + 8 <= modes[1].Left;
     internal bool CloudNetworkSelected => cloudNetworkBox.Checked;
     internal void SetCloudNetworkForTest(bool selected) =>
         cloudNetworkBox.Checked = selected;
@@ -269,6 +277,10 @@ internal sealed class ModernProfileDialog : Form
         anonymousBox.Checked = profile.IsAnonymous;
         googleAccount = Caption("Google 계정 인증은 저장 후 [연결]에서 진행됩니다.",
             132, 291, 525, 25, 9f, ModernTheme.Muted);
+        googleReviewNotice = Caption(
+            "현재 Google 인증 심사 진행 중 · 이용을 원하시면 관리자에게 문의하세요.",
+            42, 546, 635, 26, 9f, Color.FromArgb(255, 213, 89), bold: true);
+        googleReviewNotice.Visible = false;
         anonymousBox.CheckedChanged += (_, _) => UpdateAnonymousUi();
         tip.SetToolTip(anonymousBox, "로그인 정보 없이 접근 가능한 서버에서만 연결됩니다. FTP는 anonymous, SMB는 Guest, SFTP는 서버의 무암호 인증이 필요합니다.");
         Check(autoBox, "자동연결", 132, 320);
@@ -385,7 +397,7 @@ internal sealed class ModernProfileDialog : Form
         CancelButton = cancel;
 
         modeIndex = profile.Protocol is "GoogleDrive" or "TeraBox" or "OneDrive" or "MyBox" ?
-            (!existing && profile.Protocol is ("TeraBox" or "MyBox") ||
+            (!existing && profile.Protocol is ("GoogleDrive" or "TeraBox" or "MyBox") ||
              profile.AllowUnprotectedWrites ? 0 : 1) :
             profile.OfficeReadTuning && profile.Protocol == "WebDAV" ? 2 :
             profile.UseLockBridge || profile.AllowUnprotectedWrites ? 0 : 1;
@@ -586,8 +598,8 @@ internal sealed class ModernProfileDialog : Form
         Toggle(autoBox, inputX, 274);
         Toggle(rememberBox, 477, 274);
         Toggle(modes[0], inputX, 337);
-        Toggle(modes[1], 422, 337);
-        Toggle(modes[2], 531, 337);
+        Toggle(modes[1], 449, 337);
+        Toggle(modes[2], 562, 337);
         Toggle(ftpPasv, 440, 369);
         Toggle(ftpExplicit, 549, 369);
         Toggle(ftpModeZ, 646, 369);
@@ -597,6 +609,8 @@ internal sealed class ModernProfileDialog : Form
         Place(googleInfo, inputX, 134, 418, 23);
         Place(googleAccount, inputX, 163, 418, 23);
         googleInfo.Font = googleAccount.Font = new Font("Malgun Gothic", 8.0f);
+        Place(googleReviewNotice, left, 392, 510, 25);
+        googleReviewNotice.Font = new Font("Malgun Gothic", 8.4f, FontStyle.Bold);
 
         Place(infoTitle, left, 423, 500, 18);
         infoTitle.Font = new Font("Malgun Gothic", 8.5f, FontStyle.Bold);
@@ -652,8 +666,9 @@ internal sealed class ModernProfileDialog : Form
             var check = modes[i];
             check.Width = TextRenderer.MeasureText(check.Text, check.Font,
                 new Size(1000, 100), TextFormatFlags.SingleLine |
-                TextFormatFlags.NoPadding).Width + 27;
+                TextFormatFlags.NoPadding).Width + 39;
         }
+        modes[0].Width = Math.Min(modes[0].Width, modes[1].Left - modes[0].Left - 8);
     }
 
     private async Task ImportTeraBoxCookieAsync()
@@ -868,6 +883,8 @@ internal sealed class ModernProfileDialog : Form
             "클라우드 드라이브 안내" : "파일 접근 및 잠금 안내";
         infoText.Text = protocol == "MyBox" ?
             "업로드/수정 지원 · Excel 직접 편집과 PC 간 파일잠금 미검증" :
+            protocol == "GoogleDrive" ?
+            "Google 직접 연결 · 새 파일 저장 지원 · 기존 문서 수정은 검증 중" :
             protocol is "GoogleDrive" or "OneDrive" or "TeraBox" ?
             "클라우드 문서 잠금 미지원 · 중요 파일은 백업 후 편집" :
             "FileHub AIO 전용 잠금 · 저장 후 업로드 완료를 확인하세요.";
@@ -905,10 +922,11 @@ internal sealed class ModernProfileDialog : Form
             }
         }
         googleInfo.Visible = cloud;
+        googleReviewNotice.Visible = google;
         googleInfo.Text = mybox ? "MYBOX · 업로드/수정 지원 · 파일잠금 미지원" :
             tera ? "TeraBox 비공식 연동 · ndus 쿠키 필요 · 파일잠금 미지원" :
             oneDrive ? "Microsoft 계정 연결 · PC 간 파일잠금 미지원" :
-            "Google 계정 연결 · PC 간 파일잠금 미지원";
+            "Google Drive · Chrome에서 계정 선택 후 연결";
         googleAccount.Visible = cloud;
         googleAccount.Text = mybox ? "PAT 발급 방법은 입력칸 옆 [?] 버튼에서 확인하세요." :
             tera ? "[자동 불러오기]로 로그인하거나 ndus를 직접 입력하세요." :
@@ -959,7 +977,7 @@ internal sealed class ModernProfileDialog : Form
         // Match WebDAV's compact toggles. Their actual enabled/disabled
         // semantics are explained by the tooltips below; longer strings
         // would overrun the fixed, adjacent radio/checkbox positions.
-        modes[0].Text = cloud ? "쓰기 허용" : "파일잠금";
+        modes[0].Text = google ? "새 파일 쓰기" : cloud ? "쓰기 허용" : "파일잠금";
         modes[1].Text = "읽기전용";
         if (ftp || sftp)
         {

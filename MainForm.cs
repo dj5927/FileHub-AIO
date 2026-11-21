@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Diagnostics;
 using System.Collections.Concurrent;
+using System.Text.Json;
 using System.Windows.Forms;
 namespace NASMount;
 
@@ -435,6 +436,15 @@ internal sealed partial class MainForm : Form
             await Perform(p,false,null,true,forceDisconnect:p.Protocol!="SMB");
         }
     }
+    // This is the same entry used by Connect and the packaged UI policy
+    // test. Missing publisher JSON must still allow the disclosed OpenList
+    // browser flow; startup auto-connect must never create a login window.
+    internal static GoogleDriveLoginDialog? GoogleBrowserLoginFor(
+        NasProfile profile, bool explicitRequest) =>
+        explicitRequest && RemoteMount.GoogleRouteFor(profile) ==
+            RemoteMount.GoogleEngineRoute.NativeGoogleNeedsBrowserGrant
+                ? new GoogleDriveLoginDialog(profile) : null;
+
     async Task ConnectOne(NasProfile p,bool explicitRequest,string? suppliedPassword=null)
     {
         if (shutdownRequested || deletingProfiles.Contains(p.Id)) return;
@@ -535,15 +545,30 @@ internal sealed partial class MainForm : Form
                 return;
             }
         }
-        if (p.Protocol == "GoogleDrive" && !GoogleDriveAuth.IsAuthorized(p))
+        // Native Google API is the ONLY Google mount engine. A legacy
+        // shared-rclone credential is not authorization for the new client.
+        // Never auto-launch Chrome during Windows startup.
+        if (RemoteMount.GoogleRouteFor(p) ==
+            RemoteMount.GoogleEngineRoute.NativeGoogleNeedsBrowserGrant)
         {
             if (!explicitRequest)
             {
                 retry[p.Id] = DateTime.UtcNow.AddMinutes(5);
-                return; // No unsolicited Google login window on Windows startup.
+                return;
             }
-            using var login = new GoogleDriveLoginDialog(p);
-            if (login.ShowDialog(this) != DialogResult.OK) return;
+            status.Text = "Google 직접 API 연결을 위한 Chrome 계정 승인이 필요합니다.";
+            using var directLogin = GoogleBrowserLoginFor(p, explicitRequest);
+            if (directLogin is null || directLogin.ShowDialog(this) != DialogResult.OK) return;
+            if (RemoteMount.GoogleRouteFor(p) !=
+                RemoteMount.GoogleEngineRoute.NativeGoogleReady)
+            {
+                MessageBox.Show(this,
+                    "Google 직접 엔진 인증이 완료되지 않았습니다. " +
+                    "기존 rclone 인증으로 자동 연결하지 않습니다.",
+                    "Google 직접 API", MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
         }
         if (p.Protocol == "OneDrive" && !OneDriveAuth.IsAuthorized(p))
         {
@@ -833,6 +858,54 @@ internal sealed partial class MainForm : Form
         if(p is null || p.Protocol=="SMB")
         {
             MessageBox.Show("SMB가 아닌 연결된 NAS를 선택하세요.");
+            return;
+        }
+        if (p.Protocol == "GoogleDrive" &&
+            GoogleDirectRecovery.PendingCount(p.Id) is int pending && pending > 0)
+        {
+            var connectionState = await RemoteMount.GetTransferStatus(p);
+            if (connectionState.Message.Contains("열린 Google 파일",
+                StringComparison.Ordinal))
+            {
+                MessageBox.Show(this,
+                    "Google 파일을 사용 중입니다. 파일을 닫은 뒤 " +
+                    "복구 상태를 다시 확인하세요.",
+                    "Google 저장 진행 중", MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+            if (MessageBox.Show(this,
+                "Google 직접 연결의 미완료 로컬 복구 기록 " + pending +
+                "개가 있습니다.\n\n원본 기록은 그대로 두고 별도 폴더에 " +
+                "복구 파일 사본을 내보낼까요?\n이 작업은 Google 파일을 수정하지 않습니다.",
+                "Google 저장 복구", MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning) != DialogResult.Yes) return;
+            using var picker = new FolderBrowserDialog
+            {
+                Description = "Google 복구 파일 사본을 저장할 폴더 선택",
+                UseDescriptionForTitle = true
+            };
+            if (picker.ShowDialog(this) != DialogResult.OK) return;
+            try
+            {
+                int count = GoogleDirectRecovery.Export(p.Id, picker.SelectedPath);
+                MessageBox.Show(this,
+                    "복구 파일 " + count + "개를 내보냈습니다.\n" +
+                    "원본 복구 기록은 삭제하지 않았습니다.",
+                    "Google 복구 내보내기", MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                or JsonException or ArgumentException)
+            {
+                AppStore.Log("GOOGLE_RECOVERY_EXPORT_FAILED type=" +
+                    ex.GetType().Name);
+                MessageBox.Show(this,
+                    "복구 파일 내보내기에 실패했습니다. 원본 기록은 보존했습니다.\n" +
+                    "다른 빈 폴더를 선택해 다시 시도하세요.",
+                    "Google 복구 내보내기", MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
             return;
         }
         var result=await RemoteMount.GetTransferStatus(p);

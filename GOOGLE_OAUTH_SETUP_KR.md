@@ -1,5 +1,23 @@
 # FileHub AIO PC — Google Drive 전용 OAuth 연결
 
+## 현재 공개 배포판 v1.3.127 이용자 안내
+
+1. FileHub에서 Google Drive를 선택하고 연결 이름을 입력해 저장합니다.
+2. 연결 목록의 연결 버튼을 누릅니다.
+3. Chrome에서 본인의 Google 계정을 선택하고 FileHub AIO의 Drive 접근을 승인합니다.
+4. Windows 탐색기에 연결된 드라이브가 나타납니다. JSON이나 API Client ID는 입력하지 않습니다.
+
+**Google Drive 전체 접근 권한은 Google 검토 중입니다.** 현재는 등록된 테스트
+계정만 Google 승인 절차를 진행할 수 있으므로, 필요한 사용자는 관리자에게
+계정 등록을 요청해야 합니다. 심사 중에도 등록된 계정의 연결 기능은 작동합니다.
+테스트 모드에서는 재인증이 7일마다 필요할 수 있습니다.
+
+게시자 설정은 GitHub Actions의 암호화 Secret에 저장하고 공식 ZIP에
+데스크톱용 클라이언트 구성으로 포함합니다. 개인 로그인 토큰은 포함하지 않습니다.
+
+아래 내용은 **v1.3.126 이전의 구형 사용자별 전용 OAuth 설정 안내**이므로,
+v1.3.127 사용자에게 추가 작업으로 요구하지 마세요.
+
 Google Drive API의 403 rateLimitExceeded가 발생하는 경우
 여러 사람이 공유하는 rclone 공용 Client ID 대신 별도로 발급한
 OAuth Client ID를 사용하는 것이 좋습니다. 전용 인증이
@@ -21,7 +39,7 @@ OAuth Client ID를 사용하는 것이 좋습니다. 전용 인증이
 
 공식 rclone 안내: https://rclone.org/drive/#making-your-own-client-id
 
-## 2. FileHub에 적용하기
+## 2. 구형 버전의 사용자별 JSON 적용 방법 (v1.3.127에서는 사용하지 않음)
 
 1. Google Drive 마운트를 정상 연결 해제합니다.
    업로드 중이라면 완료한 뒤 해제해야 합니다.

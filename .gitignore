@@ -22,3 +22,4 @@ vendor/
 **/TestResults/
 *.nasmount.lock/
 NASMount_사용중_*
+tools/google-oauth-desktop.json

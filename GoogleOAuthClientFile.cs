@@ -15,8 +15,27 @@ internal static class GoogleOAuthClientFile
     internal const string GoogleCloudClientsUrl =
         "https://console.cloud.google.com/auth/clients";
     internal const string GoogleSetupUrl =
-        "https://rclone.org/drive/#making-your-own-client-id";
+        "https://console.cloud.google.com/auth/clients";
     internal const int MaxFileSize = 256 * 1024;
+
+    // Publisher-owned Google Desktop OAuth credentials are bundled ONCE.
+    // End users should only see the normal Chrome account picker, never a
+    // Client ID/secret field. Desktop clients are public OAuth clients:
+    // this JSON is configuration, not an authentication password.
+    internal static string PackagedClientPath => Path.Combine(
+        AppContext.BaseDirectory, "tools", "google-oauth-desktop.json");
+
+    internal static bool TryReadPackagedClient(out string clientId,
+        out string clientSecret)
+    {
+        clientId = "";
+        clientSecret = "";
+        if (!File.Exists(PackagedClientPath)) return false;
+        var pair = ReadDesktopFile(PackagedClientPath);
+        clientId = pair.ClientId;
+        clientSecret = pair.ClientSecret;
+        return true;
+    }
 
     internal static (string ClientId, string ClientSecret) ReadDesktopFile(
         string path)

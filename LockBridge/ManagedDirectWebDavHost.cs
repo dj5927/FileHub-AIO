@@ -101,6 +101,12 @@ internal static class ManagedDirectWebDavHost
             ? new DirectWebDavWritableFileSystem(backend, store!,
                 Path.GetTempPath(), leases)
             : new DirectWebDavReadOnlyFileSystem(backend, Path.GetTempPath());
+        provider.QuotaUpdated += (total, free) =>
+        {
+            Console.WriteLine("DIRECT_WEBDAV_REMOTE_QUOTA_READY totalBytes=" +
+                total + " freeBytes=" + free);
+            Console.Out.Flush();
+        };
         using var fs = new FileSystemHost(provider);
         fs.FileSystemName = "NTFS";
         if (!profile.UseFixedDriveMode)
@@ -108,6 +114,7 @@ internal static class ManagedDirectWebDavHost
         int mounted = fs.Mount(target, null, true);
         if (mounted < 0)
             throw new IOException("Direct WinFsp mount failed 0x" + mounted.ToString("X8"));
+        provider.RequestQuotaRefresh();
         provider.StartWatching(fs);
         Console.WriteLine("DIRECT_WEBDAV_MANAGED_READY letter=" + target +
             " mode=" + (writable ? "write-safe" : "read-only") +
