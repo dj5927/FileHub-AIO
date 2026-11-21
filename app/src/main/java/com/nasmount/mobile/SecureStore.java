@@ -280,4 +280,12 @@ final class SecureStore {
     void selectedTreeUri(String uri) {
         preferences.edit().putString("selectedTreeUri", uri).apply();
     }
+    // Google Drive on Android is accessed via the system DocumentsProvider.
+    // Only the persisted SAF URI is saved, never Google OAuth credentials.
+    String googleDriveTreeUri() {
+        return preferences.getString("googleDriveTreeUri", "");
+    }
+    void googleDriveTreeUri(String uri) {
+        preferences.edit().putString("googleDriveTreeUri", uri).apply();
+    }
 }

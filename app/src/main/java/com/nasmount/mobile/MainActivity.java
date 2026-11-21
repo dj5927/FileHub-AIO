@@ -78,6 +78,9 @@ public class MainActivity extends Activity {
     private static final int REQ_MUSIC_NOTIFICATIONS = 509;
     private static final int REQ_TRANSFER_NOTIFICATIONS = 510;
     static final int REQ_LAN_QR_SCAN = 511;
+    private static final int REQ_GOOGLE_DRIVE_SAF = 512;
+    private static final String GOOGLE_DRIVE_DOCUMENTS_AUTHORITY =
+            "com.google.android.apps.docs.storage";
     private static final int ICON_BLUE = 0xFF4989CF;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final ExecutorService previewWorker = Executors.newFixedThreadPool(2);
@@ -4635,6 +4638,23 @@ public class MainActivity extends Activity {
         remote = null;
         render("원격 저장소", true, "+", () -> remoteForm(null));
         muted("NAS · TeraBox · 네이버 MYBOX 연결");
+        // Unlike the Windows build, Android does not currently have a
+        // Google Drive OAuth client registered for its package/signature.
+        // Offer the platform's Google Drive DocumentsProvider instead.
+        // It uses the user's already logged-in Android Drive account and
+        // persistable folder permissions, never a Desktop OAuth client.
+        TextView reviewNotice = Ui.text(this,
+                "Google 인증 심사 진행 중 · 이용을 원하시면 관리자에게 문의하세요.",
+                12, 0xFFFFCF64, true);
+        reviewNotice.setPadding(dp(4), dp(10), dp(4), dp(4));
+        page.addView(reviewNotice, Ui.lp(this, -1, -2));
+        String googleTree = store.googleDriveTreeUri();
+        row(page, "Google Drive (Android 파일 선택)",
+                googleTree.isEmpty()
+                        ? "기기 Google Drive 앱에서 폴더 선택 후 등록"
+                        : "등록됨 · 선택한 폴더 열기",
+                "remote", Ui.TEAL, this::openGoogleDriveSaf,
+                this::showGoogleDriveSafSettings);
         try {
             List<Models.RemoteProfile> profiles = store.activeRemotes();
             if (profiles.isEmpty()) {
@@ -4657,6 +4677,52 @@ public class MainActivity extends Activity {
         TextView backup=Ui.action(this,"설정 파일 내보내기 · 가져오기");
         page.addView(backup,Ui.lp(this,-1,52));
         backup.setOnClickListener(v -> settingsBackupUi().show());
+    }
+
+    private void openGoogleDriveSaf() {
+        String saved = store.googleDriveTreeUri();
+        if (!saved.isEmpty()) {
+            try {
+                Uri uri = Uri.parse(saved);
+                if (GOOGLE_DRIVE_DOCUMENTS_AUTHORITY.equals(uri.getAuthority()) &&
+                        hasPersistedTreeRead(uri)) {
+                    DocumentFile root = DocumentFile.fromTreeUri(this, uri);
+                    if (root != null && root.exists() && root.canRead()) {
+                        activeTreeUri = saved;
+                        activeTreeLabel = "Google Drive (선택 폴더)";
+                        openSafPath("/");
+                        return;
+                    }
+                }
+            } catch (Exception ignored) { /* Re-select a valid system folder. */ }
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Google Drive 연결")
+                .setMessage("기기의 Google Drive 앱에 로그인한 후 Android 파일 선택 화면에서 " +
+                        "원하는 Drive 폴더를 선택하세요. Android 시스템이 부여한 해당 " +
+                        "폴더의 읽기·쓰기 권한으로 연결하며, 별도 JSON 입력이나 " +
+                        "FileHub용 Google 로그인 토큰은 필요하지 않습니다.\n\n" +
+                        "이 기능은 선택한 폴더에만 접근합니다. 전체 Drive를 PC처럼 " +
+                        "자동 마운트하는 기능과는 다릅니다.")
+                .setNegativeButton("취소", null)
+                .setPositiveButton("폴더 선택", (d, w) ->
+                        pickTree(REQ_GOOGLE_DRIVE_SAF))
+                .show();
+    }
+
+    private void showGoogleDriveSafSettings() {
+        new AlertDialog.Builder(this)
+                .setTitle("Google Drive 폴더 연결")
+                .setMessage("연결을 다시 선택하거나 FileHub의 등록 정보를 해제할 수 있습니다. " +
+                        "Google 계정 및 Google Drive의 원본 파일은 삭제되지 않습니다.")
+                .setNegativeButton("닫기", null)
+                .setNeutralButton("연결 해제", (d, w) -> {
+                    store.googleDriveTreeUri("");
+                    showRemoteList();
+                })
+                .setPositiveButton("다시 선택", (d, w) ->
+                        pickTree(REQ_GOOGLE_DRIVE_SAF))
+                .show();
     }
     private void showNasShareCreate(FileTransferEngine.Item item) {
         showNasShareCreateForPath(item.remote, item.path, item.name, false);
@@ -6083,8 +6149,15 @@ public class MainActivity extends Activity {
         }
         if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri chosen = data.getData();
-        if (requestCode == REQ_SD || requestCode == REQ_FOLDER) {
+        if (requestCode == REQ_SD || requestCode == REQ_FOLDER ||
+                requestCode == REQ_GOOGLE_DRIVE_SAF) {
             try {
+                if (requestCode == REQ_GOOGLE_DRIVE_SAF &&
+                        !GOOGLE_DRIVE_DOCUMENTS_AUTHORITY.equals(chosen.getAuthority())) {
+                    showError("Google Drive 폴더를 선택해 주세요. 기기에 Google Drive 앱을 " +
+                            "설치하고 Google 계정으로 로그인한 뒤 다시 시도하세요.");
+                    return;
+                }
                 if (requestCode == REQ_SD) {
                     StorageVolume currentCard = sdVolume();
                     if (currentCard == null) {
@@ -6123,7 +6196,10 @@ public class MainActivity extends Activity {
                     return;
                 }
                 activeTreeUri = chosen.toString();
-                if (requestCode == REQ_SD) {
+                if (requestCode == REQ_GOOGLE_DRIVE_SAF) {
+                    store.googleDriveTreeUri(chosen.toString());
+                    activeTreeLabel = "Google Drive (선택 폴더)";
+                } else if (requestCode == REQ_SD) {
                     store.sdTreeUri(chosen.toString());
                     activeTreeLabel = selectedRoot.canWrite() ?
                             "SD 저장소 (선택 폴더)" : "SD 저장소 (읽기 전용)";

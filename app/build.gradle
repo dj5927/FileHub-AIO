@@ -60,7 +60,12 @@ tasks.matching { it.name == 'preBuild' }.configureEach {
 }
 
 def releaseSigning = new Properties()
-def releaseSigningFile = rootProject.file('../signing/signing.properties')
+// Local publisher builds may specify an existing private signing file from
+// a different checkout. This property never copies the private keystore or
+// passwords into the source repository or its published assets.
+def releaseSigningFile = rootProject.file(
+        providers.gradleProperty('filehubReleaseSigningConfig')
+                .getOrElse('../signing/signing.properties'))
 if (releaseSigningFile.exists()) {
     releaseSigningFile.withInputStream { stream -> releaseSigning.load(stream) }
 }
@@ -75,8 +80,8 @@ android {
         applicationId 'com.nasmount.mobile'
         minSdk 26
         targetSdk 35
-        versionCode 105
-        versionName '0.1.104'
+        versionCode 106
+        versionName '0.1.105'
     }
     signingConfigs {
         release {

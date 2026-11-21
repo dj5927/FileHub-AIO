@@ -15,7 +15,25 @@ An open-source file manager and media/reading app designed for NAS, WebDAV, SMB,
 
 Get the latest signed APK from [GitHub Releases](https://github.com/dj5927/FileHub-AIO/releases/latest). On app launch, FileHub checks the latest published stable release, showing only a short notification when an update exists. You can download and install it manually from **⋮ → 업데이트 확인 (Check for updates)**. Installation always requires Android's confirmation and may require permission to install APKs from this app.
 
-The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.104 the metadata is versionCode: 105 and FileHub-AIO-v0.1.104.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.105 the metadata is versionCode: 106 and FileHub-AIO-v0.1.105.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+
+## Android v0.1.105: Google Drive system picker and verification notice
+
+- The remote storage page now clearly marks the publisher's Google Drive
+  restricted-scope API approval as under review and directs interested users
+  to contact the publisher. This notice does not block other remote storage
+  connections or FileHub's existing functions.
+- Google Drive folders may be linked via the Android system's
+  **DocumentsProvider folder picker**, using an already signed-in Google
+  Drive app. The user chooses a folder and grants persisted read/write
+  permissions. FileHub stores only its URI (not OAuth JSON or passwords).
+- This folder-only Android SAF integration is **not** the Windows app's
+  full Google Drive API mount. It depends on the device's Google Drive
+  provider supporting tree selection and does not expose Drive folders
+  outside the selected tree. If no compatible provider is available,
+  no Google Drive connection can be registered on that device.
+- Existing Android NAS, MYBOX and TeraBox connections and local files are
+  untouched. Android publisher OAuth client approval remains separate.
 
 ## Android v0.1.104: gallery-style photo swiping
 
