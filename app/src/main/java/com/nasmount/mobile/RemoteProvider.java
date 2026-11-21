@@ -26,6 +26,7 @@ import okio.BufferedSink;
 import org.apache.commons.net.ftp.FTP;
 import org.apache.commons.net.ftp.FTPClient;
 import org.apache.commons.net.ftp.FTPFile;
+import org.apache.commons.net.ftp.FTPSClient;
 import java.io.*;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -129,19 +130,48 @@ final class RemoteProvider {
     }
 
     private static FTPClient ftp(Models.RemoteProfile p) throws Exception {
-        FTPClient ftp = new FTPClient();
+        if (p.ftpExplicitTls && p.ftpImplicitTls)
+            throw new IOException("FTP TLS 설정이 중복됐습니다.");
+        // FTPES and implicit FTPS validate TLS certificates/hostnames. Never
+        // install a permissive TrustManager or accept-all hostname verifier.
+        FTPClient ftp = (p.ftpExplicitTls || p.ftpImplicitTls)
+                ? new FTPSClient(p.ftpImplicitTls) : new FTPClient();
+        if (ftp instanceof FTPSClient) {
+            FTPSClient secure = (FTPSClient) ftp;
+            secure.setEndpointCheckingEnabled(true);
+            if (p.ftpTls12Only)
+                secure.setEnabledProtocols(new String[]{"TLSv1.2"});
+        }
         ftp.setConnectTimeout(11000);
         ftp.setDefaultTimeout(16000);
         ftp.setDataTimeout(35000);
-        ftp.setControlEncoding("UTF-8");
-        ftp.connect(p.host.trim(), port(p, 21));
+        ftp.setControlEncoding(ftpEncoding(p.ftpCharset));
+        ftp.connect(p.host.trim(), port(p, p.ftpImplicitTls ? 990 : 21));
         String user = p.username.isEmpty() ? "anonymous" : p.username;
         String pass = p.username.isEmpty() ? "anonymous@" : p.password;
         if (!ftp.login(user, pass))
             throw new IOException("FTP 로그인에 실패했습니다.");
-        ftp.enterLocalPassiveMode();
+        if (ftp instanceof FTPSClient) {
+            FTPSClient secure = (FTPSClient) ftp;
+            secure.execPBSZ(0);
+            secure.execPROT("P");
+        }
+        if (p.ftpPreferPasv) ftp.enterLocalPassiveMode();
+        else ftp.enterLocalActiveMode();
         ftp.setFileType(FTP.BINARY_FILE_TYPE);
         return ftp;
+    }
+    static String ftpEncoding(String requested) {
+        if (requested == null) return "UTF-8";
+        switch (requested.trim().toUpperCase(java.util.Locale.ROOT)) {
+            case "CP949":
+            case "MS949":
+            case "CP949 / EUC-KR (한국어)": return "MS949";
+            case "EUC-KR": return "EUC-KR";
+            case "서버 기본": return "ISO-8859-1";
+            case "UTF-8": return "UTF-8";
+            default: throw new IllegalArgumentException("지원하지 않는 FTP 문자셋");
+        }
     }
     private static void closeFtp(FTPClient client) {
         if (client == null) return;
@@ -213,6 +243,48 @@ final class RemoteProvider {
                     auth.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP));
         }
         return b;
+    }
+
+    static WebDavQuota webdavQuota(Models.RemoteProfile p) throws Exception {
+        if (!"WebDAV".equals(p.protocol))
+            throw new IllegalArgumentException("WebDAV 전용 용량 조회");
+        Request request = webRequest(p, "/", true)
+                .header("Depth", "0")
+                .method("PROPFIND", RequestBody.create(
+                        "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:prop>" +
+                        "<d:quota-available-bytes/><d:quota-used-bytes/>" +
+                        "</d:prop></d:propfind>",
+                        MediaType.parse("application/xml; charset=utf-8")))
+                .build();
+        try (Response response = webClient(p).newCall(request).execute()) {
+            if (response.code() != 207 || response.body() == null) return null;
+            // Okio readUtf8(byteCount) insists on exactly that many bytes,
+            // so short, valid quota replies would otherwise throw EOF.
+            ByteArrayOutputStream limited = new ByteArrayOutputStream();
+            byte[] bytes = new byte[4096];
+            int count;
+            try (InputStream input = response.body().byteStream()) {
+                while ((count = input.read(bytes)) != -1) {
+                    if (limited.size() + count > 65_536) return null;
+                    limited.write(bytes, 0, count);
+                }
+            }
+            String xml = limited.toString("UTF-8");
+            return WebDavQuota.parse(xml);
+        }
+    }
+
+    /** 404 = no existing destination; present files require a strong ETag. */
+    private static String webdavDestinationEtag(Models.RemoteProfile p, String path)
+            throws Exception {
+        Request head = webRequest(p, path, false).head().build();
+        try (Response response = webClient(p).newCall(head).execute()) {
+            if (response.code() == 404) return null;
+            if (!response.isSuccessful())
+                throw new IOException("WebDAV 변경 충돌 확인 실패 (HTTP " +
+                        response.code() + ")");
+            return WebDavWriteGuard.checkedEtag(response.header("ETag"));
+        }
     }
 
     static List<Models.Entry> list(Models.RemoteProfile p, String path) throws Exception {
@@ -468,6 +540,7 @@ final class RemoteProvider {
     }
     static void upload(Models.RemoteProfile p, String folder, String name,
                        InputStream input, long byteLength, boolean overwrite) throws Exception {
+        requireWritable(p);
         if ("MYBOX".equals(p.protocol)) {
             MyBoxWriteApi.LIVE.upload(p, folder, name, input, byteLength, overwrite);
             return;
@@ -590,6 +663,8 @@ final class RemoteProvider {
                 // WebDAV MOVE gives a clean final name only once the full
                 // upload succeeded. Overwrite=F avoids deleting an existing
                 // destination without user consent.
+                String expectedTag = overwrite ?
+                        webdavDestinationEtag(p, finalPath) : null;
                 RequestBody body = new RequestBody() {
                     @Override public MediaType contentType() {
                         return MediaType.parse("application/octet-stream");
@@ -606,11 +681,20 @@ final class RemoteProvider {
                             resp.code());
                 }
                 try {
-                    Request move = webRequest(p, tempPath, false)
+                    String latestTag = overwrite ?
+                            webdavDestinationEtag(p, finalPath) : null;
+                    if (expectedTag != null)
+                        WebDavWriteGuard.sameVersion(expectedTag, latestTag);
+                    else if (latestTag != null)
+                        throw new IOException("다른 기기에서 파일을 생성했습니다. 덮어쓰지 않았습니다.");
+                    Request.Builder moveBuilder = webRequest(p, tempPath, false)
                             .header("Destination", webUrl(p, finalPath, false).toString())
-                            .header("Overwrite", overwrite ? "T" : "F")
-                            .method("MOVE", RequestBody.create(new byte[0], null))
-                            .build();
+                            .header("Overwrite", expectedTag == null ? "F" : "T");
+                    if (expectedTag != null)
+                        moveBuilder.header("If", WebDavWriteGuard.taggedIf(
+                                webUrl(p, finalPath, false).toString(), expectedTag));
+                    Request move = moveBuilder.method("MOVE",
+                            RequestBody.create(new byte[0], null)).build();
                     try (Response resp = webClient(p).newCall(move).execute()) {
                         if (!resp.isSuccessful())
                             throw new IOException("WebDAV MOVE HTTP " + resp.code());
@@ -627,6 +711,7 @@ final class RemoteProvider {
     }
 
     static void mkdir(Models.RemoteProfile p, String folder) throws Exception {
+        requireWritable(p);
         if ("MYBOX".equals(p.protocol)) {
             MyBoxWriteApi.LIVE.mkdir(p, folder);
             return;
@@ -662,6 +747,7 @@ final class RemoteProvider {
     }
     static void rename(Models.RemoteProfile p, String source,
                        String destination, boolean directory) throws Exception {
+        requireWritable(p);
         if ("MYBOX".equals(p.protocol)) {
             MyBoxWriteApi.LIVE.rename(p, source, destination);
             return;
@@ -713,6 +799,7 @@ final class RemoteProvider {
 
     static void delete(Models.RemoteProfile p, String path, boolean directory)
             throws Exception {
+        requireWritable(p);
         if ("MYBOX".equals(p.protocol)) {
             MyBoxWriteApi.LIVE.delete(p, path);
             return;
@@ -748,7 +835,12 @@ final class RemoteProvider {
             default: throw new IOException("지원하지 않는 저장소");
         }
     }
+    private static void requireWritable(Models.RemoteProfile p) throws IOException {
+        if (p.readOnly)
+            throw new IOException("읽기 전용 연결입니다. 설정에서 쓰기 권한을 변경하세요.");
+    }
     private static List<Models.Entry> sort(List<Models.Entry> files) {
+        // Read-only connections still permit normal enumeration.
         files.sort((a, b) -> {
             if (a.directory != b.directory) return a.directory ? -1 : 1;
             return a.name.compareToIgnoreCase(b.name);

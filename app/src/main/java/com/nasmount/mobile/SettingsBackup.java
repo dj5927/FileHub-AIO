@@ -52,10 +52,11 @@ final class SettingsBackup {
         root.put("version",VERSION);
         root.put("created",System.currentTimeMillis());
         JSONArray remotes=new JSONArray();
-        for(Models.RemoteProfile profile:store.remotes())
+        for(Models.RemoteProfile profile:store.activeRemotes())
             remotes.put(profileToJson(profile));
         root.put("remotes",remotes);
-        root.put("favorites",new JSONArray(SecureStore.encodeFavorites(store.favorites())));
+        root.put("favorites",new JSONArray(SecureStore.encodeFavorites(
+                store.activeFavorites())));
         JSONObject settings=new JSONObject();
         for(String name:FILES) {
             SharedPreferences pref=context.getSharedPreferences(name,Context.MODE_PRIVATE);
@@ -83,6 +84,18 @@ final class SettingsBackup {
         o.put("host",p.host);o.put("port",p.port);o.put("root",p.root);
         o.put("username",p.username);o.put("password",p.password);
         o.put("ssl",p.ssl);o.put("fingerprint",p.fingerprint);
+        o.put("ftpExplicitTls",p.ftpExplicitTls);
+        o.put("ftpImplicitTls",p.ftpImplicitTls);
+        o.put("ftpPreferPasv",p.ftpPreferPasv);
+        o.put("ftpTls12Only",p.ftpTls12Only);
+        o.put("ftpCharset",p.ftpCharset);
+        o.put("sftpCharset",p.sftpCharset);
+        o.put("readOnly",p.readOnly);
+        o.put("useLockBridge",p.useLockBridge);
+        o.put("useNativeWebDavLocks",p.useNativeWebDavLocks);
+        o.put("officeReadTuning",p.officeReadTuning);
+        o.put("autoConnect",p.autoConnect);
+        o.put("windowsLetter",p.windowsLetter);
         o.put("nasVendor",p.nasVendor);o.put("nasApiBase",p.nasApiBase);
         o.put("nasApiUser",p.nasApiUser);o.put("nasApiPassword",p.nasApiPassword);
         o.put("nasShareRoot",p.nasShareRoot);
@@ -100,6 +113,7 @@ final class SettingsBackup {
             throw new IllegalArgumentException("잘못된 원격 연결 ID입니다.");
         p.id=id;
         p.name=o.optString("name","");p.protocol=o.getString("protocol");
+        if("MyBox".equals(p.protocol))p.protocol="MYBOX";
         if(!("SMB".equals(p.protocol)||"FTP".equals(p.protocol)||
                 "SFTP".equals(p.protocol)||"WebDAV".equals(p.protocol)||
                 "MYBOX".equals(p.protocol)||"TeraBox".equals(p.protocol)||
@@ -109,6 +123,18 @@ final class SettingsBackup {
         p.root=o.optString("root","");p.username=o.optString("username","");
         p.password=o.optString("password","");p.ssl=o.optBoolean("ssl",true);
         p.fingerprint=o.optString("fingerprint","");
+        p.ftpExplicitTls=o.optBoolean("ftpExplicitTls",false);
+        p.ftpImplicitTls=o.optBoolean("ftpImplicitTls",false);
+        p.ftpPreferPasv=o.optBoolean("ftpPreferPasv",true);
+        p.ftpTls12Only=o.optBoolean("ftpTls12Only",false);
+        p.ftpCharset=o.optString("ftpCharset","UTF-8");
+        p.sftpCharset=o.optString("sftpCharset","UTF-8");
+        p.readOnly=o.optBoolean("readOnly",false);
+        p.useLockBridge=o.optBoolean("useLockBridge",false);
+        p.useNativeWebDavLocks=o.optBoolean("useNativeWebDavLocks",false);
+        p.officeReadTuning=o.optBoolean("officeReadTuning",false);
+        p.autoConnect=o.optBoolean("autoConnect",false);
+        p.windowsLetter=o.optString("windowsLetter","");
         p.nasVendor=o.optString("nasVendor","");p.nasApiBase=o.optString("nasApiBase","");
         p.nasApiUser=o.optString("nasApiUser","");
         p.nasApiPassword=o.optString("nasApiPassword","");
@@ -151,7 +177,10 @@ final class SettingsBackup {
             throw new IllegalArgumentException("백업 항목 수가 너무 많습니다.");
         Set<String> ids=new HashSet<>();
         for(int i=0;i<remotes.length();i++) {
-            Models.RemoteProfile p=profileFromJson(remotes.getJSONObject(i));
+            JSONObject entry=remotes.getJSONObject(i);
+            if("GoogleDrive".equals(entry.optString("protocol")) ||
+                    "OneDrive".equals(entry.optString("protocol")))continue;
+            Models.RemoteProfile p=profileFromJson(entry);
             if(!ids.add(p.id))throw new IllegalArgumentException("중복된 연결 ID가 있습니다.");
         }
         SecureStore.decodeFavorites(favorites.toString());
@@ -176,8 +205,12 @@ final class SettingsBackup {
         validate(root);
         JSONArray incoming=root.getJSONArray("remotes");
         List<Models.RemoteProfile> profiles=new ArrayList<>();
-        for(int i=0;i<incoming.length();i++)
-            profiles.add(profileFromJson(incoming.getJSONObject(i)));
+        for(int i=0;i<incoming.length();i++) {
+            JSONObject entry=incoming.getJSONObject(i);
+            if("GoogleDrive".equals(entry.optString("protocol")) ||
+                    "OneDrive".equals(entry.optString("protocol")))continue;
+            profiles.add(profileFromJson(entry));
+        }
         List<Models.Favorite> favorites=SecureStore.decodeFavorites(
                 root.getJSONArray("favorites").toString());
         JSONObject prefs=root.getJSONObject("preferences");

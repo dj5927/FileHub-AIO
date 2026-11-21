@@ -18,6 +18,20 @@ final class Models {
         String password = "";
         String fingerprint = "";
         boolean ssl = true;
+        // Shared FileHub PC/Android connection options. Older Android
+        // installations default to their previously supported plain FTP.
+        boolean ftpExplicitTls;
+        boolean ftpImplicitTls;
+        boolean ftpPreferPasv = true;
+        boolean ftpTls12Only;
+        String ftpCharset = "UTF-8";
+        String sftpCharset = "UTF-8";
+        boolean readOnly;
+        boolean useLockBridge;
+        boolean useNativeWebDavLocks;
+        boolean officeReadTuning;
+        boolean autoConnect;
+        String windowsLetter = "";
         // Optional manufacturer-specific File Station API. Never inferred from a
         // generic SMB/WebDAV server or enabled until API verification succeeds.
         String nasVendor = "";

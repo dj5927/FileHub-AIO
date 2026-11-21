@@ -79,6 +79,18 @@ final class SecureStore {
             item.username = object.optString("username", "");
             item.ssl = object.optBoolean("ssl", true);
             item.fingerprint = object.optString("fingerprint", "");
+            item.ftpExplicitTls = object.optBoolean("ftpExplicitTls", false);
+            item.ftpImplicitTls = object.optBoolean("ftpImplicitTls", false);
+            item.ftpPreferPasv = object.optBoolean("ftpPreferPasv", true);
+            item.ftpTls12Only = object.optBoolean("ftpTls12Only", false);
+            item.ftpCharset = object.optString("ftpCharset", "UTF-8");
+            item.sftpCharset = object.optString("sftpCharset", "UTF-8");
+            item.readOnly = object.optBoolean("readOnly", false);
+            item.useLockBridge = object.optBoolean("useLockBridge", false);
+            item.useNativeWebDavLocks = object.optBoolean("useNativeWebDavLocks", false);
+            item.officeReadTuning = object.optBoolean("officeReadTuning", false);
+            item.autoConnect = object.optBoolean("autoConnect", false);
+            item.windowsLetter = object.optString("windowsLetter", "");
             // Never interpret malformed/corrupted secrets as blank silently:
             // the caller must explicitly correct the account.
             item.password = decrypt(object.optString("secret", ""));
@@ -106,13 +118,11 @@ final class SecureStore {
         return items;
     }
 
-    /**
-     * Retire Google Drive without deleting saved data during an update.
-     * Its old connection and favorites are simply absent from the UI.
-     */
+    /** Unsupported desktop-only clouds stay preserved but hidden on Android. */
     List<Models.RemoteProfile> activeRemotes() throws Exception {
         List<Models.RemoteProfile> result = remotes();
-        result.removeIf(p -> "GoogleDrive".equals(p.protocol));
+        result.removeIf(p -> "GoogleDrive".equals(p.protocol) ||
+                "OneDrive".equals(p.protocol));
         return result;
     }
 
@@ -120,7 +130,9 @@ final class SecureStore {
         List<Models.Favorite> result = favorites();
         Set<String> retiredIds = new HashSet<>();
         for (Models.RemoteProfile profile : remotes()) {
-            if ("GoogleDrive".equals(profile.protocol)) retiredIds.add(profile.id);
+            if ("GoogleDrive".equals(profile.protocol) ||
+                    "OneDrive".equals(profile.protocol))
+                retiredIds.add(profile.id);
         }
         result.removeIf(f ->
                 ("remote".equals(f.kind) && retiredIds.contains(f.remoteId)) ||
@@ -161,6 +173,18 @@ final class SecureStore {
             object.put("username", item.username);
             object.put("ssl", item.ssl);
             object.put("fingerprint", item.fingerprint);
+            object.put("ftpExplicitTls", item.ftpExplicitTls);
+            object.put("ftpImplicitTls", item.ftpImplicitTls);
+            object.put("ftpPreferPasv", item.ftpPreferPasv);
+            object.put("ftpTls12Only", item.ftpTls12Only);
+            object.put("ftpCharset", item.ftpCharset);
+            object.put("sftpCharset", item.sftpCharset);
+            object.put("readOnly", item.readOnly);
+            object.put("useLockBridge", item.useLockBridge);
+            object.put("useNativeWebDavLocks", item.useNativeWebDavLocks);
+            object.put("officeReadTuning", item.officeReadTuning);
+            object.put("autoConnect", item.autoConnect);
+            object.put("windowsLetter", item.windowsLetter);
             object.put("secret", encrypt(item.password));
             object.put("nasVendor", item.nasVendor);
             object.put("nasApiBase", item.nasApiBase);
@@ -279,13 +303,5 @@ final class SecureStore {
     }
     void selectedTreeUri(String uri) {
         preferences.edit().putString("selectedTreeUri", uri).apply();
-    }
-    // Google Drive on Android is accessed via the system DocumentsProvider.
-    // Only the persisted SAF URI is saved, never Google OAuth credentials.
-    String googleDriveTreeUri() {
-        return preferences.getString("googleDriveTreeUri", "");
-    }
-    void googleDriveTreeUri(String uri) {
-        preferences.edit().putString("googleDriveTreeUri", uri).apply();
     }
 }

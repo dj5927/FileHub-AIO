@@ -202,7 +202,8 @@ final class FileTransferEngine {
 
         boolean writable() {
             return !"media".equals(kind) &&
-                    (remote == null || !CloudProvider.isReadOnly(remote));
+                    (remote == null || (!remote.readOnly &&
+                            !CloudProvider.isReadOnly(remote)));
         }
     }
 
@@ -300,7 +301,8 @@ final class FileTransferEngine {
         }
         FileOperationPolicy.validateBatchNames(names);
         if (destination.kind.equals("remote") &&
-                CloudProvider.isReadOnly(destination.remote))
+                (destination.remote.readOnly ||
+                        CloudProvider.isReadOnly(destination.remote)))
             throw new IOException("이 클라우드는 읽기 전용이어서 붙여넣을 수 없습니다.");
         if (destination.kind.equals("local")) {
             if (!destination.local.isDirectory() || !destination.local.canWrite())

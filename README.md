@@ -15,7 +15,27 @@ An open-source file manager and media/reading app designed for NAS, WebDAV, SMB,
 
 Get the latest signed APK from [GitHub Releases](https://github.com/dj5927/FileHub-AIO/releases/latest). On app launch, FileHub checks the latest published stable release, showing only a short notification when an update exists. You can download and install it manually from **⋮ → 업데이트 확인 (Check for updates)**. Installation always requires Android's confirmation and may require permission to install APKs from this app.
 
-The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.105 the metadata is versionCode: 106 and FileHub-AIO-v0.1.105.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.106 the metadata is versionCode: 107 and FileHub-AIO-v0.1.106.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+
+## Android v0.1.106: Google Drive removed; NAS features and PC backups aligned
+
+- Google Drive and OneDrive are **not supported** on Android. The experimental
+  Google Drive system folder picker added in v0.1.105 was removed. Legacy
+  Google connection data is hidden, not deleted from the user's device.
+- SMB, FTP, SFTP, WebDAV, TeraBox, and MYBOX remain supported. FTP now
+  supports explicit FTPS and implicit FTPS (hostname/certificate verified),
+  PASV/active selection, and UTF-8/CP949/EUC-KR filename encodings.
+- Read-only remote profiles block upload, rename, folder creation and delete.
+  WebDAV reads RFC 4331 actual server space without inventing local disk
+  capacity; concurrent overwrite checks strong ETags before and after
+  staging and uses RFC 4918 tagged conditional MOVE. Servers without
+  strong ETags cannot safely overwrite an existing document.
+- Android .fhbackup uses the same AES-GCM/PBKDF2 encrypted envelope and
+  common NAS account schema as Windows v1.3.128. Both directions passed
+  ciphertext interoperability tests. Windows-only Google Drive and
+  OneDrive login credentials never enter a shared backup.
+- Platform limits remain: Android is not a Windows WinFsp drive, and
+  Windows Office open-handle/Explorer lock semantics do not apply on Android.
 
 ## Android v0.1.105: Google Drive system picker and verification notice
 
