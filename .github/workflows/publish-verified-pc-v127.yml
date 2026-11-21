@@ -1,0 +1,42 @@
+name: Publish verified FileHub PC v1.3.127 binary
+on:
+  push:
+    branches: [pc/windows]
+
+permissions:
+  contents: write
+
+jobs:
+  publish-verified:
+    if: contains(github.event.head_commit.message, '[PC_BINARY_HANDOFF_20261121]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download publisher-built PC archive and verify original SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE='FileHub-AIO-PC-1.3.127-win-x64.zip'
+          curl --fail --location --retry 4 --retry-delay 5 --connect-timeout 15 --max-time 1000 \
+            'https://ministers-bailey-safely-monthly.trycloudflare.com/FileHub-AIO-PC-1.3.127-win-x64.zip' -o "$FILE"
+          echo '47398A53A9CE3BEA49F40D7BD49F74E9849A609218A4C6EB37992753AAD194A1  FileHub-AIO-PC-1.3.127-win-x64.zip' | sha256sum -c -
+          unzip -Z1 "$FILE" | grep -E '(^|/)FileHubAIO.exe$'
+          unzip -Z1 "$FILE" | grep -E '(^|/)tools/NASMountLockBridge.exe$'
+          unzip -Z1 "$FILE" | grep -E '(^|/)tools/google-oauth-desktop.json$'
+          printf '%s\n' '47398A53A9CE3BEA49F40D7BD49F74E9849A609218A4C6EB37992753AAD194A1  FileHub-AIO-PC-1.3.127-win-x64.zip' > SHA256SUMS
+          echo 'VERIFIED_PUBLISHER_WIN64_BINARY_SHA256_PASS'
+      - name: Publish PC-only release without affecting Android latest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release view pc-v1.3.127 >/dev/null 2>&1 && { echo 'Release already exists: refuse overwrite'; exit 1; } || true
+          gh release create pc-v1.3.127 \
+            'FileHub-AIO-PC-1.3.127-win-x64.zip' 'SHA256SUMS' \
+            --target "$GITHUB_SHA" --latest=false \
+            --title 'FileHub AIO PC v1.3.127' \
+            --notes 'Google Drive direct Chrome OAuth stays available for approved test users while full Google access review continues. Fixed clipped write option and added yellow registration notice; real Google and WebDAV quota display. Install from this full ZIP after safely closing FileHub. SHA256SUMS included. Publisher Desktop OAuth settings are included; no JSON needed for individual users.'
+          gh release view pc-v1.3.127 --json tagName,url,assets
+          echo 'OFFICIAL_PC_V1_3_127_RELEASE_PUBLISHED'
