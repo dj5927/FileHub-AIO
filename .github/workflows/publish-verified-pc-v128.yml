@@ -1,0 +1,49 @@
+name: Publish FileHub PC v1.3.128 (verified source bundle)
+on:
+  push:
+    branches: [pc/windows]
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[PC_BINARY_HANDOFF_20261121_V128]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download, join, inspect and SHA-256 verify publisher ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in {00..09}; do
+            curl --http1.1 --fail --location --retry 6 --retry-all-errors \
+              --retry-delay 3 --connect-timeout 15 --max-time 240 \
+              "https://kate-chester-walker-split.trycloudflare.com/pc-v128-part${i}" -o "pc-v128-part${i}"
+            test -s "pc-v128-part${i}"
+            echo "PART_${i}_VERIFIED_LENGTH"
+          done
+          cat pc-v128-part{00..09} > FileHub-AIO-PC-1.3.128-win-x64.zip
+          echo '6677DC243EF65A325209CAF63EBA2ECAF1E9563B00301DC779CA5590C708A86D  FileHub-AIO-PC-1.3.128-win-x64.zip' | sha256sum -c -
+          unzip -Z1 FileHub-AIO-PC-1.3.128-win-x64.zip | grep -Fx FileHubAIO.exe
+          unzip -Z1 FileHub-AIO-PC-1.3.128-win-x64.zip | grep -Fx tools/NASMountLockBridge.exe
+          unzip -Z1 FileHub-AIO-PC-1.3.128-win-x64.zip | grep -Fx tools/google-oauth-desktop.json
+          unzip -Z1 FileHub-AIO-PC-1.3.128-win-x64.zip | grep -Fx tools/winfsp-2.1.25156.msi
+          printf '%s\n' '6677DC243EF65A325209CAF63EBA2ECAF1E9563B00301DC779CA5590C708A86D  FileHub-AIO-PC-1.3.128-win-x64.zip' > SHA256SUMS
+          echo 'PC_V128_PUBLISHER_FULL_PACKAGE_SHA256_PASS'
+      - name: Publish Windows PC-only GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view pc-v1.3.128 >/dev/null 2>&1; then
+            echo 'PC release already published; refusing overwrite'
+            exit 1
+          fi
+          gh release create pc-v1.3.128 \
+            FileHub-AIO-PC-1.3.128-win-x64.zip SHA256SUMS \
+            --target "$GITHUB_SHA" --latest=false \
+            --title 'FileHub AIO PC v1.3.128' \
+            --notes $'Windows and Android encrypted .fhbackup now interoperate for NAS/WebDAV/FTP/SFTP/MYBOX/TeraBox connections. Desktop Google Drive/OneDrive continue to work and existing PC-only credentials are preserved when importing Android settings. Existing Google Drive, WebDAV and WinFsp engines remain unchanged. The release uses verified v1.3.127 ancillary backends with a rebuilt v1.3.128 main executable. SHA256: 6677DC243EF65A325209CAF63EBA2ECAF1E9563B00301DC779CA5590C708A86D'
+          gh release view pc-v1.3.128 --json tagName,url,assets
+          echo 'PC_V1_3_128_OFFICIAL_GITHUB_RELEASE_SUCCESS'
