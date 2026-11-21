@@ -5252,43 +5252,6 @@ public class MainActivity extends Activity {
         return CloudProvider.isReadOnly(p);
     }
 
-    private void openTeraBoxInSystemBrowser() {
-        // OAuth consent must run in a trusted external browser. Do not attempt
-        // to inspect, scrape or import another app's private cookie store.
-        Uri url = Uri.parse(TeraBoxWebPolicy.LOGIN_URL);
-        Intent chrome = new Intent(Intent.ACTION_VIEW, url);
-        chrome.addCategory(Intent.CATEGORY_BROWSABLE);
-        chrome.setPackage("com.android.chrome");
-        try {
-            startActivity(chrome);
-        } catch (ActivityNotFoundException noChrome) {
-            Intent browser = new Intent(Intent.ACTION_VIEW, url);
-            browser.addCategory(Intent.CATEGORY_BROWSABLE);
-            try {
-                startActivity(Intent.createChooser(browser, "인터넷 브라우저 선택"));
-            } catch (ActivityNotFoundException noBrowser) {
-                showError("Chrome 또는 다른 인터넷 브라우저를 설치해야 합니다.");
-            }
-        }
-    }
-
-    private void showTeraBoxGoogleLoginNotice() {
-        new AlertDialog.Builder(this)
-                .setTitle("Google 계정으로 TeraBox 로그인")
-                .setMessage("Google 보안 정책 때문에 앱 내부 웹 로그인은 차단됩니다. " +
-                        "Chrome에서 Google 계정으로 TeraBox에 로그인할 수 있습니다.\n\n" +
-                        "단, Chrome에서 로그인해도 NAS Mount에 자동 연결되지는 않습니다. " +
-                        "Chrome의 TeraBox 세션(ndus)을 다른 앱이 읽을 수 없기 때문입니다.\n\n" +
-                        "NAS Mount 연결용 세션값은 PC Chrome에서 로그인 후 개발자 도구(F12) " +
-                        "> Application > Cookies > terabox.com > ndus를 확인하고, " +
-                        "안전하게 휴대폰으로 옮겨 'TeraBox 로그인 세션(ndus)' 칸에 붙여넣으세요. " +
-                        "세션값은 비밀번호처럼 보호해야 하며 타인과 공유하면 안 됩니다.")
-                .setNegativeButton("닫기", null)
-                .setPositiveButton("Chrome에서 로그인", (d, w) ->
-                        openTeraBoxInSystemBrowser())
-                .show();
-    }
-
     private void teraboxWebLogin(java.util.function.Consumer<String> onCookie) {
         WebView web = new WebView(this);
         // AlertDialog's embedded WebView is not a native EditText, so make
@@ -5334,7 +5297,9 @@ public class MainActivity extends Activity {
                 if (!request.isForMainFrame()) return false;
                 if (TeraBoxWebPolicy.isGoogleAuthNavigation(
                         request.getUrl().toString())) {
-                    showTeraBoxGoogleLoginNotice();
+                    // Android Chrome cannot return its session cookies to FileHub.
+                    // Never offer a login button that cannot complete linking.
+                    showTeraBoxPcHelp();
                     return true;
                 }
                 if (!TeraBoxWebPolicy.isAllowedWebNavigation(
@@ -5348,10 +5313,10 @@ public class MainActivity extends Activity {
             }
         });
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("TeraBox PC 웹 로그인")
+                .setTitle("TeraBox 웹 로그인 · 세션 가져오기")
                 .setMessage("TeraBox 자체 계정으로 로그인한 후 세션 가져오기를 누르세요. " +
-                        "Google 계정 로그인은 이 창에서 지원되지 않으며, " +
-                        "외부 Chrome 로그인이 필요합니다.")
+                        "Google 계정 인증은 세션을 가져올 수 없어 지원하지 않습니다. " +
+                        "그 경우 PC에서 ndus 값을 확인해 입력하세요.")
                 .setView(web)
                 .setNegativeButton("닫기", null)
                 .setNeutralButton("PC 웹 새로고침", null)
@@ -5466,6 +5431,21 @@ public class MainActivity extends Activity {
             if (index >= 0) ftpCharset.setSelection(index);
         }
         form.addView(ftpCharset, Ui.lp(this, -1, 45));
+        TextView sftpCharsetTitle = Ui.text(this,
+                "SFTP 파일명 문자셋", 12, Ui.MUTED, true);
+        form.addView(sftpCharsetTitle, Ui.lp(this, -1, 25));
+        Spinner sftpCharset = new Spinner(this);
+        sftpCharset.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item,
+                SftpFilenameCharset.OPTIONS));
+        if (original != null) {
+            String chosen = original.sftpCharset;
+            if ("CP949".equalsIgnoreCase(chosen) || "MS949".equalsIgnoreCase(chosen))
+                chosen = "CP949 / EUC-KR (한국어)";
+            int index = Arrays.asList(SftpFilenameCharset.OPTIONS).indexOf(chosen);
+            if (index >= 0) sftpCharset.setSelection(index);
+        }
+        form.addView(sftpCharset, Ui.lp(this, -1, 45));
         CheckBox ftpPasv = new CheckBox(this);
         ftpPasv.setText("FTP 수동 모드(PASV)");
         ftpPasv.setTextSize(14);
@@ -5476,6 +5456,12 @@ public class MainActivity extends Activity {
         readOnly.setTextSize(14);
         readOnly.setChecked(original != null && original.readOnly);
         form.addView(readOnly, Ui.lp(this, -1, 43));
+        CheckBox nativeDavLocks = new CheckBox(this);
+        nativeDavLocks.setText("WebDAV 서버 파일잠금 사용 (지원 시)");
+        nativeDavLocks.setTextSize(14);
+        nativeDavLocks.setChecked(original == null ||
+                original.useNativeWebDavLocks);
+        form.addView(nativeDavLocks, Ui.lp(this, -1, 43));
         ftpTls.setOnItemSelectedListener(
                 new android.widget.AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(android.widget.AdapterView<?> parent,
@@ -5494,9 +5480,6 @@ public class MainActivity extends Activity {
         form.addView(teraboxAuth, Ui.lp(this, -1, 42));
         teraboxAuth.setOnClickListener(v -> teraboxWebLogin(
                 ndus -> password.setText(ndus)));
-        TextView teraboxGoogle = Ui.action(this, "Google 계정 로그인 (Chrome에서 열기)");
-        form.addView(teraboxGoogle, Ui.lp(this, -1, 42));
-        teraboxGoogle.setOnClickListener(v -> showTeraBoxGoogleLoginNotice());
         final android.widget.Button[] pcHelpButton = new android.widget.Button[1];
         if (original != null) {
             int existingType = Arrays.asList(types).indexOf(original.protocol);
@@ -5515,16 +5498,22 @@ public class MainActivity extends Activity {
                 ftpTls.setVisibility(selected == 1 ? View.VISIBLE : View.GONE);
                 ftpCharsetTitle.setVisibility(selected == 1 ? View.VISIBLE : View.GONE);
                 ftpCharset.setVisibility(selected == 1 ? View.VISIBLE : View.GONE);
+                sftpCharsetTitle.setVisibility(selected == 2 ? View.VISIBLE : View.GONE);
+                sftpCharset.setVisibility(selected == 2 ? View.VISIBLE : View.GONE);
                 ftpPasv.setVisibility(selected == 1 ? View.VISIBLE : View.GONE);
+                nativeDavLocks.setVisibility(selected == 3 ? View.VISIBLE : View.GONE);
                 boolean ordinary = selected < 4;
                 host.setVisibility(ordinary ? View.VISIBLE : View.GONE);
                 port.setVisibility(ordinary ? View.VISIBLE : View.GONE);
                 username.setVisibility(ordinary ? View.VISIBLE : View.GONE);
                 password.setVisibility(View.VISIBLE);
                 teraboxAuth.setVisibility(selected == 4 ? View.VISIBLE : View.GONE);
-                teraboxGoogle.setVisibility(selected == 4 ? View.VISIBLE : View.GONE);
-                if (pcHelpButton[0] != null) pcHelpButton[0].setVisibility(
-                        selected == 4 ? View.VISIBLE : View.GONE);
+                if (pcHelpButton[0] != null) {
+                    pcHelpButton[0].setVisibility(
+                            selected == 4 || selected == 5 ? View.VISIBLE : View.GONE);
+                    pcHelpButton[0].setText(selected == 5 ?
+                            "PAT 발급 방법" : "PC에서 가져오는 방법");
+                }
                 root.setVisibility(selected == 5 ? View.GONE : View.VISIBLE);
                 // Each field() inserts a label directly before its EditText.
                 // Hide both to avoid empty label-only gaps in cloud mode.
@@ -5542,8 +5531,8 @@ public class MainActivity extends Activity {
                 if (selected == 4) {
                     password.setHint("ndus 세션값 또는 ndus=...");
                     cloudHint.setText("TeraBox 베타: 폴더·파일 읽기/쓰기 지원. ndus 세션값이 필요합니다. " +
-                            "Chrome의 Google 로그인 세션은 자동으로 복사되지 않습니다. " +
-                            "PC 브라우저에서 ndus를 확인해 직접 붙여넣을 수 있습니다.");
+                            "휴대폰 Chrome 로그인만으로는 ndus를 가져올 수 없습니다. " +
+                            "PC 브라우저에서 확인해 입력하거나 위의 TeraBox 웹 로그인을 이용하세요.");
                 } else if (selected == 5) {
                     password.setHint("mbx_pat_... 개인 액세스 토큰");
                     cloudHint.setText("네이버 MYBOX 공식 Open API PAT가 필요합니다. " +
@@ -5569,9 +5558,15 @@ public class MainActivity extends Activity {
             pcHelpButton[0] = dialog.getButton(AlertDialog.BUTTON_NEUTRAL);
             pcHelpButton[0].setAllCaps(false);
             pcHelpButton[0].setTextSize(11);
-            pcHelpButton[0].setVisibility(protocol.getSelectedItemPosition() == 4 ?
+            int initialProtocol = protocol.getSelectedItemPosition();
+            pcHelpButton[0].setVisibility(initialProtocol == 4 || initialProtocol == 5 ?
                     View.VISIBLE : View.GONE);
-            pcHelpButton[0].setOnClickListener(v -> showTeraBoxPcHelp());
+            pcHelpButton[0].setText(initialProtocol == 5 ?
+                    "PAT 발급 방법" : "PC에서 가져오는 방법");
+            pcHelpButton[0].setOnClickListener(v -> {
+                if (protocol.getSelectedItemPosition() == 5) showMyBoxPatHelp();
+                else showTeraBoxPcHelp();
+            });
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                 try {
                     int selected = protocol.getSelectedItemPosition();
@@ -5613,8 +5608,14 @@ public class MainActivity extends Activity {
                     p.ftpImplicitTls = selected == 1 && ftpTls.getSelectedItemPosition() == 2;
                     p.ftpCharset = selected == 1
                             ? ftpCharset.getSelectedItem().toString() : p.ftpCharset;
+                    if (selected == 2) {
+                        p.sftpCharset = sftpCharset.getSelectedItem().toString();
+                        // Reject unsupported Android code pages before saving.
+                        SftpFilenameCharset.resolve(p.sftpCharset);
+                    }
                     p.ftpPreferPasv = ftpPasv.isChecked();
                     p.readOnly = readOnly.isChecked();
+                    p.useNativeWebDavLocks = selected == 3 && nativeDavLocks.isChecked();
                     store.putRemote(p);
                     dialog.dismiss();
                     showRemoteList();
@@ -5641,6 +5642,21 @@ public class MainActivity extends Activity {
                         "스크린샷이나 채팅에 올리지 말고, 타인과 공유하지 마세요. " +
                         "세션이 만료되면 다시 가져와야 할 수 있습니다.")
                 .setPositiveButton("확인", null).show();
+    }
+
+    private void showMyBoxPatHelp() {
+        // Mirrors the Windows ModernProfileDialog MYBOX PAT instructions.
+        new AlertDialog.Builder(this)
+                .setTitle("네이버 MYBOX PAT 발급 방법")
+                .setMessage("① 네이버 MYBOX에 로그인합니다.\n\n" +
+                        "② 화면 하단의 [설정]을 누릅니다.\n\n" +
+                        "③ [계정 및 개인 액세스 토큰 관리]로 이동합니다.\n\n" +
+                        "④ [토큰 생성]을 눌러 개인 액세스 토큰(PAT)을 발급합니다.\n\n" +
+                        "⑤ 생성된 토큰을 복사해 FileHub AIO의 [PAT] 입력칸에 붙여넣고 저장하세요.\n\n" +
+                        "※ PAT는 비밀번호처럼 중요한 로그인 정보입니다. " +
+                        "스크린샷이나 채팅으로 다른 사람에게 공유하지 마세요.")
+                .setPositiveButton("확인", null)
+                .show();
     }
 
     private void openRemote(Models.RemoteProfile profile, String folder) {

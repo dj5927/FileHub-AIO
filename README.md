@@ -15,7 +15,33 @@ An open-source file manager and media/reading app designed for NAS, WebDAV, SMB,
 
 Get the latest signed APK from [GitHub Releases](https://github.com/dj5927/FileHub-AIO/releases/latest). On app launch, FileHub checks the latest published stable release, showing only a short notification when an update exists. You can download and install it manually from **⋮ → 업데이트 확인 (Check for updates)**. Installation always requires Android's confirmation and may require permission to install APKs from this app.
 
-The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.106 the metadata is versionCode: 107 and FileHub-AIO-v0.1.106.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.107 the metadata is versionCode: 108 and FileHub-AIO-v0.1.107.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+
+## Android v0.1.107: TeraBox sign-in cleanup, MYBOX help, SFTP charsets and WebDAV locks
+
+- Removed the TeraBox **Chrome Google account login** button: Android's
+  Chrome cannot return its TeraBox ndus session to FileHub. TeraBox's own
+  in-app web login and the manual PC ndus instructions remain available.
+- Added a compact **PAT 발급 방법** action to the bottom of the MYBOX
+  connection dialog. Instructions match the Windows FileHub help: sign in
+  to Naver MYBOX, Settings, account/personal access token management,
+  create token, copy into FileHub. Never publish or screenshot the PAT.
+- SFTP now exposes its own filename encoding selector; the chosen charset
+  is passed to SSHJ via setRemoteCharset() for actual filename path packet
+  encoding/decoding. Includes Korean CP949, EUC-KR and other commonly
+  deployed legacy NAS codepages. Unsupported encodings fail explicitly
+  rather than silently reverting to UTF-8.
+- Android WebDAV has a server-native file lock toggle. For existing-file
+  overwrites it sends exclusive RFC 4918 LOCK, validates the Lock-Token,
+  submits the destination-tagged token (and strong ETag when present) in
+  MOVE, and attempts UNLOCK on completion or error. Unsupported LOCK
+  (HTTP 405/501) falls back to existing strong-ETag checks. Lock conflicts
+  fail safely. Without either a strong ETag or a native lock, replacement
+  is blocked. This protects **during file save/upload only**, not for
+  an entire mobile editing session; it is not Windows WinFsp Office locks.
+- Mock WebDAV server unit tests cover lock acquisition, conditional
+  replacement, unlock, unsupported-server fallback, missing ETag and 423
+  contention; SFTP codepage tests cover actual byte encodings.
 
 ## Android v0.1.106: Google Drive removed; NAS features and PC backups aligned
 

@@ -110,4 +110,118 @@ public class WebDavQuotaAndWriteGuardTest {
             assertEquals(0, server.getRequestCount());
         }
     }
+
+    @Test public void serverSideLockProtectsDestinationAndAlwaysUnlocks()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setResponseCode(200)
+                    .addHeader("ETag", "\"v1\""));
+            server.enqueue(new MockResponse().setResponseCode(200)
+                    .addHeader("Lock-Token", "<opaquelocktoken:my-lease>"));
+            server.enqueue(new MockResponse().setResponseCode(201));
+            server.enqueue(new MockResponse().setResponseCode(200)
+                    .addHeader("ETag", "\"v1\""));
+            server.enqueue(new MockResponse().setResponseCode(204));
+            server.enqueue(new MockResponse().setResponseCode(204));
+            Models.RemoteProfile p = profile(server);
+            p.useNativeWebDavLocks = true;
+            RemoteProvider.upload(p, "/", "doc.xlsx",
+                    new ByteArrayInputStream(new byte[]{3}), 1, true);
+            assertEquals("HEAD", server.takeRequest(2, TimeUnit.SECONDS).getMethod());
+            RecordedRequest lock = server.takeRequest(2, TimeUnit.SECONDS);
+            assertEquals("LOCK", lock.getMethod());
+            assertEquals("0", lock.getHeader("Depth"));
+            assertTrue(lock.getBody().readUtf8().contains("<d:exclusive/>"));
+            assertEquals("PUT", server.takeRequest(2, TimeUnit.SECONDS).getMethod());
+            assertEquals("HEAD", server.takeRequest(2, TimeUnit.SECONDS).getMethod());
+            RecordedRequest move = server.takeRequest(2, TimeUnit.SECONDS);
+            assertEquals("MOVE", move.getMethod());
+            assertTrue(move.getHeader("If").contains("<opaquelocktoken:my-lease>"));
+            assertTrue(move.getHeader("If").contains("[\"v1\"]"));
+            RecordedRequest unlock = server.takeRequest(2, TimeUnit.SECONDS);
+            assertEquals("UNLOCK", unlock.getMethod());
+            assertEquals("<opaquelocktoken:my-lease>",
+                    unlock.getHeader("Lock-Token"));
+            assertEquals(6, server.getRequestCount());
+        }
+    }
+
+    @Test public void unsupportedNativeLockFallsBackToStrongEtagOnly()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setResponseCode(200)
+                    .addHeader("ETag", "\"v1\""));
+            server.enqueue(new MockResponse().setResponseCode(405));
+            server.enqueue(new MockResponse().setResponseCode(201));
+            server.enqueue(new MockResponse().setResponseCode(200)
+                    .addHeader("ETag", "\"v1\""));
+            server.enqueue(new MockResponse().setResponseCode(201));
+            Models.RemoteProfile p = profile(server);
+            p.useNativeWebDavLocks = true;
+            RemoteProvider.upload(p, "/", "doc.xlsx",
+                    new ByteArrayInputStream(new byte[]{1}), 1, true);
+            server.takeRequest(2, TimeUnit.SECONDS);
+            assertEquals("LOCK", server.takeRequest(2, TimeUnit.SECONDS).getMethod());
+            server.takeRequest(2, TimeUnit.SECONDS);
+            server.takeRequest(2, TimeUnit.SECONDS);
+            RecordedRequest move = server.takeRequest(2, TimeUnit.SECONDS);
+            assertEquals("MOVE", move.getMethod());
+            assertTrue(move.getHeader("If").contains("[\"v1\"]"));
+            assertFalse(move.getHeader("If").contains("opaquelocktoken"));
+            assertEquals(5, server.getRequestCount());
+        }
+    }
+
+    @Test public void missingEtagCanSaveOnlyWithRealNativeLock() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setResponseCode(200));
+            server.enqueue(new MockResponse().setResponseCode(200)
+                    .addHeader("Lock-Token", "<urn:uuid:my-lease>"));
+            server.enqueue(new MockResponse().setResponseCode(201));
+            server.enqueue(new MockResponse().setResponseCode(200));
+            server.enqueue(new MockResponse().setResponseCode(204));
+            server.enqueue(new MockResponse().setResponseCode(204));
+            Models.RemoteProfile p = profile(server);
+            p.useNativeWebDavLocks = true;
+            RemoteProvider.upload(p, "/", "doc.xlsx",
+                    new ByteArrayInputStream(new byte[]{3}), 1, true);
+            for (int i = 0; i < 4; i++)
+                server.takeRequest(2, TimeUnit.SECONDS);
+            RecordedRequest move = server.takeRequest(2, TimeUnit.SECONDS);
+            assertTrue(move.getHeader("If").contains("<urn:uuid:my-lease>"));
+            assertFalse(move.getHeader("If").contains("["));
+            assertEquals("UNLOCK", server.takeRequest(2, TimeUnit.SECONDS).getMethod());
+        }
+    }
+
+    @Test public void noEtagAndUnsupportedLockNeverDestroysRemote() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setResponseCode(200));
+            server.enqueue(new MockResponse().setResponseCode(501));
+            Models.RemoteProfile p = profile(server);
+            p.useNativeWebDavLocks = true;
+            assertThrows(IOException.class, () -> RemoteProvider.upload(p, "/",
+                    "doc.xlsx", new ByteArrayInputStream(new byte[]{9}), 1, true));
+            assertEquals(2, server.getRequestCount());
+        }
+    }
+
+    @Test public void anotherUsersLockBlocksUploadWithoutUnsafeFallback()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setResponseCode(200)
+                    .addHeader("ETag", "\"v1\""));
+            server.enqueue(new MockResponse().setResponseCode(423));
+            Models.RemoteProfile p = profile(server);
+            p.useNativeWebDavLocks = true;
+            assertThrows(IOException.class, () -> RemoteProvider.upload(p, "/",
+                    "doc.xlsx", new ByteArrayInputStream(new byte[]{9}), 1, true));
+            assertEquals(2, server.getRequestCount());
+        }
+    }
 }

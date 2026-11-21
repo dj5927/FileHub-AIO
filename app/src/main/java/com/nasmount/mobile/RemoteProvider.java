@@ -193,6 +193,9 @@ final class RemoteProvider {
     private static SSHClient ssh(Models.RemoteProfile p) throws Exception {
         SSHClient ssh = new SSHClient();
         ssh.setConnectTimeout(12000);
+        // Apply the selected encoding to actual SSHJ SFTP filename packets.
+        // A saved setting without setRemoteCharset would not affect any file.
+        ssh.setRemoteCharset(SftpFilenameCharset.resolve(p.sftpCharset));
         ssh.addHostKeyVerifier(new HostKeyVerifier() {
             @Override public List<String> findExistingAlgorithms(String host, int serverPort) {
                 return Collections.emptyList();
@@ -274,16 +277,82 @@ final class RemoteProvider {
         }
     }
 
-    /** 404 = no existing destination; present files require a strong ETag. */
-    private static String webdavDestinationEtag(Models.RemoteProfile p, String path)
+    private static final class WebDavRemoteVersion {
+        final boolean exists;
+        final String etag;
+        WebDavRemoteVersion(boolean exists, String etag) {
+            this.exists = exists;
+            this.etag = etag;
+        }
+    }
+
+    /** 404 = absent, existing files require a strong ETag or native lock. */
+    private static WebDavRemoteVersion webdavDestinationState(
+            Models.RemoteProfile p, String path, boolean allowLockInsteadOfEtag)
             throws Exception {
         Request head = webRequest(p, path, false).head().build();
         try (Response response = webClient(p).newCall(head).execute()) {
-            if (response.code() == 404) return null;
+            if (response.code() == 404) return new WebDavRemoteVersion(false, null);
             if (!response.isSuccessful())
                 throw new IOException("WebDAV 변경 충돌 확인 실패 (HTTP " +
                         response.code() + ")");
-            return WebDavWriteGuard.checkedEtag(response.header("ETag"));
+            try {
+                return new WebDavRemoteVersion(true,
+                        WebDavWriteGuard.checkedEtag(response.header("ETag")));
+            } catch (IOException missingTag) {
+                if (!allowLockInsteadOfEtag) throw missingTag;
+                return new WebDavRemoteVersion(true, null);
+            }
+        }
+    }
+
+    /**
+     * Exclusive server-side DAV lock for a single upload/replace operation.
+     * Unsupported LOCK (405/501) falls back to ETag compare-and-swap.
+     * A conflicting 423 lock must never be silently ignored.
+     */
+    private static String acquireWebdavWriteLock(Models.RemoteProfile p, String path)
+            throws Exception {
+        String xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+                "<d:lockinfo xmlns:d=\"DAV:\">" +
+                "<d:lockscope><d:exclusive/></d:lockscope>" +
+                "<d:locktype><d:write/></d:locktype>" +
+                "<d:owner><d:href>FileHub AIO Android</d:href></d:owner>" +
+                "</d:lockinfo>";
+        Request lock = webRequest(p, path, false)
+                .header("Depth", "0")
+                .header("Timeout", "Second-3600")
+                .method("LOCK", RequestBody.create(
+                        xml, MediaType.parse("application/xml; charset=utf-8")))
+                .build();
+        try (Response resp = webClient(p).newCall(lock).execute()) {
+            if (resp.code() == 405 || resp.code() == 501) return null;
+            if (resp.code() == 423)
+                throw new IOException("WebDAV 파일이 다른 사용자에게 잠겨 있습니다.");
+            if (resp.code() != 200 && resp.code() != 201)
+                throw new IOException("WebDAV 서버 파일잠금 실패 (HTTP " +
+                        resp.code() + ")");
+            return WebDavWriteGuard.checkedLockToken(resp.header("Lock-Token"));
+        }
+    }
+
+    private static void releaseWebdavWriteLock(
+            Models.RemoteProfile p, String path, String token) {
+        try {
+            Request unlock = webRequest(p, path, false)
+                    .header("Lock-Token", token)
+                    .method("UNLOCK", null).build();
+            try (Response response = webClient(p).newCall(unlock).execute()) {
+                // A successful MOVE can remove the old destination's lock
+                // as a side effect. 404/409 means it no longer exists.
+                if (!response.isSuccessful() &&
+                        response.code() != 404 && response.code() != 409)
+                    android.util.Log.w("FileHubAIO",
+                            "WebDAV UNLOCK server returned HTTP " + response.code());
+            }
+        } catch (Exception e) {
+            // Do not expose server URL, credentials or lock token in logs.
+            android.util.Log.w("FileHubAIO", "WebDAV UNLOCK request failed");
         }
     }
 
@@ -663,8 +732,17 @@ final class RemoteProvider {
                 // WebDAV MOVE gives a clean final name only once the full
                 // upload succeeded. Overwrite=F avoids deleting an existing
                 // destination without user consent.
-                String expectedTag = overwrite ?
-                        webdavDestinationEtag(p, finalPath) : null;
+                WebDavRemoteVersion before = overwrite ?
+                        webdavDestinationState(p, finalPath,
+                                p.useNativeWebDavLocks) :
+                        new WebDavRemoteVersion(false, null);
+                String lockToken = overwrite && before.exists &&
+                        p.useNativeWebDavLocks ?
+                        acquireWebdavWriteLock(p, finalPath) : null;
+                if (before.exists && before.etag == null && lockToken == null)
+                    throw new IOException("서버가 WebDAV ETag와 파일잠금을 모두 지원하지 " +
+                            "않아 기존 파일을 안전하게 덮어쓸 수 없습니다.");
+                try {
                 RequestBody body = new RequestBody() {
                     @Override public MediaType contentType() {
                         return MediaType.parse("application/octet-stream");
@@ -680,19 +758,24 @@ final class RemoteProvider {
                     if (!resp.isSuccessful()) throw new IOException("WebDAV PUT HTTP " +
                             resp.code());
                 }
-                try {
-                    String latestTag = overwrite ?
-                            webdavDestinationEtag(p, finalPath) : null;
-                    if (expectedTag != null)
-                        WebDavWriteGuard.sameVersion(expectedTag, latestTag);
-                    else if (latestTag != null)
-                        throw new IOException("다른 기기에서 파일을 생성했습니다. 덮어쓰지 않았습니다.");
+                    WebDavRemoteVersion latest = overwrite ?
+                            webdavDestinationState(p, finalPath,
+                                    lockToken != null) :
+                            new WebDavRemoteVersion(false, null);
+                    if (overwrite && before.exists != latest.exists)
+                        throw new IOException("다른 기기에서 파일을 변경했습니다. 덮어쓰지 않았습니다.");
+                    if (before.etag != null)
+                        WebDavWriteGuard.sameVersion(before.etag, latest.etag);
                     Request.Builder moveBuilder = webRequest(p, tempPath, false)
                             .header("Destination", webUrl(p, finalPath, false).toString())
-                            .header("Overwrite", expectedTag == null ? "F" : "T");
-                    if (expectedTag != null)
+                            .header("Overwrite", before.exists ? "T" : "F");
+                    if (lockToken != null)
+                        moveBuilder.header("If", WebDavWriteGuard.taggedIfLocked(
+                                webUrl(p, finalPath, false).toString(),
+                                before.etag, lockToken));
+                    else if (before.etag != null)
                         moveBuilder.header("If", WebDavWriteGuard.taggedIf(
-                                webUrl(p, finalPath, false).toString(), expectedTag));
+                                webUrl(p, finalPath, false).toString(), before.etag));
                     Request move = moveBuilder.method("MOVE",
                             RequestBody.create(new byte[0], null)).build();
                     try (Response resp = webClient(p).newCall(move).execute()) {
@@ -704,6 +787,9 @@ final class RemoteProvider {
                             .delete().build()).execute()) {}
                     catch (Exception ignored) {}
                     throw error;
+                } finally {
+                    if (lockToken != null)
+                        releaseWebdavWriteLock(p, finalPath, lockToken);
                 }
                 return;
             default: throw new IOException("지원하지 않는 저장소");
