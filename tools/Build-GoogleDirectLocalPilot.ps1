@@ -3,24 +3,36 @@
 # Drive content. This is not a stable release or a claim of live I/O success.
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$CredentialFile,
+    [string]$CredentialFile,
     [string]$OutputDirectory,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$OpenListBroker
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$credential = (Resolve-Path -LiteralPath $CredentialFile -ErrorAction Stop).Path
-$raw = [IO.File]::ReadAllBytes($credential)
-if ($raw.Length -eq 0 -or $raw.Length -gt 262144) {
-    throw 'Invalid publisher Google OAuth JSON file size.'
+$raw = $null
+if ($OpenListBroker) {
+    if (-not [string]::IsNullOrWhiteSpace($CredentialFile)) {
+        throw 'The OpenList public browser pilot must NOT contain another OAuth client JSON.'
+    }
 }
-$json = [Text.Encoding]::UTF8.GetString($raw) | ConvertFrom-Json
-if (-not $json.installed -or $json.web -or
-    -not ([string]$json.installed.client_id).EndsWith(
-        '.apps.googleusercontent.com', [StringComparison]::OrdinalIgnoreCase) -or
-    [string]::IsNullOrWhiteSpace([string]$json.installed.client_secret)) {
-    throw 'Only a valid publisher-owned Google Desktop OAuth JSON may be bundled.'
+else {
+    if ([string]::IsNullOrWhiteSpace($CredentialFile)) {
+        throw 'Publisher Google OAuth JSON is required for the private-client build.'
+    }
+    $credential = (Resolve-Path -LiteralPath $CredentialFile -ErrorAction Stop).Path
+    $raw = [IO.File]::ReadAllBytes($credential)
+    if ($raw.Length -eq 0 -or $raw.Length -gt 262144) {
+        throw 'Invalid publisher Google OAuth JSON file size.'
+    }
+    $json = [Text.Encoding]::UTF8.GetString($raw) | ConvertFrom-Json
+    if (-not $json.installed -or $json.web -or
+        -not ([string]$json.installed.client_id).EndsWith(
+            '.apps.googleusercontent.com', [StringComparison]::OrdinalIgnoreCase) -or
+        [string]::IsNullOrWhiteSpace([string]$json.installed.client_secret)) {
+        throw 'Only a valid publisher-owned Google Desktop OAuth JSON may be bundled.'
+    }
 }
 
 # Publisher work often exceeds 1 GB: native x64 app, a second WinFsp bridge,
@@ -80,7 +92,12 @@ try {
     $targetTools = Join-Path $app 'tools'
     New-Item -ItemType Directory -Force -Path $targetTools | Out-Null
     Copy-Item -Path (Join-Path $bridge '*') -Destination $targetTools -Recurse -Force
-    [IO.File]::WriteAllBytes((Join-Path $targetTools 'google-oauth-desktop.json'), $raw)
+    if (-not $OpenListBroker) {
+        [IO.File]::WriteAllBytes((Join-Path $targetTools 'google-oauth-desktop.json'), $raw)
+    }
+    elseif (Test-Path (Join-Path $targetTools 'google-oauth-desktop.json')) {
+        throw 'OpenList browser pilot must not bundle a private Google OAuth client.'
+    }
 
     Write-Host '[FileHub] Extracting exactly five verified ancillary backends'
     # Expand-Archive -Force can fail on this release's duplicate entries.
@@ -127,8 +144,6 @@ try {
     Write-Host '[FileHub] Running packaged binary safety checks'
     $mainExe = Join-Path $app 'FileHubAIO.exe'
     $checks = @(
-        @('--google-publisher-oauth-policy-test',
-          'GOOGLE_PUBLISHER_OAUTH_PACKAGED_POLICY_PASS'),
         @('--google-login-ui-policy-test',
           'GOOGLE_CHROME_ONLY_LOGIN_NO_USER_OAUTH_FIELDS_PASS'),
         @('--google-direct-api-policy-test',
@@ -136,6 +151,10 @@ try {
         @('--google-cold-start-policy-test',
           'RCLONE_THREE_ENGINE_DISTINCT_MANIFEST_POLICY_PASS')
     )
+    if (-not $OpenListBroker) {
+        $checks = @(,@('--google-publisher-oauth-policy-test',
+            'GOOGLE_PUBLISHER_OAUTH_PACKAGED_POLICY_PASS')) + $checks
+    }
     foreach ($check in $checks) {
         $mode = [string]$check[0]
         $required = [string]$check[1]
@@ -161,11 +180,27 @@ try {
     }
     $bridgeExe = Join-Path $targetTools 'NASMountLockBridge.exe'
     if (-not (Test-Path $bridgeExe)) { throw 'Packaged Google WinFsp bridge missing.' }
+    if ($OpenListBroker) {
+        @'
+FileHub AIO Google Drive - OpenList PUBLIC OAUTH BROKER experimental build
+
+Google Drive add -> Chrome Google login -> approve OpenList -> FileHub direct WinFsp mount.
+No Google Cloud JSON, Client ID, rclone Google mount, or token copy/paste.
+The consent screen correctly identifies OpenList (https://api.oplist.org).
+OpenList servers process the OAuth code and refresh token to issue this grant;
+do not approve unless you trust this third-party provider.
+The broker may be temporarily unavailable or subject to rate limits.
+Use disposable test documents first; real Office saves remain to be verified.
+This is a TEST PILOT, NOT a final public/stable release.
+'@ | Set-Content (Join-Path $app 'OPENLIST_PUBLIC_BROKER_PILOT.txt') -Encoding UTF8
+    }
     # The isolated fake-API Windows mount is part of CI; run it locally only
     # on a machine where WinFsp is already installed.
 
     if ($DryRun) {
-        Write-Output 'GOOGLE_PUBLISHER_LOCAL_PILOT_PACKAGE_DRY_RUN_PASS'
+        Write-Output $(if ($OpenListBroker) {
+            'GOOGLE_OPENLIST_NO_JSON_LOCAL_PILOT_PACKAGE_DRY_RUN_PASS'
+        } else { 'GOOGLE_PUBLISHER_LOCAL_PILOT_PACKAGE_DRY_RUN_PASS' })
         return
     }
     if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
@@ -179,8 +214,11 @@ try {
         }
     }
     New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
+    $name = if ($OpenListBroker) { 'FileHub-GoogleOpenList-PILOT-' } else {
+        'FileHub-GoogleDirect-PublisherTest-'
+    }
     $archive = Join-Path $OutputDirectory (
-        'FileHub-GoogleDirect-PublisherTest-' + (Get-Date -Format 'yyyyMMdd-HHmmss') +
+        $name + (Get-Date -Format 'yyyyMMdd-HHmmss') +
         '-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.zip')
     # PowerShell 5's Compress-Archive writes Windows backslashes into ZIP
     # entry names; the resulting paths fail standard slash-based archive
@@ -226,11 +264,17 @@ try {
         $zipReader = [IO.Compression.ZipArchive]::new(
             $reader, [IO.Compression.ZipArchiveMode]::Read)
         try {
-            foreach ($required in @('FileHubAIO.exe',
+            $requiredFiles = @('FileHubAIO.exe',
                 'tools/NASMountLockBridge.exe',
-                'tools/google-oauth-desktop.json',
                 'tools/rclone.exe','tools/rclone-terabox.exe',
-                'tools/winfsp-2.1.25156.msi')) {
+                'tools/winfsp-2.1.25156.msi')
+            if (-not $OpenListBroker) {
+                $requiredFiles += 'tools/google-oauth-desktop.json'
+            }
+            else {
+                $requiredFiles += 'OPENLIST_PUBLIC_BROKER_PILOT.txt'
+            }
+            foreach ($required in $requiredFiles) {
                 $item = $zipReader.GetEntry($required)
                 if (-not $item -or $item.Length -le 0) {
                     throw ('Final ZIP is missing required component: ' + $required)
@@ -244,12 +288,12 @@ try {
     Move-Item -LiteralPath $partialArchive -Destination $archive -ErrorAction Stop
     $sha = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
     $packageVerified = $true
-    Write-Host '[FileHub] Local publisher test ZIP created (NOT a production release):' -ForegroundColor Green
+    Write-Host '[FileHub] Experimental Windows test ZIP created (NOT a stable release):' -ForegroundColor Green
     Write-Output $archive
     Write-Output ('SHA256=' + $sha)
 }
 finally {
-    [Array]::Clear($raw, 0, $raw.Length)
+    if ($null -ne $raw) { [Array]::Clear($raw, 0, $raw.Length) }
     if ($partialArchive -and (Test-Path -LiteralPath $partialArchive)) {
         Remove-Item -LiteralPath $partialArchive -Force -ErrorAction SilentlyContinue
     }

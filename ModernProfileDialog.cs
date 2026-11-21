@@ -385,7 +385,7 @@ internal sealed class ModernProfileDialog : Form
         CancelButton = cancel;
 
         modeIndex = profile.Protocol is "GoogleDrive" or "TeraBox" or "OneDrive" or "MyBox" ?
-            (!existing && profile.Protocol is ("TeraBox" or "MyBox") ||
+            (!existing && profile.Protocol is ("GoogleDrive" or "TeraBox" or "MyBox") ||
              profile.AllowUnprotectedWrites ? 0 : 1) :
             profile.OfficeReadTuning && profile.Protocol == "WebDAV" ? 2 :
             profile.UseLockBridge || profile.AllowUnprotectedWrites ? 0 : 1;

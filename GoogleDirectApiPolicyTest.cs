@@ -344,6 +344,28 @@ internal static class GoogleDirectApiPolicyTest
         }
     }
 
+    private sealed class OpenListRefreshFakeServer : HttpMessageHandler
+    {
+        internal int Requests;
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.Method != HttpMethod.Get ||
+                request.RequestUri?.Host != "127.0.0.1" ||
+                !request.RequestUri.Query.Contains("server_use=true") ||
+                !request.RequestUri.Query.Contains("driver_txt=googleui_go") ||
+                !request.RequestUri.Query.Contains("refresh_ui=TEST_REFRESH"))
+                throw new IOException("OpenList test refresh request is not scoped to its provider");
+            Interlocked.Increment(ref Requests);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"access_token":"OPENLIST_REFRESHED","refresh_token":"TEST_REFRESH"}""",
+                    Encoding.UTF8, "application/json")
+            });
+        }
+    }
+
     private sealed class InvalidOAuthRefreshServer : HttpMessageHandler
     {
         internal int Mode;
@@ -372,6 +394,23 @@ internal static class GoogleDirectApiPolicyTest
     internal static async Task RunAsync()
     {
         await GoogleDirectBrowserOAuthPolicyLab.RunAsync();
+        await GoogleOpenListChromeAuthLab.RunAsync();
+        using (var brokerServer = new OpenListRefreshFakeServer())
+        using (var brokerHttp = new HttpClient(brokerServer))
+        {
+            var brokerSession = new GoogleDirectOAuthSession(
+                brokerHttp, "openlist-public-broker", "", "TEST_REFRESH", "",
+                DateTimeOffset.MinValue,
+                new Uri("http://127.0.0.1:18222/googleui/renewapi"),
+                openListBroker: true);
+            var tokens = await Task.WhenAll(Enumerable.Range(0, 4)
+                .Select(_ => brokerSession.AccessTokenAsync()));
+            if (brokerServer.Requests != 1 ||
+                tokens.Any(value => value != "OPENLIST_REFRESHED"))
+                throw new InvalidOperationException(
+                    "Public OpenList approved grant failed to renew once without rclone");
+        }
+        Console.WriteLine("GOOGLE_OPENLIST_EXPLICIT_BROKER_REFRESH_NO_RCLONE_PASS");
         using (var repeated = new RepeatedPagesFakeServer())
         using (var pagedHttp = new HttpClient(repeated))
         {

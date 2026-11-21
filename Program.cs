@@ -446,6 +446,17 @@ internal static class Program
             }
             return;
         }
+        if (args.Contains("--google-openlist-chrome-lab-test",
+                StringComparer.OrdinalIgnoreCase))
+        {
+            try { GoogleOpenListChromeAuthLab.RunAsync().GetAwaiter().GetResult(); }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("GOOGLE_OPENLIST_CHROME_LAB_FAILED " + ex.GetType().Name);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
         if (args.Contains("--google-direct-api-policy-test",
                 StringComparer.OrdinalIgnoreCase))
         {
@@ -525,9 +536,9 @@ internal static class Program
                         c.Text.Contains("Client Secret", StringComparison.OrdinalIgnoreCase) ||
                         c.Text.Contains("JSON 가져오기", StringComparison.OrdinalIgnoreCase) ||
                         c.Text.Contains("발급 안내", StringComparison.OrdinalIgnoreCase)) ||
-                    form.PublisherConfigured != form.LoginEnabled)
+                    !form.LoginEnabled)
                     throw new InvalidOperationException(
-                        "Google login exposed developer credentials or enabled without packaged OAuth");
+                        "Google browser-only login is missing or exposes developer credentials");
                 Console.WriteLine("GOOGLE_CHROME_ONLY_LOGIN_NO_USER_OAUTH_FIELDS_PASS");
             }
             catch (Exception ex)

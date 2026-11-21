@@ -62,6 +62,8 @@ jobs:
               $out -notmatch 'GOOGLE_NATIVE_OAUTH_REFRESH_INVALID_RESPONSE_FAIL_CLOSED_PASS' -or
               $out -notmatch 'GOOGLE_NATIVE_IDLE_PREEMPTIVE_OAUTH_REFRESH_NO_SECOND_LOGIN_PASS' -or
               $out -notmatch 'GOOGLE_NATIVE_IDLE_OAUTH_REFRESH_TRANSIENT_RETRY_PASS' -or
+              $out -notmatch 'GOOGLE_OPENLIST_CHROME_SINGLE_LOGIN_NO_JSON_LOOPBACK_PASS' -or
+              $out -notmatch 'GOOGLE_OPENLIST_EXPLICIT_BROKER_REFRESH_NO_RCLONE_PASS' -or
               $out -notmatch 'GOOGLE_NATIVE_REPEATED_PAGINATION_LOOP_PREVENTION_PASS' -or
               $out -notmatch 'GOOGLE_NATIVE_BOUNDED_RANGE_READ_NO_FULL_FILE_BUFFER_PASS' -or
               $out -notmatch 'GOOGLE_DIRECT_CRASH_JOURNAL_EXPORT_NO_OVERWRITE_PASS' -or
@@ -271,3 +273,25 @@ jobs:
           path: FileHubAIO-GoogleDirect-EXPERIMENTAL.zip
           if-no-files-found: error
           retention-days: 7
+
+      - name: Package Chrome-only OpenList public broker pilot (no JSON)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & 'tools/Build-GoogleDirectLocalPilot.ps1' -OpenListBroker `
+            -OutputDirectory $env:GITHUB_WORKSPACE
+          $zips = @(Get-ChildItem -LiteralPath $env:GITHUB_WORKSPACE `
+            -Filter 'FileHub-GoogleOpenList-PILOT-*.zip' -File)
+          if ($zips.Count -ne 1 -or $zips[0].Length -lt 20MB) {
+            throw 'OpenList Chrome public broker pilot ZIP was not created'
+          }
+          Write-Output ('GOOGLE_OPENLIST_CHROME_PUBLIC_BROKER_PILOT_ZIP_PASS SHA256=' + `
+            (Get-FileHash $zips[0].FullName -Algorithm SHA256).Hash)
+
+      - name: Upload Chrome-only public broker TEST pilot
+        uses: actions/upload-artifact@v4
+        with:
+          name: FileHubAIO-PC-GoogleOpenList-PILOT
+          path: FileHub-GoogleOpenList-PILOT-*.zip
+          if-no-files-found: error
+          retention-days: 14

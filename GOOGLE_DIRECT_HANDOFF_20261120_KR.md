@@ -388,3 +388,51 @@ read/write, disconnect/reconnect and Office save tests all pass.
   repeatedly; the verified result is exactly two GET requests followed by
   a categorized I/O error, never an apparently empty directory. Marker:
   `GOOGLE_NATIVE_REPEATED_PAGINATION_LOOP_PREVENTION_PASS`.
+
+## 2026-11-21 Chrome-only OpenList public broker EXPERIMENTAL PILOT
+
+- The user explicitly wants **Google Drive add -> Chrome Google account
+  selection/consent -> automatic WinFsp drive**, without obtaining any JSON,
+  configuring Cloud Console, copying tokens or using rclone for Google.
+- Official OpenList public OAuth helper supports broker-issued Google
+  consent without a separate user-created OAuth client. URL:
+  https://api.oplist.org/googleui/requests?server_use=true&driver_txt=googleui_go
+  It uses its own (OpenList-branded) Google OAuth app and sends the
+  authorization code and refresh token through the **third-party service**.
+  This distinction MUST be visible and clearly disclosed to the tester;
+  don't claim this is FileHub's own Google OAuth identity or hide the broker.
+- Added `GoogleOpenListChromeAuth.cs`: Chrome isolated temporary profile,
+  random localhost DevTools port, strict HTTPS Google consent origin/scope
+  checks, required callback state match, one-time callback fragment parsing,
+  no manual token copy/paste. The disposable Chrome profile is closed after
+  the grant. Redirect URL/token material is NEVER logged.
+- Added fully isolated **real Chrome** test against a local-only fake OAuth
+  callback server: it launches Chrome in headless mode, follows the fake
+  approval redirects, verifies callback state, retrieves the token fragment
+  through localhost debugging, then terminates Chrome. Marker:
+  `GOOGLE_OPENLIST_CHROME_SINGLE_LOGIN_NO_JSON_LOOPBACK_PASS`.
+- `GoogleDirectCredentialStore` now records an optional `Provider=OpenList`
+  with Windows DPAPI; `GoogleDirectOAuthSession` renews broker-issued grants
+  **only through the provider that issued them**, never by impersonating
+  FileHub's OAuth app. The documented public renew endpoint requires a GET
+  query (the provider can observe refresh tokens); keep that privacy warning
+  visible. Mock renew test marker:
+  `GOOGLE_OPENLIST_EXPLICIT_BROKER_REFRESH_NO_RCLONE_PASS`.
+- `GoogleDriveLoginDialog` now offers the documented OpenList browser flow
+  if FileHub publisher OAuth is not bundled; text clearly says **OpenList**
+  is the authorizing service. Chrome approval is validated by an actual
+  read-only Google Drive About request before saving to DPAPI. No rclone
+  process or Google JSON is used for this native Google WinFsp path.
+- `tools/Build-GoogleDirectLocalPilot.ps1 -OpenListBroker` builds an actual
+  no-JSON Windows ZIP with the Google direct WinFsp engine and inherited
+  pinned ancillary backends. It includes an explicit public-broker pilot
+  notice and rejects a bundled private OAuth JSON. First live local ZIP:
+  SHA256 3845932FEDB972C4320ACBDBCF9F1C66116AD59C4A4155FD4AB2A8B3B867EEA1
+  (~157 MiB), 6 mandatory entries verified. CI uploads a separate TEST
+  artifact. New Google profiles start in folder/new-file write mode; existing
+  Office file updates remain guarded until verified on a real account.
+- All current tests use synthetic tokens or broker authorization URL
+  discovery ONLY. This is a **testable experimental build** once delivered,
+  not a production-complete or real-user-tested Google connection. The
+  tester must independently approve OpenList in Chrome and try disposable
+  folder/file operations before trusting important documents.

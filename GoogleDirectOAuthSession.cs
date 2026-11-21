@@ -16,6 +16,7 @@ internal sealed class GoogleDirectOAuthSession
     private readonly Uri _tokenEndpoint;
     private readonly string _clientId;
     private readonly string _clientSecret;
+    private readonly bool _openListBroker;
     private string _refreshToken;
     private string _accessToken;
     private DateTimeOffset _expiry;
@@ -25,7 +26,8 @@ internal sealed class GoogleDirectOAuthSession
     internal GoogleDirectOAuthSession(HttpClient http, string clientId,
         string clientSecret, string refreshToken, string accessToken,
         DateTimeOffset expiry, Uri? tokenEndpoint = null,
-        Action<string, string, DateTimeOffset>? persist = null)
+        Action<string, string, DateTimeOffset>? persist = null,
+        bool openListBroker = false)
     {
         if (string.IsNullOrWhiteSpace(clientId) ||
             string.IsNullOrWhiteSpace(refreshToken))
@@ -34,11 +36,13 @@ internal sealed class GoogleDirectOAuthSession
         _http = http;
         _clientId = clientId;
         _clientSecret = clientSecret;
+        _openListBroker = openListBroker;
         _refreshToken = refreshToken;
         _accessToken = accessToken;
         _expiry = expiry;
-        _tokenEndpoint = tokenEndpoint ??
-            new Uri("https://oauth2.googleapis.com/token");
+        _tokenEndpoint = tokenEndpoint ?? new Uri(openListBroker ?
+            "https://api.oplist.org/googleui/renewapi" :
+            "https://oauth2.googleapis.com/token");
         _persist = persist;
         if (_tokenEndpoint.Scheme != Uri.UriSchemeHttps &&
             !(_tokenEndpoint.IsLoopback && _tokenEndpoint.Scheme == Uri.UriSchemeHttp))
@@ -53,11 +57,13 @@ internal sealed class GoogleDirectOAuthSession
         if (GoogleDirectCredentialStore.HasNative(profile))
         {
             var native = GoogleDirectCredentialStore.Load(profile);
+            bool openList = native.Provider == "OpenList";
             return new GoogleDirectOAuthSession(http, native.ClientId,
                 native.ClientSecret, native.RefreshToken, native.AccessToken,
                 native.Expiry, persist: (access, refresh, expiration) =>
                     GoogleDirectCredentialStore.SaveRefresh(
-                        profile, access, refresh, expiration));
+                        profile, access, refresh, expiration),
+                openListBroker: openList);
         }
         // Never silently borrow any rclone .conf or its shared OAuth client.
         // A browser grant issued to the FileHub Desktop OAuth client is
@@ -80,17 +86,23 @@ internal sealed class GoogleDirectOAuthSession
             if (!string.IsNullOrWhiteSpace(_accessToken) &&
                 DateTimeOffset.UtcNow + TimeSpan.FromMinutes(2) < _expiry)
                 return _accessToken;
-            using var form = new FormUrlEncodedContent(new Dictionary<string, string>
-            {
-                ["client_id"] = _clientId,
-                ["client_secret"] = _clientSecret,
-                ["refresh_token"] = _refreshToken,
-                ["grant_type"] = "refresh_token"
-            });
-            using var request = new HttpRequestMessage(HttpMethod.Post, _tokenEndpoint)
-            {
-                Content = form
-            };
+            // The OpenList public OAuth service issued this grant, so only
+            // that same provider can renew it. Do not impersonate FileHub or
+            // attempt to exchange OpenList tokens using another OAuth app.
+            // The public broker's documented refresh API uses a GET query.
+            var refreshUri = _openListBroker ? new Uri(_tokenEndpoint,
+                "?server_use=true&driver_txt=googleui_go&refresh_ui=" +
+                Uri.EscapeDataString(_refreshToken)) : _tokenEndpoint;
+            using var request = new HttpRequestMessage(
+                _openListBroker ? HttpMethod.Get : HttpMethod.Post, refreshUri);
+            if (!_openListBroker)
+                request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+                {
+                    ["client_id"] = _clientId,
+                    ["client_secret"] = _clientSecret,
+                    ["refresh_token"] = _refreshToken,
+                    ["grant_type"] = "refresh_token"
+                });
             // Token renewal runs on the Explorer path when a saved grant
             // expires. Do not read unbounded proxy/error response bodies.
             using var response = await _http.SendAsync(request,
@@ -117,6 +129,7 @@ internal sealed class GoogleDirectOAuthSession
                 throw new IOException("Google OAuth returned an unexpectedly short expiry");
             DateTimeOffset expires = DateTimeOffset.UtcNow.AddSeconds(seconds);
             string nextRefresh = body.TryGetProperty("refresh_token", out var rotated) &&
+                rotated.ValueKind == JsonValueKind.String &&
                 !string.IsNullOrWhiteSpace(rotated.GetString())
                     ? rotated.GetString()! : _refreshToken;
             if (nextRefresh != _refreshToken && _persist is null)

@@ -205,6 +205,29 @@ internal static class GoogleDriveAuth
             profile.Id + " rcloneAuth=false previousPreserved=true");
     }
 
+    // Optional OpenList public broker flow: user approves OpenList in Chrome,
+    // FileHub verifies a Google Drive read before saving the grant to DPAPI.
+    // No extra token copy/paste, JSON picker or rclone process is involved.
+    internal static async Task SaveOpenListAuthorizationAsync(
+        NasProfile profile, string jsonToken, CancellationToken cancellationToken)
+    {
+        using var json = JsonDocument.Parse(jsonToken);
+        string? access = json.RootElement.GetProperty("access_token").GetString();
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            "https://www.googleapis.com/drive/v3/about?fields=user(permissionId)");
+        request.Headers.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", access);
+        using var response = await http.SendAsync(request, cancellationToken)
+            .ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            throw new IOException("OpenList Google consent did not pass Drive verification HTTP " +
+                (int)response.StatusCode);
+        GoogleDirectCredentialStore.SaveOpenListGrant(profile, jsonToken);
+        AppStore.Log("GOOGLE_OPENLIST_BROWSER_DPAPI_AUTH_SAVED profile=" +
+            profile.Id + " directApi=true rcloneAuth=false");
+    }
+
     // A token acquired for a new OAuth app must be tested before replacing
     // the user's existing working account. Validate a disposable rclone
     // configuration and atomically save it with a rollback backup.
@@ -457,6 +480,7 @@ internal sealed class GoogleDriveLoginDialog : Form
     private readonly CancellationTokenSource cts = new();
     private readonly string clientId = "";
     private readonly string clientSecret = "";
+    private readonly bool useOpenListBroker;
     private bool busy;
 
     internal GoogleDriveLoginDialog(NasProfile p)
@@ -519,14 +543,26 @@ internal sealed class GoogleDriveLoginDialog : Form
                 // Existing native grants can reauthorize with the same app ID
                 // without an end-user JSON picker.
                 var saved = GoogleDirectCredentialStore.Load(profile);
-                clientId = saved.ClientId;
-                clientSecret = saved.ClientSecret;
-                state.Text = "기존 FileHub 인증으로 Chrome 계정 선택을 진행합니다.";
+                if (saved.Provider == "OpenList")
+                {
+                    useOpenListBroker = true;
+                    hint.Text = "Chrome에서 Google 계정을 승인합니다. 인증 제공자는" +
+                        "\nOpenList 공개 서비스입니다. FileHub는 토큰을 별도 보호합니다.";
+                    state.Text = "OpenList 인증 방식입니다. 추가 입력은 필요 없습니다.";
+                }
+                else
+                {
+                    clientId = saved.ClientId;
+                    clientSecret = saved.ClientSecret;
+                    state.Text = "기존 FileHub 인증으로 Chrome 계정 선택을 진행합니다.";
+                }
             }
             else
             {
-                state.Text = "이 배포판에 Google 로그인 설정이 빠져 있습니다." +
-                    "\n프로그램 배포 구성 오류이며 사용자 설정으로 해결할 문제가 아닙니다.";
+                useOpenListBroker = true;
+                hint.Text = "Chrome에서 Google 계정을 승인합니다. 인증 제공자는" +
+                    "\nOpenList 공개 서비스입니다. FileHub는 토큰을 별도 보호합니다.";
+                state.Text = "OpenList 인증 방식입니다. 추가 입력은 필요 없습니다.";
             }
         }
         catch (Exception ex) when (ex is IOException or ArgumentException)
@@ -561,8 +597,8 @@ internal sealed class GoogleDriveLoginDialog : Form
 
     private void RefreshLoginAvailability() =>
         login.Enabled = !busy &&
-            !string.IsNullOrWhiteSpace(clientId) &&
-            !string.IsNullOrWhiteSpace(clientSecret);
+            (useOpenListBroker || (!string.IsNullOrWhiteSpace(clientId) &&
+                                   !string.IsNullOrWhiteSpace(clientSecret)));
 
     private async Task BeginAuthAsync()
     {
@@ -611,11 +647,21 @@ internal sealed class GoogleDriveLoginDialog : Form
             // Browser success must mean the user's permission has actually
             // been verified against Drive AND stored in FileHub's encrypted
             // token store. Do not show a false 200 OK before persistence.
-            _ = await GoogleDirectBrowserAuth.AuthorizeAsync(
-                clientId, clientSecret, update, browser, cts.Token,
-                finalizeGrant: (token, cancel) =>
-                    GoogleDriveAuth.SaveNativeBrowserAuthorizationAsync(
-                        profile, token, clientId, clientSecret, cancel));
+            if (useOpenListBroker)
+            {
+                string token = await GoogleOpenListChromeAuth.AuthorizeAsync(
+                    update, cts.Token);
+                await GoogleDriveAuth.SaveOpenListAuthorizationAsync(
+                    profile, token, cts.Token);
+            }
+            else
+            {
+                _ = await GoogleDirectBrowserAuth.AuthorizeAsync(
+                    clientId, clientSecret, update, browser, cts.Token,
+                    finalizeGrant: (token, cancel) =>
+                        GoogleDriveAuth.SaveNativeBrowserAuthorizationAsync(
+                            profile, token, clientId, clientSecret, cancel));
+            }
             busy = false;
             DialogResult = DialogResult.OK;
             Close();

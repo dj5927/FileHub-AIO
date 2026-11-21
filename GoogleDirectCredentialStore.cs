@@ -13,7 +13,8 @@ namespace NASMount;
 internal static class GoogleDirectCredentialStore
 {
     internal sealed record Token(string ClientId, string ClientSecret,
-        string RefreshToken, string AccessToken, DateTimeOffset Expiry);
+        string RefreshToken, string AccessToken, DateTimeOffset Expiry,
+        string? Provider = null);
 
     private static string StoreDirectory =>
         Path.Combine(AppStore.DirectoryPath, "google-direct-auth");
@@ -111,6 +112,22 @@ internal static class GoogleDirectCredentialStore
             preservePreviousAuthorization: true);
     }
 
+    // Explicit, user-approved OpenList public broker grant. The Google
+    // consent page identifies OpenList, not a disguised FileHub OAuth app.
+    internal static void SaveOpenListGrant(NasProfile profile, string jsonToken)
+    {
+        using var json = JsonDocument.Parse(jsonToken);
+        var root = json.RootElement;
+        string access = root.GetProperty("access_token").GetString() ?? "";
+        string refresh = root.GetProperty("refresh_token").GetString() ?? "";
+        if (string.IsNullOrWhiteSpace(access) ||
+            string.IsNullOrWhiteSpace(refresh))
+            throw new InvalidDataException("OpenList Google authorization missing offline grant");
+        Save(profile, new Token("openlist-public-broker", "", refresh, access,
+            DateTimeOffset.UtcNow.AddMinutes(55), "OpenList"),
+            preservePreviousAuthorization: true);
+    }
+
     internal static void SaveRefresh(NasProfile profile, string access,
         string refresh, DateTimeOffset expiry)
     {
@@ -167,6 +184,10 @@ internal static class GoogleDirectCredentialStore
             RestoreBackup(profile);
             if (Load(profile).AccessToken != "OFFLINE_TEST")
                 throw new InvalidOperationException("DPAPI backup restore failed");
+            SaveOpenListGrant(profile, token);
+            if (Load(profile).Provider != "OpenList" ||
+                Load(profile).RefreshToken != "OFFLINE_REFRESH")
+                throw new InvalidOperationException("OpenList grant DPAPI protection failed");
             Console.WriteLine("GOOGLE_DIRECT_DPAPI_OAUTH_ROUNDTRIP_AND_BACKUP_PASS");
         }
         finally
