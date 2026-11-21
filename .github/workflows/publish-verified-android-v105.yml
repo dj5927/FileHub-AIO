@@ -1,0 +1,38 @@
+name: Publish verified signed FileHub Android v0.1.105
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  publish-signed:
+    if: contains(github.event.head_commit.message, '[ANDROID_BINARY_HANDOFF_20261121]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Fetch signed Android APK and verify original publisher SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 4 --retry-delay 5 --connect-timeout 15 --max-time 850 \
+            'https://ministers-bailey-safely-monthly.trycloudflare.com/FileHub-AIO-v0.1.105.apk' \
+            -o FileHub-AIO-v0.1.105.apk
+          echo '74AA110A7EA2A451374335BD39E41CCFD4333D96557A2269DEC2A67D1494C740  FileHub-AIO-v0.1.105.apk' | sha256sum -c -
+          unzip -Z1 FileHub-AIO-v0.1.105.apk | grep -Fx AndroidManifest.xml
+          echo 'VERIFIED_OFFICIAL_SIGNED_ANDROID_V01105_SHA256_PASS'
+      - name: Publish Android OTA release preserving original APK signing identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release view v0.1.105 >/dev/null 2>&1 && { echo 'Android release already exists: refuse overwrite'; exit 1; } || true
+          gh release create v0.1.105 FileHub-AIO-v0.1.105.apk \
+            --target "$GITHUB_SHA" --latest \
+            --title 'FileHub AIO Android v0.1.105' \
+            --notes $'versionCode: 106\n\n- Google Drive Android folder picker through Android system DocumentsProvider (limited to user-selected folders; only when device supports Google Drive folder selection).\n- Yellow warning: Google Drive full-access API verification under review; contact the administrator to request testing access.\n- Google full-drive PC OAuth is not embedded in Android.\n- Existing WebDAV/NAS/MYBOX/TeraBox unchanged.\n- Signed with the same publisher certificate as official Android v0.1.104 for in-place OTA updates.\n- SHA256: 74AA110A7EA2A451374335BD39E41CCFD4333D96557A2269DEC2A67D1494C740'
+          gh release view v0.1.105 --json tagName,url,assets
+          echo 'OFFICIAL_ANDROID_V01105_RELEASE_PUBLISHED'
