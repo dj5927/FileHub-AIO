@@ -13,6 +13,10 @@ namespace NASMount;
 internal static class ProfileBackup
 {
     private static readonly byte[] Magic = Encoding.ASCII.GetBytes("FH-AIO-PC-V1");
+    // Android SettingsBackupCodec uses the identical header, PBKDF2 and AAD.
+    private static readonly byte[] PortableMagic = Encoding.ASCII.GetBytes("FHBKUP01");
+    private const int PortableIterations = 210_000;
+    private const int MaxPortableArchiveBytes = 4 * 1024 * 1024 + 128;
     private static readonly byte[] Context = Encoding.UTF8.GetBytes("FileHub-AIO-PC-settings-v1");
     private const int SaltSize = 16;
     private const int NonceSize = 12;
@@ -110,6 +114,8 @@ internal static class ProfileBackup
 
     internal static Snapshot Unpack(byte[] archive, string password)
     {
+        if (archive.AsSpan().StartsWith(PortableMagic))
+            return PortableProfileBackup.Unpack(archive, password);
         int headerSize = Magic.Length + SaltSize + NonceSize + TagSize;
         if (archive.Length <= headerSize || archive.Length > MaxArchiveBytes ||
             !archive.AsSpan(0, Math.Min(Magic.Length, archive.Length))
@@ -221,7 +227,8 @@ internal static class ProfileBackup
     /// Config is published last; existing local config is backed up first.
     /// Old passwords/OAuth are restored if the transaction fails.
     /// </summary>
-    internal static string Restore(Snapshot snapshot, bool windowsAutostart)
+    internal static string Restore(Snapshot snapshot, bool windowsAutostart,
+        IReadOnlySet<Guid>? preservedDeviceCloudIds = null)
     {
         Validate(snapshot);
         var undo = new Stack<Action>();
@@ -257,7 +264,9 @@ internal static class ProfileBackup
                     GoogleDriveAuth.ImportAuthorizedConfig(p, google);
                     undo.Push(() => RestorePreviousOAuth(path, previous));
                 }
-                else if (p.Protocol == "GoogleDrive") p.AutoConnect = false;
+                else if (p.Protocol == "GoogleDrive" &&
+                         preservedDeviceCloudIds?.Contains(p.Id) != true)
+                    p.AutoConnect = false;
                 if (p.Protocol == "OneDrive" &&
                     snapshot.OneDriveOAuth.TryGetValue(p.Id, out string? oneDrive))
                 {
@@ -266,7 +275,9 @@ internal static class ProfileBackup
                     OneDriveAuth.ImportAuthorizedConfig(p, oneDrive);
                     undo.Push(() => RestorePreviousOAuth(path, previous));
                 }
-                else if (p.Protocol == "OneDrive") p.AutoConnect = false;
+                else if (p.Protocol == "OneDrive" &&
+                         preservedDeviceCloudIds?.Contains(p.Id) != true)
+                    p.AutoConnect = false;
             }
             if (File.Exists(AppStore.ConfigPath))
             {

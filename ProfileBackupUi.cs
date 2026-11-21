@@ -22,21 +22,27 @@ internal sealed partial class MainForm
         try
         {
             var data = ProfileBackup.Capture(cfg, out var warnings);
-            var encrypted = ProfileBackup.Pack(data, password);
+            if (cfg.Profiles.Any(p => p.Protocol is "GoogleDrive" or "OneDrive"))
+                warnings.Add("Google Drive와 OneDrive는 PC 전용이므로 공통 백업에서 제외됩니다. 기존 PC 인증은 이 PC에 유지됩니다.");
+            // Android-compatible envelope and JSON; PC-only OAuth is
+            // intentionally not exported as an Android credential.
+            var encrypted = PortableProfileBackup.Pack(data, password);
             ProfileBackup.WriteArchive(save.FileName, encrypted);
-            AppStore.Log("PROFILE_EXPORT_OK profiles=" + data.Config.Profiles.Count +
-                " secretCount=" + data.Passwords.Count +
-                " googleAuthCount=" + data.GoogleOAuth.Count +
-                " oneDriveAuthCount=" + data.OneDriveOAuth.Count);
+            int sharedCount = data.Config.Profiles.Count(p =>
+                p.Protocol is not ("GoogleDrive" or "OneDrive"));
+            int sharedPasswords = data.Config.Profiles.Count(p =>
+                p.Protocol is not ("GoogleDrive" or "OneDrive") &&
+                data.Passwords.ContainsKey(p.Id));
+            AppStore.Log("PORTABLE_PROFILE_EXPORT_OK profiles=" + sharedCount +
+                " sharedPasswords=" + sharedPasswords);
             string warning = warnings.Count == 0 ? "" :
-                "\n\n일부 연결은 인증 정보를 복사하지 못했습니다:\n· " +
+                "\n\n공통 백업 안내:\n· " +
                 string.Join("\n· ", warnings.Take(8)) +
                 (warnings.Count > 8 ? "\n(이외 " + (warnings.Count - 8) + "개)" : "");
             MessageBox.Show(this,
-                "설정 내보내기 완료\n\n연결 " + data.Config.Profiles.Count +
-                "개, 저장된 비밀번호 " + data.Passwords.Count +
-                "개, 클라우드 인증 " + (data.GoogleOAuth.Count + data.OneDriveOAuth.Count) +
-                "개를 백업했습니다.\n\n" +
+                "PC·Android 공통 설정 내보내기 완료\n\n연결 " + sharedCount +
+                "개, 저장된 비밀번호 " + sharedPasswords +
+                "개를 백업했습니다.\n\nGoogle Drive와 OneDrive 인증은 포함되지 않습니다.\n\n" +
                 "백업 파일에는 서버 주소와 로그인 정보가 암호화되어 있습니다.\n" +
                 "비밀번호를 잊으면 복구할 수 없으니 안전하게 보관하세요." + warning,
                 "FileHub AIO", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -79,14 +85,21 @@ internal sealed partial class MainForm
             var file = new FileInfo(open.FileName);
             if (file.Length > 12L * 1024 * 1024)
                 throw new InvalidDataException("설정 백업 파일 크기가 너무 큽니다.");
-            var snapshot = ProfileBackup.Unpack(File.ReadAllBytes(open.FileName), password);
+            byte[] archive = File.ReadAllBytes(open.FileName);
+            bool isPortable = PortableProfileBackup.IsPortable(archive);
+            var snapshot = ProfileBackup.Unpack(archive, password);
+            // Phone backups exclude Google and OneDrive by design. Retain
+            // this PC's existing cloud profiles and DPAPI OAuth credentials.
+            IReadOnlySet<Guid>? preservedCloud = isPortable ?
+                PortableProfileBackup.PreserveWindowsCloudProfiles(snapshot, cfg) : null;
             int secretCount = snapshot.Passwords.Count;
             int oauthCount = snapshot.GoogleOAuth.Count + snapshot.OneDriveOAuth.Count;
             int missingCount = snapshot.Config.Profiles.Count(p =>
                 p.RememberPassword && !snapshot.Passwords.ContainsKey(p.Id));
             int cloudMissing = snapshot.Config.Profiles.Count(p =>
-                p.Protocol == "GoogleDrive" && !snapshot.GoogleOAuth.ContainsKey(p.Id) ||
-                p.Protocol == "OneDrive" && !snapshot.OneDriveOAuth.ContainsKey(p.Id));
+                (preservedCloud?.Contains(p.Id) != true) &&
+                (p.Protocol == "GoogleDrive" && !snapshot.GoogleOAuth.ContainsKey(p.Id) ||
+                 p.Protocol == "OneDrive" && !snapshot.OneDriveOAuth.ContainsKey(p.Id)));
             var occupied = Environment.GetLogicalDrives()
                 .Select(s => s[..1]).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var conflicts = snapshot.Config.Profiles
@@ -99,6 +112,9 @@ internal sealed partial class MainForm
                 "기존 연결 목록은 모두 교체되며, 교체 전 config.json을 자동 백업합니다.\n" +
                 "현재 PC의 Windows 시작 프로그램 설정은 유지합니다.\n" +
                 "가져온 연결은 프로그램 재실행 후 적용됩니다.";
+            if (isPortable && preservedCloud?.Count > 0)
+                prompt += "\n\n현재 PC의 Google Drive·OneDrive 연결 " +
+                    preservedCloud.Count + "개는 인증정보와 함께 그대로 보존합니다.";
             if (missingCount + cloudMissing > 0)
                 prompt += "\n\n인증 누락 연결 " + (missingCount + cloudMissing) +
                     "개는 자동 연결을 끄고 재인증하도록 처리합니다.";
@@ -116,7 +132,7 @@ internal sealed partial class MainForm
             try
             {
                 originalConfigBackup = ProfileBackup.Restore(snapshot,
-                    AppStore.IsAutoStartEnabled());
+                    AppStore.IsAutoStartEnabled(), preservedCloud);
                 cfg.Profiles.Clear();
                 cfg.Profiles.AddRange(snapshot.Config.Profiles);
                 cfg.StartWithWindows = snapshot.Config.StartWithWindows;
@@ -169,7 +185,7 @@ internal sealed partial class MainForm
         };
         ModernTheme.EnableDarkTitleBar(dialog);
         var label = new Label {
-            Text = confirm ? "다른 PC에서 복원할 때 사용할 암호 (10자 이상)" :
+            Text = confirm ? "PC·Android 공통 백업 암호 (8자 이상)" :
                 "백업할 때 설정했던 암호를 입력하세요.",
             ForeColor = ModernTheme.Text,
             Bounds = new Rectangle(22, 18, 372, 28)
@@ -207,10 +223,10 @@ internal sealed partial class MainForm
         ok.Click += (_, _) =>
         {
             if (string.IsNullOrEmpty(first.Text) ||
-                (confirm && first.Text.Length < 10))
+                (confirm && first.Text.Length < 8))
             {
                 MessageBox.Show(dialog, confirm ?
-                    "암호를 10자 이상 입력하세요." : "백업 암호를 입력하세요.");
+                    "암호를 8자 이상 입력하세요." : "백업 암호를 입력하세요.");
                 return;
             }
             if (confirm && first.Text != second!.Text)
