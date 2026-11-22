@@ -3096,7 +3096,7 @@ public class MainActivity extends Activity {
             if (entry.linkTargetUnavailable) return "심볼릭 링크 · 대상 접근 불가";
             return entry.directory ? "심볼릭 링크 → 폴더" : "심볼릭 링크 → 파일";
         }
-        return entry.directory ? "항목 수 확인 중" : pretty(entry.size);
+        return entry.directory ? ("remote".equals(currentScreen) && remote != null && "SFTP".equals(remote.protocol) ? "폴더" : "항목 수 확인 중") : pretty(entry.size);
     }
     private int readingProgressFor(Models.Entry entry) {
         if(entry.directory)return -1;
@@ -6086,7 +6086,7 @@ public class MainActivity extends Activity {
                             if(file.directory)openRemote(p,file.path);
                             else if(isVideo(file.name))openRemoteVideo(p,file);
                             else openRemoteFile(p,file);
-                        },file.directory?()->{
+                        },file.directory && !"SFTP".equals(p.protocol)?()->{
                             List<Models.Entry> children=cachedRemoteFiles(p,file.path);
                             int count=0;
                             for(Models.Entry child:children)
