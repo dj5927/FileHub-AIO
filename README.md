@@ -15,7 +15,41 @@ An open-source file manager and media/reading app designed for NAS, WebDAV, SMB,
 
 Get the latest signed APK from [GitHub Releases](https://github.com/dj5927/FileHub-AIO/releases/latest). On app launch, FileHub checks the latest published stable release, showing only a short notification when an update exists. You can download and install it manually from **⋮ → 업데이트 확인 (Check for updates)**. Installation always requires Android's confirmation and may require permission to install APKs from this app.
 
-The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.111 the metadata is versionCode: 112 and FileHub-AIO-v0.1.111.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.112 the metadata is versionCode: 113 and FileHub-AIO-v0.1.112.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+
+## Android v0.1.112: Steam Deck SFTP symlinked directories
+
+- A real Steam Deck `/home/deck/.steam` listing contains several symbolic
+  links pointing to directories (e.g., `root`, `steam`, `bin64`).
+  Earlier FileHub Android versions treated them as ordinary files because
+  SSHJ SFTP `RemoteResourceInfo.isDirectory()` only describes the link
+  itself, not its target. Trying to open the link as a normal file raised
+  a generic IOException.
+- SFTP directory listing now resolves each symbolic link with a
+  **single SFTP STAT** to classify the target, retaining the original
+  alias path. Directory links show the folder icon and open with normal
+  folder navigation; file links can be read as files. Other providers
+  and ordinary file/directory listings are unchanged. The UI labels
+  link items explicitly as `심볼릭 링크 → 폴더` or `심볼릭 링크 → 파일`.
+- Dangling links and targets with insufficient permissions remain visible
+  but display a link-specific error rather than aborting the entire
+  directory listing. An inaccessible link is not silently misrepresented
+  as a regular file.
+- Link identity propagates through the selection/transfer model even when
+  the target is a directory. For deletion, FileHub **never recursively
+  traverses a symbolic-link directory**. The SFTP provider performs LSTAT
+  at deletion time and unlinks the link using RM, without deleting the
+  directory it points to. Cross-storage copy and compression of symlinks
+  are deliberately refused to prevent loops and unexpected target data
+  duplication. A same-profile non-overwriting move may rename the link
+  itself without traversing it. The chmod editor is not offered on links.
+- Added regression tests for directory links, file links, broken links,
+  linked folder loops, ordinary folders, retained aliases and correct
+  non-recursive deletion/copy protection. All features from v0.1.111
+  (automatic SFTP login home and manual Linux chmod of normal files)
+  remain in place. As before, a connected Android device is needed to
+  confirm the actual remote Steam Deck behavior; publisher tests do
+  not use the user's SSH credentials.
 
 ## Android v0.1.111: SFTP login home and Linux chmod permissions
 

@@ -474,11 +474,24 @@ final class RemoteProvider {
                     for (RemoteResourceInfo item : sftp.ls(absolute(p, normalized))) {
                         String n = item.getName();
                         if (n.equals(".") || n.equals("..") || n.isEmpty()) continue;
-                        Models.Entry e = new Models.Entry(n, child(normalized, n),
-                                item.isDirectory());
-                        e.size = item.getAttributes().getSize();
-                        e.modified = item.getAttributes().getMtime() * 1000L;
-                        out.add(e);
+                        String childPath = child(normalized, n);
+                        net.schmizz.sshj.sftp.FileAttributes attrs =
+                                item.getAttributes();
+                        net.schmizz.sshj.sftp.FileAttributes target = null;
+                        if (attrs.getType() ==
+                                net.schmizz.sshj.sftp.FileMode.Type.SYMLINK) {
+                            // OpenSSH READDIR reports the link itself as a
+                            // file. Follow it ONLY to classify its target
+                            // for browsing. Keep the original alias path.
+                            try {
+                                target = sftp.stat(absolute(p, childPath));
+                            } catch (net.schmizz.sshj.sftp.SFTPException unavailable) {
+                                // A broken link or permission-denied target
+                                // must not make the entire folder disappear.
+                                target = null;
+                            }
+                        }
+                        out.add(SftpLinkPolicy.entry(n, childPath, attrs, target));
                     }
                     return sort(out);
                 } catch (UntrustedHostKey | SftpConnectionDiagnostics |
@@ -987,8 +1000,15 @@ final class RemoteProvider {
                 } finally { closeFtp(ftp); } return;
             case "SFTP":
                 try (SSHClient ssh = ssh(p); SFTPClient sftp = ssh.newSFTPClient()) {
-                    if (directory) sftp.rmdir(absolute(p, path));
-                    else sftp.rm(absolute(p, path));
+                    String actual = absolute(p, path);
+                    // unlink a symbolic link itself; never try RMDIR on the
+                    // linked directory or recursively remove its target.
+                    net.schmizz.sshj.sftp.FileAttributes entry = sftp.lstat(actual);
+                    if (entry.getType() == net.schmizz.sshj.sftp.FileMode.Type.SYMLINK)
+                        sftp.rm(actual);
+                    else if (entry.getType() == net.schmizz.sshj.sftp.FileMode.Type.DIRECTORY)
+                        sftp.rmdir(actual);
+                    else sftp.rm(actual);
                 } return;
             case "WebDAV":
                 try (Response resp = webClient(p).newCall(

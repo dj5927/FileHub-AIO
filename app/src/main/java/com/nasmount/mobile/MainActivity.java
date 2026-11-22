@@ -1303,6 +1303,7 @@ public class MainActivity extends Activity {
                 "remote".equals(picked.get(0).kind) &&
                 picked.get(0).remote != null &&
                 "SFTP".equals(picked.get(0).remote.protocol) &&
+                !picked.get(0).symbolicLink &&
                 !picked.get(0).remote.readOnly;
         List<String> actions = new ArrayList<>(Arrays.asList(
                 "즐겨찾기 추가/해제", "폴더 용도 설정", "선택 파일 압축하기"));
@@ -3091,6 +3092,10 @@ public class MainActivity extends Activity {
         return SubtitleBadgePolicy.flags(external, embedded);
     }
     private String fileSecondary(Models.Entry entry) {
+        if (entry.symbolicLink) {
+            if (entry.linkTargetUnavailable) return "심볼릭 링크 · 대상 접근 불가";
+            return entry.directory ? "심볼릭 링크 → 폴더" : "심볼릭 링크 → 파일";
+        }
         return entry.directory ? "항목 수 확인 중" : pretty(entry.size);
     }
     private int readingProgressFor(Models.Entry entry) {
@@ -3409,7 +3414,7 @@ public class MainActivity extends Activity {
                 return true;
             });
         }
-        if (entry.directory && count != null)
+        if (entry.directory && count != null && !entry.symbolicLink)
             scheduleCount(anchor, secondary, entry, count);
         else scheduleThumbnail(anchor, iconBox, entry);
         refreshSubtitleChips(chips, entry);
@@ -6062,12 +6067,22 @@ public class MainActivity extends Activity {
                 ImageFolderSequence.showFolder("remote", p.id, sorted, showHidden);
                 if(sorted.isEmpty())muted("이 폴더는 비어 있습니다.");
                 indexFullFolderSearch(sorted,file->()->{
+                    if(file.symbolicLink && file.linkTargetUnavailable) {
+                        showError("심볼릭 링크가 가리키는 대상에 접근할 수 없습니다. " +
+                                "끊어진 링크 또는 서버 권한을 확인하세요.");
+                        return;
+                    }
                     if(file.directory)openRemote(p,file.path);
                     else if(isVideo(file.name))openRemoteVideo(p,file);
                     else openRemoteFile(p,file);
                 });
                 appendDirectoryPage(sorted,0,screen,file->
                         fileRow(file,()->{
+                            if(file.symbolicLink && file.linkTargetUnavailable) {
+                                showError("심볼릭 링크가 가리키는 대상에 접근할 수 없습니다. " +
+                                        "끊어진 링크 또는 서버 권한을 확인하세요.");
+                                return;
+                            }
                             if(file.directory)openRemote(p,file.path);
                             else if(isVideo(file.name))openRemoteVideo(p,file);
                             else openRemoteFile(p,file);

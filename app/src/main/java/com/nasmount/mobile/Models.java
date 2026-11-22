@@ -89,6 +89,11 @@ final class Models {
         String path;
         String remoteId = "";
         boolean directory;
+        // SFTP symbolic links may point to directories. Keep the link
+        // identity even when the target is a navigable directory, so bulk
+        // operations can never accidentally delete the target recursively.
+        boolean symbolicLink;
+        boolean linkTargetUnavailable;
         long size = -1;
         long modified;
         File file;

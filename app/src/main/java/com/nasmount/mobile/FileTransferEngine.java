@@ -141,6 +141,9 @@ final class FileTransferEngine {
 
     private static long sourceBytes(Item item, int[] budget, int depth) throws Exception {
         visit(budget, depth);
+        // A symlink points outside the containing directory (or back to it).
+        // Never recursively size its target, even when the UI lets it open.
+        if (item.symbolicLink) return 0;
         if (!item.directory) return item.size;
         long sum = 0;
         for (Item child : children(item)) {
@@ -172,6 +175,7 @@ final class FileTransferEngine {
         final String name;
         final String path;
         final boolean directory;
+        final boolean symbolicLink;
         final File local;
         final DocumentFile saf;
         final Uri media;
@@ -180,12 +184,14 @@ final class FileTransferEngine {
         final long size;
 
         Item(String kind, String name, String path, boolean directory,
+             boolean symbolicLink,
              File local, DocumentFile saf, Uri media,
              Models.RemoteProfile remote, String tree, long size) {
             this.kind = kind;
             this.name = name;
             this.path = path;
             this.directory = directory;
+            this.symbolicLink = symbolicLink;
             this.local = local;
             this.saf = saf;
             this.media = media;
@@ -228,20 +234,20 @@ final class FileTransferEngine {
 
     static Item local(File file) {
         return new Item("local", file.getName(), file.getAbsolutePath(),
-                file.isDirectory(), file, null, null, null, "", file.length());
+                file.isDirectory(), false, file, null, null, null, "", file.length());
     }
     static Item saf(DocumentFile file, String path, String tree) {
         return new Item("saf", file.getName(), path, file.isDirectory(),
-                null, file, null, null, tree,
+                false, null, file, null, null, tree,
                 file.length() > 0 ? file.length() : -1);
     }
     static Item remote(Models.RemoteProfile profile, Models.Entry file) {
         return new Item("remote", file.name, file.path, file.directory,
-                null, null, null, profile, "", file.size);
+                file.symbolicLink, null, null, null, profile, "", file.size);
     }
     static Item media(Uri uri, String name) {
         return new Item("media", name, uri.toString(), false,
-                null, null, uri, null, "", -1);
+                false, null, null, uri, null, "", -1);
     }
 
     static Destination localFolder(File folder) {
@@ -484,6 +490,9 @@ final class FileTransferEngine {
     }
 
     static List<Item> children(Item parent) throws Exception {
+        if (parent.symbolicLink)
+            throw new IOException("심볼릭 링크 폴더는 통째로 복사·압축할 수 없습니다. " +
+                    "링크 폴더에 들어가 필요한 파일을 직접 선택하세요.");
         List<Item> out = new ArrayList<>();
         switch (parent.kind) {
             case "local":
@@ -548,6 +557,9 @@ final class FileTransferEngine {
                                 TransferMeter meter, TransferControl control) throws Exception {
         if (control != null) control.check();
         visit(budget, depth);
+        if (item.symbolicLink)
+            throw new IOException("심볼릭 링크 자체는 복사할 수 없습니다. " +
+                    "링크 폴더를 열어 필요한 파일을 선택하세요.");
         if (item.directory) {
             Destination childDestination = createFolder(destination, item.name, overwrite);
             for (Item child : children(item))
@@ -696,7 +708,8 @@ final class FileTransferEngine {
             throws Exception {
         visit(budget, depth);
         if (!item.writable()) throw new IOException("읽기 전용 파일은 삭제할 수 없습니다.");
-        if (item.directory && item.remote != null &&
+        if (SftpLinkPolicy.shouldDescendForDelete(item.directory, item.symbolicLink) &&
+                item.remote != null &&
                 !"MYBOX".equals(item.remote.protocol) &&
                 !"TeraBox".equals(item.remote.protocol))
             for (Item child : children(item))
