@@ -14,8 +14,6 @@ import net.schmizz.sshj.sftp.RemoteResourceInfo;
 import net.schmizz.sshj.sftp.RemoteFile;
 import net.schmizz.sshj.sftp.SFTPClient;
 import net.schmizz.sshj.transport.verification.HostKeyVerifier;
-import net.schmizz.sshj.common.Buffer;
-import net.schmizz.sshj.common.KeyType;
 import okhttp3.HttpUrl;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -181,40 +179,22 @@ final class RemoteProvider {
         catch (Exception ignored) {}
     }
 
-    private static String fingerprint(java.security.PublicKey key) throws Exception {
-        // OpenSSH-compatible SHA256 fingerprint of the SSH public-key blob,
-        // not of the X.509 SubjectPublicKeyInfo encoding.
-        Buffer.PlainBuffer encoded = new Buffer.PlainBuffer();
-        KeyType.fromKey(key).putPubKeyIntoBuffer(key, encoded);
-        return "SHA256:" + Base64.encodeToString(
-                MessageDigest.getInstance("SHA-256").digest(encoded.getCompactData()),
-                Base64.NO_WRAP | Base64.NO_PADDING);
-    }
     private static SSHClient ssh(Models.RemoteProfile p) throws Exception {
         SSHClient ssh = new SSHClient();
         ssh.setConnectTimeout(12000);
         // Apply the selected encoding to actual SSHJ SFTP filename packets.
         // A saved setting without setRemoteCharset would not affect any file.
         ssh.setRemoteCharset(SftpFilenameCharset.resolve(p.sftpCharset));
+        SftpHostKeyTrust trust = new SftpHostKeyTrust(p.fingerprint);
         ssh.addHostKeyVerifier(new HostKeyVerifier() {
             @Override public List<String> findExistingAlgorithms(String host, int serverPort) {
                 return Collections.emptyList();
             }
             @Override public boolean verify(String hostname, int serverPort,
                                              java.security.PublicKey key) {
-                try {
-                    String fp = fingerprint(key);
-                    if (p.fingerprint.isEmpty()) throw new UntrustedHostKey(fp);
-                    if (!MessageDigest.isEqual(fp.getBytes(StandardCharsets.UTF_8),
-                            p.fingerprint.getBytes(StandardCharsets.UTF_8)))
-                        throw new SecurityException(
-                                "SFTP 서버 호스트 키가 이전과 다릅니다. 연결을 차단했습니다.");
-                    return true;
-                } catch (UntrustedHostKey | SecurityException error) {
-                    throw new IllegalStateException(error);
-                } catch (Exception error) {
-                    throw new IllegalStateException("서버 키 검증 실패", error);
-                }
+                // Never throw on the SSHJ transport thread: it can wrap the
+                // first-connect confirmation as a generic TransportException.
+                return trust.verify(key);
             }
         });
         try {
@@ -223,6 +203,10 @@ final class RemoteProvider {
             return ssh;
         } catch (Exception e) {
             try { ssh.close(); } catch (IOException ignored) {}
+            // Translate SSHJ's transport-layer host key rejection back into
+            // a user-facing confirmation instead of a misleading network
+            // failure; changed keys are still strictly rejected.
+            trust.rethrowIfRejected();
             throw e;
         }
     }

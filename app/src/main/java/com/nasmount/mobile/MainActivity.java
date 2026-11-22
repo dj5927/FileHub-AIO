@@ -414,6 +414,32 @@ public class MainActivity extends Activity {
         for (Throwable e=error; e!=null; e=e.getCause()) {
             if (e instanceof RemoteProvider.UntrustedHostKey)
                 return "SFTP 서버의 호스트 키 확인이 필요합니다.";
+            if (e instanceof SecurityException &&
+                    e.getMessage() != null &&
+                    e.getMessage().contains("SFTP 서버 호스트 키"))
+                return "SFTP 서버의 호스트 키가 이전에 확인한 키와 다릅니다. " +
+                        "다른 서버일 수 있으므로 연결을 차단했습니다. " +
+                        "기존 키를 임의로 지우지 말고 서버 관리자에게 확인하세요.";
+            if (e instanceof net.schmizz.sshj.userauth.UserAuthException)
+                return "SFTP 로그인 인증에 실패했습니다. Steam Deck 계정명(deck)과 " +
+                        "설정한 암호, SSH 비밀번호 로그인을 확인하세요.";
+            if (e instanceof net.schmizz.sshj.transport.TransportException) {
+                String detail = e.getMessage() == null ? "" :
+                        e.getMessage().toLowerCase(java.util.Locale.ROOT);
+                if (detail.contains("no matching") || detail.contains("negotiat"))
+                    return "SFTP 서버와 SSH 암호화/호스트 키 알고리즘 협상이 " +
+                            "일치하지 않습니다. SSH 서버 및 앱 버전을 확인하세요.";
+                if (detail.contains("encode key") || detail.contains("eddsa") ||
+                        detail.contains("ed25519"))
+                    return "SFTP SSH 호스트 공개키(Ed25519) 호환성 오류입니다. " +
+                            "FileHub 업데이트를 확인하세요.";
+                if (detail.contains("host key") || detail.contains("verify"))
+                    return "SFTP 서버의 호스트 키를 확인하지 못했습니다. " +
+                            "새 서버라면 지문 확인창이 표시되는지 확인하세요.";
+                return "SFTP SSH 연결 수립 중 오류가 발생했습니다. " +
+                        "FileZilla의 SFTP 연결 설정과 주소·포트·인증 방식을 비교하세요. " +
+                        "(TransportException)";
+            }
         }
         if (error instanceof SecurityException)
             return "파일 접근 권한이 없거나 서버 인증이 거부되었습니다.";
@@ -443,7 +469,7 @@ public class MainActivity extends Activity {
         showError(safeError(error));
     }
     private void showError(String message) {
-        new AlertDialog.Builder(this).setTitle("NAS Mount")
+        new AlertDialog.Builder(this).setTitle("FileHub AIO")
                 .setMessage(message).setPositiveButton("확인", null).show();
     }
     interface Job<T> { T execute() throws Exception; }

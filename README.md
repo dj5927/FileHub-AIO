@@ -15,7 +15,31 @@ An open-source file manager and media/reading app designed for NAS, WebDAV, SMB,
 
 Get the latest signed APK from [GitHub Releases](https://github.com/dj5927/FileHub-AIO/releases/latest). On app launch, FileHub checks the latest published stable release, showing only a short notification when an update exists. You can download and install it manually from **⋮ → 업데이트 확인 (Check for updates)**. Installation always requires Android's confirmation and may require permission to install APKs from this app.
 
-The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.107 the metadata is versionCode: 108 and FileHub-AIO-v0.1.107.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.108 the metadata is versionCode: 109 and FileHub-AIO-v0.1.108.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+
+## Android v0.1.108: fix Steam Deck SFTP host-key/SSH TransportException
+
+- The Android SSHJ verifier previously threw an unchecked exception for
+  **first-use host keys** and **mismatched host keys**. Because the callback
+  runs on an SSH transport thread, this could be delivered as a generic
+  TransportException rather than asking for the fingerprint. The verifier
+  now returns false and saves the observed key, so the connection wrapper
+  can emit the app's existing explicit first-connect fingerprint dialog.
+- For Android Conscrypt Ed25519 keys, the host fingerprint is computed
+  from strict RFC 8410 Ed25519 X.509 SPKI bytes converted into the OpenSSH
+  ssh-ed25519 key blob. This addresses a documented SSHJ Android key-encoding
+  failure without disabling SSH signature validation or host key pinning.
+- A changed server key is still rejected and must not be accepted
+  automatically. RSA/ECDSA remain under SSHJ's existing encoding.
+- Added targeted SFTP error explanations (authentication, SSH algorithm
+  negotiation, Ed25519, changed or unknown host key), replacing a generic
+  TransportException-only popup. Corrected error dialog branding to
+  FileHub AIO.
+- New unit tests cover first-connection approval, previously trusted key,
+  changed-key rejection, provider-specific EdDSA wrapper, malformed keys
+  and RSA compatibility. FileZilla may connect with a differently
+  configured SSH key algorithm, so real Steam Deck connection is the
+  final device-specific validation and is not claimed from unit tests.
 
 ## Android v0.1.107: TeraBox sign-in cleanup, MYBOX help, SFTP charsets and WebDAV locks
 
