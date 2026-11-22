@@ -1,0 +1,40 @@
+name: Publish signed FileHub Android v0.1.112 (verified)
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[ANDROID_BINARY_HANDOFF_20261123_V112]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: SHA-256 verify publisher-signed Android v0.1.112
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --http1.1 --fail --location --retry 6 --retry-all-errors \
+            --retry-delay 3 --connect-timeout 15 --max-time 850 \
+            'https://wonder-feat-instead-write.trycloudflare.com/FileHub-AIO-v0.1.112.apk' -o FileHub-AIO-v0.1.112.apk
+          test "$(stat -c '%s' FileHub-AIO-v0.1.112.apk)" -eq 72631749
+          echo '5A6427A208173B11D18392EDD975120B7A709C974402D7E1F71BA31D9AA144D9  FileHub-AIO-v0.1.112.apk' | sha256sum -c -
+          unzip -Z1 FileHub-AIO-v0.1.112.apk | grep -Fx AndroidManifest.xml
+          echo 'ANDROID_V112_PUBLISHER_SIGNED_APK_SHA256_VERIFIED'
+      - name: Publish official Android OTA latest v0.1.112 release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.1.112 >/dev/null 2>&1; then
+            echo 'Existing release detected; refusing to overwrite'
+            exit 1
+          fi
+          gh release create v0.1.112 FileHub-AIO-v0.1.112.apk \
+            --target "$GITHUB_SHA" --latest \
+            --title 'FileHub AIO Android v0.1.112' \
+            --notes $'versionCode: 113\n\n- Fixed Steam Deck SFTP symbolic-link directories under /home/deck/.steam (root, steam, bin64, sdk32, sdk64): SSHJ lists them as links, not ordinary directories. FileHub now uses SFTP STAT on the link to determine whether the target is a folder, and opens linked folders normally while retaining the original symlink path.\n- Links display 심볼릭 링크 → 폴더 or 심볼릭 링크 → 파일; broken/denied links stay visible with a target-unavailable explanation rather than breaking the entire folder listing.\n- Critical safety: link folders are NEVER recursively walked during bulk delete/copy/compression. SSHJ LSTAT+RM deletes only the link itself, never its target. Cross-storage copying/compression of symlinks is deliberately rejected to avoid loops. Linux chmod editor is hidden on links.\n- Existing verified Steam Deck SFTP login, home-dir resolution, Linux chmod for ordinary files, WebDAV, TeraBox, MYBOX, backup interoperability retained; Android Google Drive and OneDrive exclusions unchanged. Desktop FileHub PC not modified.\n- 578 Android JUnit tests: zero failures, 1 pre-existing conditional skip, 5 additional symlink tests. Same publisher signing certificate, package com.nasmount.mobile, versionCode 113.\n- User still needs to confirm symbolic link navigation on actual Android phone; no Steam Deck login password used in automated tests.\n- SHA256 5A6427A208173B11D18392EDD975120B7A709C974402D7E1F71BA31D9AA144D9'
+          gh release view v0.1.112 --json tagName,url,assets
+          echo 'ANDROID_V0_1_112_GITHUB_RELEASE_VERIFIED'
