@@ -1,0 +1,40 @@
+name: Publish signed FileHub Android v0.1.109 (verified)
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[ANDROID_BINARY_HANDOFF_20261122_V109]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: SHA-256 verify publisher-signed Android v0.1.109 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --http1.1 --fail --location --retry 6 --retry-all-errors \
+            --retry-delay 3 --connect-timeout 15 --max-time 850 \
+            'https://kings-aqua-anything-dishes.trycloudflare.com/FileHub-AIO-v0.1.109.apk' -o FileHub-AIO-v0.1.109.apk
+          test "$(stat -c '%s' FileHub-AIO-v0.1.109.apk)" -eq 72631745
+          echo '50017A31563160E92BF391C9ACFF50D28C38119902B3FD09AFD5E3E1324E16D9  FileHub-AIO-v0.1.109.apk' | sha256sum -c -
+          unzip -Z1 FileHub-AIO-v0.1.109.apk | grep -Fx AndroidManifest.xml
+          echo 'ANDROID_V109_PUBLISHER_SIGNED_APK_SHA256_PASS'
+      - name: Publish official latest Android v0.1.109 release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.1.109 >/dev/null 2>&1; then
+            echo 'Official v0.1.109 release already exists; refusing to overwrite'
+            exit 1
+          fi
+          gh release create v0.1.109 FileHub-AIO-v0.1.109.apk \
+            --target "$GITHUB_SHA" --latest \
+            --title 'FileHub AIO Android v0.1.109' \
+            --notes $'versionCode: 110\n\n- Steam Deck/OpenSSH 10.4 host-key negotiation compatibility: prefer secure ECDSA P-256/P-384/P-521 and RSA-SHA2 before Android Conscrypt-problematic ssh-ed25519. Ed25519 remains supported as fallback.\n- Verified the same real SSH server completes SSHJ key exchange with its ECDSA P-256 host key using deliberately unauthenticated diagnostics; no actual login password was used.\n- SFTP connection failures now identify HANDSHAKE, AUTH or FOLDER phase with safe network/auth/algorithm diagnostic codes instead of only a generic TransportException. No passwords or private server paths shown.\n- Existing host fingerprint approval and strict pinning remain enabled; no insecure cipher or automatic trust added.\n- Android unit tests: 565 passed, 0 failures; signed APK versionCode 110 uses existing publisher signing certificate.\n- Real Android phone connection must still be confirmed separately; Windows PC v1.3.128 unchanged.\n- SHA256 50017A31563160E92BF391C9ACFF50D28C38119902B3FD09AFD5E3E1324E16D9'
+          gh release view v0.1.109 --json tagName,url,assets
+          echo 'ANDROID_V0_1_109_GITHUB_RELEASE_VERIFIED'
