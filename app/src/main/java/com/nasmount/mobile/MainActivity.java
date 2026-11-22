@@ -116,6 +116,10 @@ public class MainActivity extends Activity {
     private boolean sdPermissionRequestPending;
     private Models.RemoteProfile remote;
     private String remoteFolder = "/";
+    // Cached only during this app session; no SSH password or home path is
+    // written to backups. Explicit '/' stays an accessible root breadcrumb.
+    private final Map<String, String> sftpLoginHomes = new ConcurrentHashMap<>();
+    private String sftpHomeDiscoveryPendingId = "";
     private String mediaKind;
     private String assignedMode;
     private AssignedFolderBackBoundary assignedBackBoundary;
@@ -412,6 +416,8 @@ public class MainActivity extends Activity {
         // Never expose protocol URLs, credentials, arbitrary server paths,
         // or SSH diagnostic stack traces in an error dialog.
         for (Throwable e=error; e!=null; e=e.getCause()) {
+            if (e instanceof RemoteProvider.SftpPermissionFailure)
+                return e.getMessage();
             if (e instanceof SftpConnectionDiagnostics)
                 return ((SftpConnectionDiagnostics) e).userMessage();
             if (e instanceof RemoteProvider.UntrustedHostKey)
@@ -462,7 +468,9 @@ public class MainActivity extends Activity {
                             remote.fingerprint = fp;
                             try {
                                 store.putRemote(remote);
-                                openRemote(remote, remoteFolder);
+                                if (remote.id.equals(sftpHomeDiscoveryPendingId))
+                                    openRemoteStart(remote);
+                                else openRemote(remote, remoteFolder);
                             } catch (Exception ex) { showError(safeError(ex)); }
                         }).show();
                 return;
@@ -1291,15 +1299,22 @@ public class MainActivity extends Activity {
         boolean canShare = picked.size() == 1 &&
                 "remote".equals(picked.get(0).kind) &&
                 NasSharePolicy.supported(picked.get(0).remote);
+        boolean canChmod = picked.size() == 1 &&
+                "remote".equals(picked.get(0).kind) &&
+                picked.get(0).remote != null &&
+                "SFTP".equals(picked.get(0).remote.protocol) &&
+                !picked.get(0).remote.readOnly;
+        List<String> actions = new ArrayList<>(Arrays.asList(
+                "즐겨찾기 추가/해제", "폴더 용도 설정", "선택 파일 압축하기"));
+        if (canShare) actions.add("공유 링크 생성");
+        if (canChmod) actions.add("리눅스 파일 권한 변경 (chmod)");
+        actions.add("선택 해제");
         new AlertDialog.Builder(this)
                 .setTitle(selection.size() + "개 선택")
-                .setItems(canShare ? new String[]{"즐겨찾기 추가/해제", "폴더 용도 설정",
-                        "선택 파일 압축하기", "공유 링크 생성", "선택 해제"} :
-                        new String[]{"즐겨찾기 추가/해제", "폴더 용도 설정",
-                                "선택 파일 압축하기", "선택 해제"},
-                        (dialog, which) -> {
+                .setItems(actions.toArray(new String[0]), (dialog, which) -> {
                     List<FileTransferEngine.Item> items = selection.snapshot();
-                    if (which == 0) {
+                    String selectedAction = actions.get(which);
+                    if (selectedAction.equals("즐겨찾기 추가/해제")) {
                         int changed = 0;
                         try {
                             for (FileTransferEngine.Item item : items) {
@@ -1312,21 +1327,173 @@ public class MainActivity extends Activity {
                                     changed + "개 폴더의 즐겨찾기를 변경했습니다.");
                             updateFavoriteIndicators();
                         } catch (Exception error) { failure(error); }
-                    } else if (which == 1) {
+                    } else if (selectedAction.equals("폴더 용도 설정")) {
                         if (items.size() != 1 || !items.get(0).directory) {
                             toast("폴더 용도 설정은 폴더 하나만 선택하세요.");
                             return;
                         }
                         showFolderPurposeMenu(items.get(0));
-                    } else if (which == 2) {
+                    } else if (selectedAction.equals("선택 파일 압축하기")) {
                         chooseCompression(items);
-                    } else if (canShare && which == 3) {
+                    } else if (selectedAction.equals("공유 링크 생성")) {
                         showNasShareCreate(picked.get(0));
+                    } else if (selectedAction.equals("리눅스 파일 권한 변경 (chmod)")) {
+                        openSftpChmod(picked.get(0));
                     } else {
                         selection.clear();
                         updateFileOperationChrome();
                     }
                 }).show();
+    }
+
+    private void openSftpChmod(FileTransferEngine.Item item) {
+        if (item == null || item.remote == null ||
+                !"SFTP".equals(item.remote.protocol) || item.remote.readOnly) {
+            showError("권한 변경은 쓰기 가능한 SFTP 파일 또는 폴더 한 개를 선택하세요.");
+            return;
+        }
+        runJob("현재 리눅스 파일 권한 확인 중...",
+                () -> RemoteProvider.sftpPermissions(item.remote, item.path),
+                mode -> showSftpChmodDialog(item, mode));
+    }
+
+    private void showSftpChmodDialog(FileTransferEngine.Item item, int initialMode) {
+        LinearLayout form = Ui.vertical(this);
+        form.setPadding(dp(18), dp(10), dp(18), dp(10));
+        TextView filename = Ui.text(this, item.name, 16, Ui.TEXT, true);
+        form.addView(filename, Ui.lp(this, -1, -2));
+        Ui.gap(form, this, 10);
+        TextView current = Ui.text(this,
+                "현재: " + LinuxFilePermissions.octal(initialMode) + " (" +
+                        LinuxFilePermissions.symbolic(initialMode) + ")",
+                13, Ui.MUTED, false);
+        form.addView(current, Ui.lp(this, -1, -2));
+        EditText octal = field(form, "권한 숫자 (8진수 chmod)",
+                LinuxFilePermissions.octal(initialMode),
+                android.text.InputType.TYPE_CLASS_NUMBER);
+        octal.setFilters(new android.text.InputFilter[]{
+                new android.text.InputFilter.LengthFilter(4)});
+        TextView preview = Ui.text(this, "", 13, Ui.TEAL, false);
+        form.addView(preview, Ui.lp(this, -1, 32));
+        final CheckBox[] rights = new CheckBox[9];
+        final String[] sections = {"소유자", "그룹", "기타"};
+        final String[] verbs = {"읽기", "쓰기", "실행"};
+        for (int section = 0; section < 3; section++) {
+            LinearLayout group = Ui.horizontal(this);
+            group.setGravity(Gravity.CENTER_VERTICAL);
+            TextView heading = Ui.text(this, sections[section], 13, Ui.TEXT, true);
+            group.addView(heading, Ui.lp(this, 55, 44));
+            for (int bit = 0; bit < 3; bit++) {
+                int index = section * 3 + bit;
+                CheckBox check = new CheckBox(this);
+                check.setText(verbs[bit]);
+                check.setTextSize(13);
+                check.setChecked((initialMode &
+                        LinuxFilePermissions.RWX_BITS[index]) != 0);
+                rights[index] = check;
+                group.addView(check, new LinearLayout.LayoutParams(0, dp(44), 1));
+            }
+            form.addView(group, Ui.lp(this, -1, 44));
+        }
+        TextView warning = Ui.text(this,
+                "쓰기/실행 권한을 제거하면 파일 수정 또는 폴더 접근이 막힐 수 있습니다. " +
+                "현재 파일의 권한만 변경하며 하위 항목에는 재귀적으로 적용되지 않습니다.",
+                12, Ui.MUTED, false);
+        form.addView(warning, Ui.lp(this, -1, -2));
+        final boolean[] updating = {false};
+        Runnable fromChecks = () -> {
+            if (updating[0]) return;
+            updating[0] = true;
+            try {
+                boolean[] checked = new boolean[9];
+                for (int i = 0; i < rights.length; i++)
+                    checked[i] = rights[i].isChecked();
+                // Preserve existing setuid/setgid/sticky bits unless edited
+                // explicitly in the four-digit octal field.
+                int base;
+                try { base = LinuxFilePermissions.parseOctal(
+                        octal.getText().toString()); }
+                catch (IllegalArgumentException ignore) { base = initialMode; }
+                int mode = LinuxFilePermissions.withRwx(base, checked);
+                String value = LinuxFilePermissions.octal(mode);
+                octal.setText(value);
+                octal.setSelection(value.length());
+                preview.setText("변경할 권한: " +
+                        LinuxFilePermissions.symbolic(mode));
+            } finally { updating[0] = false; }
+        };
+        for (CheckBox check : rights)
+            check.setOnCheckedChangeListener((button, checked) -> fromChecks.run());
+        octal.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start,
+                    int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start,
+                    int before, int count) {}
+            @Override public void afterTextChanged(android.text.Editable s) {
+                if (updating[0]) return;
+                try {
+                    int mode = LinuxFilePermissions.parseOctal(s.toString());
+                    updating[0] = true;
+                    try {
+                        for (int i = 0; i < rights.length; i++)
+                            rights[i].setChecked(
+                                    (mode & LinuxFilePermissions.RWX_BITS[i]) != 0);
+                        preview.setText("변경할 권한: " +
+                                LinuxFilePermissions.symbolic(mode));
+                    } finally { updating[0] = false; }
+                } catch (IllegalArgumentException invalid) {
+                    preview.setText("755, 644, 0755처럼 3~4자리 8진수를 입력하세요.");
+                }
+            }
+        });
+        preview.setText("변경할 권한: " +
+                LinuxFilePermissions.symbolic(initialMode));
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(form);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("리눅스 파일 권한 변경 (chmod)")
+                .setView(scroll)
+                .setNegativeButton("취소", null)
+                .setPositiveButton("적용", null)
+                .create();
+        dialog.setOnShowListener(ignored ->
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                    final int mode;
+                    try { mode = LinuxFilePermissions.parseOctal(
+                            octal.getText().toString()); }
+                    catch (IllegalArgumentException invalid) {
+                        octal.setError(invalid.getMessage());
+                        return;
+                    }
+                    if (mode == initialMode) {
+                        dialog.dismiss();
+                        toast("파일 권한이 변경되지 않았습니다.");
+                        return;
+                    }
+                    Runnable apply = () -> {
+                        dialog.dismiss();
+                        runJob("SFTP chmod 권한 변경 중...",
+                                () -> RemoteProvider.sftpChmod(item.remote, item.path,
+                                        initialMode, mode), verified -> {
+                                    selection.clear();
+                                    updateFileOperationChrome();
+                                    folderCache.invalidateProfile(item.remote);
+                                    toast("권한 변경 완료: " +
+                                            LinuxFilePermissions.octal(verified));
+                                    refreshCurrent();
+                                });
+                    };
+                    if (item.directory && (mode & 0100) == 0) {
+                        new AlertDialog.Builder(this)
+                                .setTitle("폴더 접근 권한 주의")
+                                .setMessage("폴더 소유자의 실행(x) 권한을 제거하면 " +
+                                        "이 폴더에 다시 들어가지 못할 수 있습니다. 적용할까요?")
+                                .setNegativeButton("취소", null)
+                                .setPositiveButton("적용", (d, w) -> apply.run())
+                                .show();
+                    } else apply.run();
+                }));
+        dialog.show();
     }
 
     private void chooseCompression(List<FileTransferEngine.Item> sources) {
@@ -2397,7 +2564,7 @@ public class MainActivity extends Activity {
         try {
             for (Models.RemoteProfile p : store.activeRemotes())
                 drawerNestedLink(networkEntries, p.label(), "remote",
-                        () -> openRemote(p, "/"));
+                        () -> openRemoteStart(p));
         } catch (Exception ignored) {
             drawerSectionEmpty(networkEntries, "네트워크 연결을 확인할 수 없습니다.");
         }
@@ -4671,7 +4838,7 @@ public class MainActivity extends Activity {
             }
             for (Models.RemoteProfile profile : profiles) {
                 row(page, profile.label(), profile.summary(), "remote",
-                        Ui.TEAL, () -> openRemote(profile, "/"),
+                        Ui.TEAL, () -> openRemoteStart(profile),
                         () -> remoteMenu(profile));
             }
         } catch (Exception e) {
@@ -5190,7 +5357,7 @@ public class MainActivity extends Activity {
                 .setItems(menu.toArray(new String[0]),
                         (d, i) -> {
                             String choice = menu.get(i);
-                            if (choice.equals("연결하기")) openRemote(p, "/");
+                            if (choice.equals("연결하기")) openRemoteStart(p);
                             else if (choice.equals("설정 수정")) remoteForm(p);
                             else if (choice.equals("NAS 공유 링크 설정")) showNasShareSettings(p);
                             else if (choice.equals("NAS 공유 폴더 탐색")) showNasShareBrowser(p, "/");
@@ -5570,6 +5737,8 @@ public class MainActivity extends Activity {
                     cloudHint.setText("");
                 }
                 root.setHint(selected == 0 ? "공유이름/하위경로 (필수)" :
+                        selected == 2 ?
+                        "비우면 로그인 홈 폴더 · / 입력하면 루트부터" :
                         "선택 사항 · 시작 경로 /");
             }
             @Override public void onNothingSelected(android.widget.AdapterView<?> p) {}
@@ -5685,6 +5854,40 @@ public class MainActivity extends Activity {
                         "스크린샷이나 채팅으로 다른 사람에게 공유하지 마세요.")
                 .setPositiveButton("확인", null)
                 .show();
+    }
+
+    /** Entry from a storage connection: SFTP opens the login home, not '/'.
+     * Navigation to '/' via the breadcrumb remains explicit and unchanged. */
+    private void openRemoteStart(Models.RemoteProfile profile) {
+        if (profile == null) { showRemoteList(); return; }
+        if (!RemoteProvider.sftpUsesLoginHome(profile)) {
+            sftpHomeDiscoveryPendingId = "";
+            openRemote(profile, "/");
+            return;
+        }
+        String cacheKey = profile.id + "|" + profile.host + "|" + profile.port +
+                "|" + profile.username;
+        String cached = sftpLoginHomes.get(cacheKey);
+        if (cached != null) {
+            sftpHomeDiscoveryPendingId = "";
+            openRemote(profile, cached);
+            return;
+        }
+        remote = profile;
+        remoteFolder = "/";
+        sftpHomeDiscoveryPendingId = profile.id;
+        currentScreen = "remote";
+        render(profile.label(), true, "⋮", this::remoteFolderActions);
+        muted("SFTP 로그인 계정의 홈 폴더를 확인하는 중...");
+        final int screen = renderGeneration;
+        runJob("SFTP 홈 디렉터리 확인 중...", () ->
+                RemoteProvider.sftpLoginHome(profile), path -> {
+            if (renderGeneration != screen || remote != profile ||
+                    !profile.id.equals(sftpHomeDiscoveryPendingId)) return;
+            sftpLoginHomes.put(cacheKey, path);
+            sftpHomeDiscoveryPendingId = "";
+            openRemote(profile, path);
+        });
     }
 
     private void openRemote(Models.RemoteProfile profile, String folder) {

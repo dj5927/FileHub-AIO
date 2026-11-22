@@ -15,7 +15,40 @@ An open-source file manager and media/reading app designed for NAS, WebDAV, SMB,
 
 Get the latest signed APK from [GitHub Releases](https://github.com/dj5927/FileHub-AIO/releases/latest). On app launch, FileHub checks the latest published stable release, showing only a short notification when an update exists. You can download and install it manually from **⋮ → 업데이트 확인 (Check for updates)**. Installation always requires Android's confirmation and may require permission to install APKs from this app.
 
-The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.110 the metadata is versionCode: 111 and FileHub-AIO-v0.1.110.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.111 the metadata is versionCode: 112 and FileHub-AIO-v0.1.111.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+
+## Android v0.1.111: SFTP login home and Linux chmod permissions
+
+- **Default SFTP opening location is the user's actual home directory**, not
+  the server filesystem root. If the configured SFTP start/root path is
+  blank, FileHub authenticates and asks SFTP `REALPATH .` for the actual
+  login home (e.g. Steam Deck account `deck` returns `/home/deck`).
+  Nothing is hardcoded: chrooted SFTP users and NAS home directories work
+  as well. Once resolved, the home path is cached only for the app session.
+  Existing explicit start/root path settings are preserved: the literal
+  `/` starts from root, and a custom path keeps its previous semantics.
+- Navigating from the home directory to `/home` and `/` via breadcrumbs and
+  upward navigation remains possible. Remote favorites continue to open
+  their exact saved paths, not the newly chosen default start directory.
+  The SFTP settings field explains blank = account home, '/' = root.
+- **File or folder -> select one -> More -> Linux file permissions (chmod)**:
+  view the current server-side Unix mode and edit owner/group/others'
+  read/write/execute bits with nine checkboxes or 3/4-digit octal such as
+  `755`, `644`, `0755`. Shows an rwx preview and preserves existing
+  setuid/setgid/sticky bits when using the checkboxes. It is one-item-only
+  and does not recurse into a directory; it does not use sudo/SSH commands.
+- Uses SSHJ SFTP `LSTAT` to read current 12-bit permission mode and
+  `SETSTAT chmod` to apply it. Disallows chmod of symlinks (which could
+  change the target), read-only profiles, and concurrent mode changes;
+  re-reads server-side mode after mutation to confirm the update.
+  An explicit warning is required before removing owner execute access
+  from a directory. Server permissions and ownership still determine
+  whether chmod is allowed.
+- Tests cover octal parsing, rwx/special-bit display and preservation,
+  home-vs-explicit-root profile settings, read-only chmod rejection,
+  and root/parent navigation. PC version is unchanged. The exact Steam
+  Deck's live chmod and home directory must be confirmed on the user's
+  Android device; no device credentials were used during the build.
 
 ## Android v0.1.110: fix missing cryptographic algorithm during SFTP handshake
 

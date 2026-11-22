@@ -223,6 +223,83 @@ final class RemoteProvider {
         }
     }
 
+    /** Blank SFTP start path means login home; literal '/' explicitly means root. */
+    static boolean sftpUsesLoginHome(Models.RemoteProfile profile) {
+        return profile != null && "SFTP".equals(profile.protocol) &&
+                (profile.root == null || profile.root.trim().isEmpty());
+    }
+
+    /** SFTP REALPATH(.) is the authenticated account's actual login home.
+     * Never guess /home/{user}: NAS appliances and chrooted users differ. */
+    static String sftpLoginHome(Models.RemoteProfile profile) throws Exception {
+        if (!"SFTP".equals(profile.protocol))
+            throw new IllegalArgumentException("SFTP 연결에만 사용할 수 있습니다.");
+        try (SSHClient ssh = ssh(profile);
+             SFTPClient sftp = ssh.newSFTPClient()) {
+            String home = sftp.canonicalize(".");
+            if (home == null || !home.startsWith("/"))
+                throw new IOException("SFTP 서버가 절대 홈 경로를 반환하지 않았습니다.");
+            return relativePath(home);
+        } catch (UntrustedHostKey | SftpConnectionDiagnostics |
+                 SecurityException diagnostic) {
+            throw diagnostic;
+        } catch (Exception error) {
+            throw SftpConnectionDiagnostics.from("HOME", error);
+        }
+    }
+
+    /** Whitelisted user-visible SFTP permission errors: no server path leaked. */
+    static final class SftpPermissionFailure extends IOException {
+        SftpPermissionFailure(String reason) { super(reason); }
+    }
+
+    /** Read chmod bits using LSTAT to avoid changing a symlink's target. */
+    static int sftpPermissions(Models.RemoteProfile p, String path) throws Exception {
+        if (p == null || !"SFTP".equals(p.protocol))
+            throw new IllegalArgumentException("리눅스 파일 권한은 SFTP에서만 확인할 수 있습니다.");
+        try (SSHClient ssh = ssh(p);
+             SFTPClient sftp = ssh.newSFTPClient()) {
+            net.schmizz.sshj.sftp.FileAttributes attr =
+                    sftp.lstat(absolute(p, relativePath(path)));
+            if (attr.getType() == net.schmizz.sshj.sftp.FileMode.Type.SYMLINK)
+                throw new SftpPermissionFailure(
+                        "심볼릭 링크는 대상 파일에 영향을 줄 수 있어 chmod를 지원하지 않습니다.");
+            return LinuxFilePermissions.checkedMode(attr.getMode().getPermissionsMask());
+        } catch (net.schmizz.sshj.sftp.SFTPException denied) {
+            throw new SftpPermissionFailure(
+                    "SFTP 서버에서 파일 권한 조회를 거부했습니다. 계정과 파일 접근 권한을 확인하세요.");
+        }
+    }
+
+    /** Standard SFTP SETSTAT chmod, no SSH shell/sudo. Reject stale modes. */
+    static int sftpChmod(Models.RemoteProfile p, String path,
+                         int expectedMode, int newMode) throws Exception {
+        if (p == null || !"SFTP".equals(p.protocol))
+            throw new IllegalArgumentException("리눅스 권한 변경은 SFTP에서만 지원합니다.");
+        if (p.readOnly)
+            throw new SftpPermissionFailure("읽기 전용 SFTP 연결에서는 권한을 변경할 수 없습니다.");
+        LinuxFilePermissions.checkedMode(expectedMode);
+        LinuxFilePermissions.checkedMode(newMode);
+        try (SSHClient ssh = ssh(p);
+             SFTPClient sftp = ssh.newSFTPClient()) {
+            String target = absolute(p, relativePath(path));
+            net.schmizz.sshj.sftp.FileAttributes attr = sftp.lstat(target);
+            if (attr.getType() == net.schmizz.sshj.sftp.FileMode.Type.SYMLINK)
+                throw new SftpPermissionFailure("심볼릭 링크의 권한 변경은 지원하지 않습니다.");
+            if (attr.getMode().getPermissionsMask() != expectedMode)
+                throw new SftpPermissionFailure("서버에서 파일 권한이 이미 변경됐습니다. 다시 확인하세요.");
+            sftp.chmod(target, newMode);
+            int verified = sftp.lstat(target).getMode().getPermissionsMask();
+            if (verified != newMode)
+                throw new SftpPermissionFailure("서버가 chmod 변경을 일부 적용하지 않았습니다. " +
+                        "현재 권한: " + LinuxFilePermissions.octal(verified));
+            return verified;
+        } catch (net.schmizz.sshj.sftp.SFTPException denied) {
+            throw new SftpPermissionFailure(
+                    "SFTP 서버가 chmod 요청을 거부했습니다. 파일 소유자 또는 쓰기 권한을 확인하세요.");
+        }
+    }
+
     private static HttpUrl webUrl(Models.RemoteProfile p, String path, boolean folder) {
         HttpUrl.Builder b = new HttpUrl.Builder()
                 .scheme(p.ssl ? "https" : "http")
