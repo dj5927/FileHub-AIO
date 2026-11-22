@@ -1,0 +1,40 @@
+name: Publish signed FileHub Android v0.1.110 (verified)
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[ANDROID_BINARY_HANDOFF_20261123_V110]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Download and verify publisher-signed Android v0.1.110
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --http1.1 --fail --location --retry 6 --retry-all-errors \
+            --retry-delay 3 --connect-timeout 15 --max-time 850 \
+            'https://scholar-batman-bit-shorter.trycloudflare.com/FileHub-AIO-v0.1.110.apk' -o FileHub-AIO-v0.1.110.apk
+          test "$(stat -c '%s' FileHub-AIO-v0.1.110.apk)" -eq 72631745
+          echo '29A52291E39EF0AB01E7C0509A0AE15A50A8951701F995AE5AD866E942471C70  FileHub-AIO-v0.1.110.apk' | sha256sum -c -
+          unzip -Z1 FileHub-AIO-v0.1.110.apk | grep -Fx AndroidManifest.xml
+          echo 'ANDROID_V110_VERIFIED_PUBLISHER_SIGNED_APK_SHA256_PASS'
+      - name: Publish official Android v0.1.110 latest release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.1.110 >/dev/null 2>&1; then
+            echo 'v0.1.110 exists already; refusing to overwrite'
+            exit 1
+          fi
+          gh release create v0.1.110 FileHub-AIO-v0.1.110.apk \
+            --target "$GITHUB_SHA" --latest \
+            --title 'FileHub AIO Android v0.1.110' \
+            --notes $'versionCode: 111\n\n- Fixed SFTP HANDSHAKE NoSuchAlgorithmException caused by Android JCA provider compatibility. SSHJ no longer pins its crypto operations to Android deprecated system Bouncy Castle; instead uses DefaultSecurityProviderConfig/platform Conscrypt.\n- Prioritizes standard ECDH P-256/P-384/P-521 plus modern AES-CTR before optional Curve25519/ChaCha; no insecure algorithm or trust bypass added.\n- Preflights SSHJ JCA SHA-256, EC, ECDH, ECDSA, AES and HMAC algorithms before starting connection. Improved safe diagnostic codes for missing crypto.\n- Confirmed real Steam Deck SSH host key exchange without credentials using the corrected SSHJ config and pinned ECDSA key from a Windows JVM. No actual password was used; real Android phone login must still be field-tested.\n- Existing SFTP SHA256 first-use host key confirmation and strict pinning remain enabled.\n- Android unit tests: 568 tests, 0 failed, 1 pre-existing conditional skip. Signed APK versionCode 111, package com.nasmount.mobile, publisher signature unchanged.\n- All other Android features unchanged, Google Drive and OneDrive still excluded; PC v1.3.128 unchanged.\n- SHA256 29A52291E39EF0AB01E7C0509A0AE15A50A8951701F995AE5AD866E942471C70'
+          gh release view v0.1.110 --json tagName,url,assets
+          echo 'ANDROID_V0_1_110_OFFICIAL_GITHUB_RELEASE_SUCCESS'
