@@ -15,7 +15,36 @@ An open-source file manager and media/reading app designed for NAS, WebDAV, SMB,
 
 Get the latest signed APK from [GitHub Releases](https://github.com/dj5927/FileHub-AIO/releases/latest). On app launch, FileHub checks the latest published stable release, showing only a short notification when an update exists. You can download and install it manually from **⋮ → 업데이트 확인 (Check for updates)**. Installation always requires Android's confirmation and may require permission to install APKs from this app.
 
-The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.109 the metadata is versionCode: 110 and FileHub-AIO-v0.1.109.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.110 the metadata is versionCode: 111 and FileHub-AIO-v0.1.110.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+
+## Android v0.1.110: fix missing cryptographic algorithm during SFTP handshake
+
+- Android v0.1.109 reported `SFTP-HANDSHAKE-NoSuchAlgorithmException` on a
+  Steam Deck SFTP connection. The failure is during SSH cryptographic setup,
+  not username/password authentication or directory permissions.
+- SSHJ 0.41.x can bind its JCA operations to Android's deprecated system
+  Bouncy Castle (BC) provider, where SHA-256 and other implementations are
+  restricted on Android P and later. We now explicitly reset that binding
+  and use SSHJ's upstream `DefaultSecurityProviderConfig`, which selects
+  the platform-provided JCA algorithms without pinning deprecated BC.
+- The app prioritizes `ecdh-sha2-nistp256` and other secure platform ECDH
+  key exchanges before provider-dependent Curve25519/X25519, plus standard
+  AES-CTR ciphers before optional ChaCha20; ECDSA host key verification and
+  explicit first-use fingerprint approval remain mandatory.
+- A preflight checks SHA-256, EC key generation/factory, ECDH, ECDSA
+  signature, AES-CTR and HMAC-SHA256 availability **on Android** before
+  attempting SSH. If a device still lacks an algorithm, sanitized
+  `SFTP-CRYPTO-JCA-*` diagnostics identify the error without exposing
+  user IPs, private paths or passwords.
+- Verified the new crypto provider setup and algorithm preferences by
+  completing a real **unauthenticated** SSH key exchange to the Steam
+  Deck's OpenSSH 10.4 using pinned ECDSA host-key fingerprint. No actual
+  password was used. This test ran from the publisher's Windows JVM;
+  a physical Android device was not connected, so final on-device SFTP
+  authentication still requires user field testing.
+- Automated regression tests cover recovery from an explicitly poisoned
+  provider, valid secure ECDH/AES setup, and sanitized crypto error codes.
+  The temporary LAN/IP-specific test was removed before publication.
 
 ## Android v0.1.109: Steam Deck SSH transport compatibility & diagnostic codes
 

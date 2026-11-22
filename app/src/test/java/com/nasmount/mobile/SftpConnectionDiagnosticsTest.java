@@ -10,10 +10,10 @@ public class SftpConnectionDiagnosticsTest {
     @Test public void errorsExplainNetworkStageWithoutExposingCredentials() {
         SftpConnectionDiagnostics exception = SftpConnectionDiagnostics.from(
                 "HANDSHAKE", new NoRouteToHostException(
-                        "172.30.1.42 deck secret password"));
+                        "192.0.2.42 demo-user secret password"));
         assertEquals("SFTP-NET-ROUTE", exception.code);
         assertTrue(exception.userMessage().contains("HANDSHAKE"));
-        assertFalse(exception.userMessage().contains("172.30.1.42"));
+        assertFalse(exception.userMessage().contains("192.0.2.42"));
         assertFalse(exception.userMessage().contains("password"));
         assertEquals("SFTP-NET-TIMEOUT", SftpConnectionDiagnostics.from(
                 "HANDSHAKE", new SocketTimeoutException()).code);
@@ -35,5 +35,14 @@ public class SftpConnectionDiagnosticsTest {
                 new java.io.IOException("remote /home/deck/SECRET private file"));
         assertTrue(e.code.startsWith("SFTP-FOLDER-"));
         assertFalse(e.userMessage().contains("SECRET"));
+    }
+
+    @Test public void missingAlgorithmIsReportedAsCryptoNotWrongPassword() {
+        SftpConnectionDiagnostics missing = SftpConnectionDiagnostics.from(
+                "HANDSHAKE", new java.security.NoSuchAlgorithmException(
+                        "The BC provider no longer provides MessageDigest.SHA-256"));
+        assertEquals("SFTP-CRYPTO-JCA-SHA256", missing.code);
+        assertFalse(missing.userMessage().contains("BC provider"));
+        assertTrue(missing.userMessage().contains("Android"));
     }
 }

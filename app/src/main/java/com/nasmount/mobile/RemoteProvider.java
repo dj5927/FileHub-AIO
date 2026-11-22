@@ -183,7 +183,14 @@ final class RemoteProvider {
         // Prefer ECDSA over Ed25519 on Android where Conscrypt's EdDSA
         // public-key wrapper is not always supported by SSHJ 0.41.x.
         // The SteamOS/OpenSSH server offers ECDSA; retain Ed25519 fallback.
-        SSHClient ssh = new SSHClient(SftpSshAlgorithms.androidCompatible());
+        net.schmizz.sshj.DefaultConfig sshConfig =
+                SftpSshAlgorithms.androidCompatible();
+        try {
+            SftpSshAlgorithms.verifyRequiredCrypto();
+        } catch (java.security.GeneralSecurityException cryptoFailure) {
+            throw SftpConnectionDiagnostics.from("CRYPTO", cryptoFailure);
+        }
+        SSHClient ssh = new SSHClient(sshConfig);
         ssh.setConnectTimeout(12000);
         // Apply the selected encoding to actual SSHJ SFTP filename packets.
         // A saved setting without setRemoteCharset would not affect any file.

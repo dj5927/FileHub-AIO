@@ -56,6 +56,22 @@ final class SftpConnectionDiagnostics extends IOException {
             return new SftpConnectionDiagnostics(phase, "SFTP-KEX-ALGORITHM",
                     "SSH 키 교환 또는 호스트 키 알고리즘 협상이 일치하지 않습니다.",
                     cause);
+        for (Throwable e = cause; e != null; e = e.getCause()) {
+            if (e instanceof java.security.NoSuchAlgorithmException) {
+                String algorithm = "UNKNOWN";
+                if (text.contains("x25519")) algorithm = "X25519";
+                else if (text.contains("sha-256") ||
+                        text.contains("sha256")) algorithm = "SHA256";
+                else if (text.contains("ecdh")) algorithm = "ECDH";
+                else if (text.contains("ecdsa")) algorithm = "ECDSA";
+                else if (text.contains("aes")) algorithm = "AES";
+                return new SftpConnectionDiagnostics(phase,
+                        "SFTP-CRYPTO-JCA-" + algorithm,
+                        "Android의 SSH 암호화 제공자가 필요한 알고리즘을 " +
+                        "지원하지 않습니다. 서버 비밀번호 문제는 아닙니다.",
+                        cause);
+            }
+        }
         if (text.contains("connection reset") || text.contains("broken pipe") ||
                 text.contains("connection closed"))
             return new SftpConnectionDiagnostics(phase, "SFTP-NET-CLOSED",
