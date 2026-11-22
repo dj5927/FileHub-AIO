@@ -278,3 +278,7 @@ Your NAS/cloud credentials are stored in Android's private encrypted app storage
 ## Support
 
 This is an actively developed community release. Features may be incomplete, and compatibility depends on the NAS provider and Android device. Report reproducible problems using GitHub Issues; do not include account passwords or tokens in screenshots or logs.
+
+### Android v0.1.113: Steam Deck SFTP folder browsing speed
+
+The Android SFTP view no longer opens an additional SSH connection for each visible subfolder solely to count items. Symlink directory navigation and file metadata remain available. See the v0.1.113 OTA release for the signed APK.
