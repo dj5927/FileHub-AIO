@@ -15,7 +15,34 @@ An open-source file manager and media/reading app designed for NAS, WebDAV, SMB,
 
 Get the latest signed APK from [GitHub Releases](https://github.com/dj5927/FileHub-AIO/releases/latest). On app launch, FileHub checks the latest published stable release, showing only a short notification when an update exists. You can download and install it manually from **⋮ → 업데이트 확인 (Check for updates)**. Installation always requires Android's confirmation and may require permission to install APKs from this app.
 
-The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.108 the metadata is versionCode: 109 and FileHub-AIO-v0.1.108.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+The release notes must contain the exact matching integer versionCode and a correctly named signed APK. For v0.1.109 the metadata is versionCode: 110 and FileHub-AIO-v0.1.109.apk. The updater checks SHA-256, package ID, Android versionCode, and signing certificate before opening the Android installer.
+
+## Android v0.1.109: Steam Deck SSH transport compatibility & diagnostic codes
+
+- The Steam Deck at the user-provided private address was independently
+  verified to respond on SSH port 22 with OpenSSH 10.4; a deliberately
+  unauthenticated SSHJ v0.41.2 test successfully reached the host-key
+  verification stage. Its OpenSSH server offered ECDSA P-256 and
+  Ed25519. No real device password was used in the test.
+- SSHJ's default key-algorithm order prioritizes ssh-ed25519, which is
+  affected by a documented Android Conscrypt key-encoding failure in
+  SSHJ (upstream issue #1032). On Android, FileHub now advertises modern
+  ECDSA P-256/P-384/P-521 and RSA-SHA2 host key algorithms before Ed25519.
+  Ed25519 remains supported for hosts that have no alternative. This
+  does not disable server-key verification, add permissive key acceptance,
+  or enable legacy insecure crypto.
+- Confirmed against that same SSH server, with a fake password and a
+  locally discarded test-only probe: the selected SSHJ server host-key
+  fingerprint changed from Ed25519 to the secure ECDSA P-256 key expected
+  from OpenSSH's independent ECDSA negotiation. The diagnostic test
+  contained the private IP and was removed before committing sources.
+- FileHub now reports structured error codes for Android TCP route/refused/
+  timeout, SSH handshake and key-exchange, password authentication, and
+  SFTP directory listing. Raw SSH exception text, passwords, hostnames and
+  sensitive remote file paths are not copied into error dialogs.
+- 100% connection success is NOT claimed until the user tests the signed
+  build on the actual Android device, where Wi-Fi isolation/Conscrypt
+  behavior can differ from Windows.
 
 ## Android v0.1.108: fix Steam Deck SFTP host-key/SSH TransportException
 

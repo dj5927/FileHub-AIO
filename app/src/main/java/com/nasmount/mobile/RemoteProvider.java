@@ -180,7 +180,10 @@ final class RemoteProvider {
     }
 
     private static SSHClient ssh(Models.RemoteProfile p) throws Exception {
-        SSHClient ssh = new SSHClient();
+        // Prefer ECDSA over Ed25519 on Android where Conscrypt's EdDSA
+        // public-key wrapper is not always supported by SSHJ 0.41.x.
+        // The SteamOS/OpenSSH server offers ECDSA; retain Ed25519 fallback.
+        SSHClient ssh = new SSHClient(SftpSshAlgorithms.androidCompatible());
         ssh.setConnectTimeout(12000);
         // Apply the selected encoding to actual SSHJ SFTP filename packets.
         // A saved setting without setRemoteCharset would not affect any file.
@@ -197,8 +200,10 @@ final class RemoteProvider {
                 return trust.verify(key);
             }
         });
+        String phase = "HANDSHAKE";
         try {
             ssh.connect(p.host.trim(), port(p, 22));
+            phase = "AUTH";
             ssh.authPassword(p.username, p.password);
             return ssh;
         } catch (Exception e) {
@@ -207,7 +212,7 @@ final class RemoteProvider {
             // a user-facing confirmation instead of a misleading network
             // failure; changed keys are still strictly rejected.
             trust.rethrowIfRejected();
-            throw e;
+            throw SftpConnectionDiagnostics.from(phase, e);
         }
     }
 
@@ -392,6 +397,11 @@ final class RemoteProvider {
                         out.add(e);
                     }
                     return sort(out);
+                } catch (UntrustedHostKey | SftpConnectionDiagnostics |
+                         SecurityException diagnostic) {
+                    throw diagnostic;
+                } catch (Exception failure) {
+                    throw SftpConnectionDiagnostics.from("FOLDER", failure);
                 }
             case "WebDAV":
                 Request request = webRequest(p, normalized, true)

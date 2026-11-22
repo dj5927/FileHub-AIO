@@ -412,6 +412,8 @@ public class MainActivity extends Activity {
         // Never expose protocol URLs, credentials, arbitrary server paths,
         // or SSH diagnostic stack traces in an error dialog.
         for (Throwable e=error; e!=null; e=e.getCause()) {
+            if (e instanceof SftpConnectionDiagnostics)
+                return ((SftpConnectionDiagnostics) e).userMessage();
             if (e instanceof RemoteProvider.UntrustedHostKey)
                 return "SFTP 서버의 호스트 키 확인이 필요합니다.";
             if (e instanceof SecurityException &&
