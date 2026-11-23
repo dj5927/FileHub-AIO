@@ -1,0 +1,68 @@
+name: Publish verified FileHub PC v1.3.138 WinFsp upload acknowledgment release
+on:
+  push:
+    branches: [pc/windows]
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[PC_V138_BINARY_HANDOFF_20261124]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Download, reassemble and verify Windows publisher archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in {00..10}; do
+            curl --http1.1 --fail --location --retry 7 --retry-all-errors --retry-delay 3 --connect-timeout 15 --max-time 330 "https://visits-sort-apparel-federation.trycloudflare.com/pc-v138-part${i}" -o "pc-v138-part${i}"
+            test -s "pc-v138-part${i}"
+            echo "PC138_PART_${i}_READY"
+          done
+          cat pc-v138-part{00..10} > FileHub-AIO-PC-1.3.138-win-x64.zip
+          test "$(stat -c '%s' FileHub-AIO-PC-1.3.138-win-x64.zip)" -eq 169203570
+          echo 'BD7BB0561B12ABDFFCC43B45171C76256541F9D91576CFF112E3B3705CC53DFC  FileHub-AIO-PC-1.3.138-win-x64.zip' | sha256sum -c -
+          unzip -tqq FileHub-AIO-PC-1.3.138-win-x64.zip
+          for file in FileHubAIO.exe tools/NASMountLockBridge.exe tools/rclone.exe tools/google-oauth-desktop.json README_PC_V138_SERVER_ACK_STATUS_KR.md RAIDRIVE_2026_10_COMPARATIVE_RESEARCH.md; do
+            unzip -Z1 FileHub-AIO-PC-1.3.138-win-x64.zip | grep -Fx "$file"
+          done
+          printf '%s\n' 'BD7BB0561B12ABDFFCC43B45171C76256541F9D91576CFF112E3B3705CC53DFC  FileHub-AIO-PC-1.3.138-win-x64.zip' > SHA256SUMS
+          echo 'PC138_VERIFIED_ARCHIVE_SUCCESS'
+      - name: Publish Windows PC-only OTA release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view pc-v1.3.138 >/dev/null 2>&1; then
+            echo 'Refusing to replace existing PC v1.3.138 release'
+            exit 1
+          fi
+          cat > notes.txt <<'NOTES'
+          FileHub AIO PC v1.3.138 - WebDAV cross-client upload completion visibility
+
+          - WinFsp bridge STATUS now distinguishes queued, uploading, server-acknowledged, failed and cancelled files.
+          - FileHub displays NAS-acknowledged transfer progress separately from Windows Explorer's local-cache copy progress.
+          - Keep fast 64-way parallel WebDAV uploads; no per-file post-upload remote re-fetch for accepted new-file PUTs.
+          - Failed/uncertain uploads and HTTP 404/405/409/412/423 conflicts are not blindly retried to avoid recreating externally deleted paths.
+          - After a crash, queued/uploading journal entries are retained for manual recovery rather than automatically replaying files another WebDAV client might have deleted.
+          - A local WinFsp/WebDAV regression test verified this no-replay behavior, repeated Excel saves, concurrent-edit prevention and crash-journal checks.
+          - Local test (250ms artificial response latency, 60 x 4KiB): synchronous Cleanup took 17.246s, whereas 64-way write-behind staged in 0.230s and all 60 server acknowledgments arrived after about 1.085s total.
+          - Read-only RaiDrive 2026.10.0 binary/MSI investigation documented in included comparative report; proprietary software not redistributed or directly ported.
+          - Important: Explorer reaching 100% still means local staging completed. Wait for FileHub 'NAS transfer complete' before cross-client deletion or power-off.
+          - Real Synology latency and interoperability remain to be tested on the target NAS.
+          - Android and non-WebDAV PC adapters unchanged.
+          - SHA256: BD7BB0561B12ABDFFCC43B45171C76256541F9D91576CFF112E3B3705CC53DFC
+          NOTES
+          gh release create pc-v1.3.138 FileHub-AIO-PC-1.3.138-win-x64.zip SHA256SUMS --target "$GITHUB_SHA" --latest=false --title 'FileHub AIO PC v1.3.138' --notes-file notes.txt
+          gh release view pc-v1.3.138 --json tagName,url,assets > release.json
+          python3 - <<'PY'
+          import json
+          r=json.load(open('release.json',encoding='utf-8'))
+          assert r['tagName']=='pc-v1.3.138'
+          a=next(x for x in r['assets'] if x['name']=='FileHub-AIO-PC-1.3.138-win-x64.zip')
+          assert a['size']==169203570
+          assert a.get('digest','').lower()=='sha256:bd7bb0561b12abdffcc43b45171c76256541f9d91576cff112e3b3705cc53dfc'
+          print('PC138_OFFICIAL_RELEASE_SUCCESS')
+          PY
