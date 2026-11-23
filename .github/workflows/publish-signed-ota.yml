@@ -13,7 +13,7 @@ jobs:
     # v0.1.105 is a one-time publisher-signed binary handoff with its own
     # checksum-verified workflow. Do not run the older staging-branch
     # publisher against this tag (that branch is intentionally absent).
-    if: github.ref_name != 'v0.1.105' && github.ref_name != 'v0.1.106' && github.ref_name != 'v0.1.107' && github.ref_name != 'v0.1.108' && github.ref_name != 'v0.1.109' && github.ref_name != 'v0.1.110' && github.ref_name != 'v0.1.111' && github.ref_name != 'v0.1.112'
+    if: github.ref_name != 'v0.1.105' && github.ref_name != 'v0.1.106' && github.ref_name != 'v0.1.107' && github.ref_name != 'v0.1.108' && github.ref_name != 'v0.1.109' && github.ref_name != 'v0.1.110' && github.ref_name != 'v0.1.111' && github.ref_name != 'v0.1.112' && github.ref_name != 'v0.1.113' && github.ref_name != 'v0.1.114'
     runs-on: ubuntu-latest
     steps:
       - name: Check out staged, already-signed APK
