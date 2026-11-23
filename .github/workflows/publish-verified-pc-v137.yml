@@ -1,0 +1,75 @@
+name: Publish verified FileHub PC v1.3.137 WebDAV bulk-copy release
+on:
+  push:
+    branches: [pc/windows]
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[PC_V137_BINARY_HANDOFF_20261123]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Download and reassemble publisher-built archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in {00..10}; do
+            curl --http1.1 --fail --location --retry 7 --retry-all-errors --retry-delay 3 --connect-timeout 15 --max-time 330 "https://newark-walker-powerpoint-hills.trycloudflare.com/pc-v137-part${i}" -o "pc-v137-part${i}"
+            test -s "pc-v137-part${i}"
+            echo "PC137_PART_${i}_READY"
+          done
+          cat pc-v137-part{00..10} > FileHub-AIO-PC-1.3.137-win-x64.zip
+          test "$(stat -c '%s' FileHub-AIO-PC-1.3.137-win-x64.zip)" -eq 169193738
+          echo 'DF21A922C89D71E75419A1FE8B7281EF9F2CB90D4EAE2C97AFD0815DF06C9116  FileHub-AIO-PC-1.3.137-win-x64.zip' | sha256sum -c -
+          unzip -tqq FileHub-AIO-PC-1.3.137-win-x64.zip
+          for file in FileHubAIO.exe tools/NASMountLockBridge.exe tools/rclone.exe tools/google-oauth-desktop.json README_PC_V137_KR.txt; do
+            unzip -Z1 FileHub-AIO-PC-1.3.137-win-x64.zip | grep -Fx "$file"
+          done
+          printf '%s\n' 'DF21A922C89D71E75419A1FE8B7281EF9F2CB90D4EAE2C97AFD0815DF06C9116  FileHub-AIO-PC-1.3.137-win-x64.zip' > SHA256SUMS
+          echo 'PC137_VERIFIED_ARCHIVE_SUCCESS'
+      - name: Publish Windows-only OTA release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view pc-v1.3.137 >/dev/null 2>&1; then
+            echo 'Refusing to overwrite existing PC 1.3.137 release'
+            exit 1
+          fi
+          cat > notes.txt <<'NOTES'
+          FileHub AIO PC v1.3.137 (Windows x64)
+
+          Faster WebDAV bulk copy / move for newly created files across all extensions.
+          - New files are staged to the OS write cache instead of synchronously waiting for each individual upload before continuing.
+          - Up to 64 concurrent WebDAV PUT uploads run in the background.
+          - No per-file HEAD, PROPFIND, full reread or checksum validation request after an accepted new-file PUT.
+          - A PUT accepted without a server ETag is not needlessly re-verified per file.
+          - Queued/pending writes stay tracked; incomplete uploads retain recovery data and prevent ordinary clean shutdown.
+          - Existing-directory deletion fixes from v1.3.136 retained.
+
+          Important: The Windows copy dialog finishing acknowledges local staging, NOT completion of the NAS upload. Do not shut down the PC, kill FileHub or disconnect a drive while transfers are pending. Sudden power loss before asynchronous staging finishes may lose newly copied files. An upload failure is logged and NOT treated as a successful NAS commit.
+
+          Local loopback tests with simulated 250 ms network response latency:
+          - 2,780 new files / 305.8 MB: Windows local-copy 43.17 seconds, all 2,780 files remote-complete around 45.34 seconds; zero upload failures, zero pending recovery manifests. Five samples matched SHA-256.
+          - 3,000 files / 1 KiB each: final buffered staging local-copy 15.68 seconds, all remote-complete around 46.36 seconds, zero missing, zero upload errors. The aspirational 10-second result was not reached.
+          - Copy followed by immediate recursive deletion of 10 photos: all copies and nested directory removed from test server.
+          - Existing Excel repeated-save, collision, crash-recovery tests and PC updater/bridge policy checks passed.
+          - Results are from a local simulated server, not a real Synology WAN measurement. The server/network may change performance.
+          - Android version and non-WebDAV adapters unchanged.
+
+          ZIP SHA256: DF21A922C89D71E75419A1FE8B7281EF9F2CB90D4EAE2C97AFD0815DF06C9116
+          NOTES
+          gh release create pc-v1.3.137 FileHub-AIO-PC-1.3.137-win-x64.zip SHA256SUMS --target "$GITHUB_SHA" --latest=false --title 'FileHub AIO PC v1.3.137' --notes-file notes.txt
+          gh release view pc-v1.3.137 --json tagName,url,assets > release.json
+          python3 - <<'PY'
+          import json
+          r=json.load(open('release.json',encoding='utf-8'))
+          assert r['tagName']=='pc-v1.3.137'
+          a=next(x for x in r['assets'] if x['name']=='FileHub-AIO-PC-1.3.137-win-x64.zip')
+          assert a['size']==169193738
+          assert a.get('digest','').lower()=='sha256:df21a922c89d71e75419a1fe8b7281ef9f2cb90d4eae2c97afd0815df06c9116'
+          print('PC137_OFFICIAL_RELEASE_SUCCESS')
+          PY
