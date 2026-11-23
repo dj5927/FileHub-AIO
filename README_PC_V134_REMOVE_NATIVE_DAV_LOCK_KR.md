@@ -48,3 +48,11 @@ synthetic Microsoft Office owner files without a compatibility test.
 - Distribution policy PASS: old true native-lock JSON disabled and directly routed, encrypted backup/import, PC updater, version/header/footer, Google OAuth and login, and LockBridge self-test (Excel owner naming, ETag protection, file read/write) all passed.
 - C: volume temporary exhaustion during build resolved by deleting only generated bin/obj directories from old PC worktrees; project sources and published release assets untouched.
 - This version removes an obsolete PC experiment. Separate Android WebDAV Office owner-file conflict detection still requires implementation; no Android APK change or release is included.
+
+## Official release verified (2026-11-23)
+
+- GitHub Actions run 45132223519: success. The CI runner rebuilt the 11 transfer segments, verified ZIP integrity, complete SHA-256, required EXE/LockBridge/OAuth/rclone assets, and created the PC-only release.
+- Official ZIP: FileHub-AIO-PC-1.3.134-win-x64.zip, 168,933,682 bytes, SHA-256 A8FC94E5D73EEA4CFC99BC36CA0B9CBDBD85ACFB1CB7E0080B697BF3D6D69DB8; GitHub asset digest exactly matches the locally tested ZIP.
+- Download: https://github.com/dj5927/FileHub-AIO/releases/download/pc-v1.3.134/FileHub-AIO-PC-1.3.134-win-x64.zip
+- Post-release cleanup: temporary HTTPS tunnel and ZIP part HTTP server stopped. No user NAS data or live FileHub connections were modified.
+- Remaining separate work: Android WebDAV editing does not yet check Excel ~$ owner files. It was audited but NOT modified or released by this PC fix.
