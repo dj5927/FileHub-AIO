@@ -1,0 +1,8 @@
+FileHub AIO PC v1.3.135 signed/checksum-locked publisher binary handoff
+ZIP: FileHub-AIO-PC-1.3.135-win-x64.zip
+Bytes: 169187506
+SHA256: 66ECEBA4E8518F1633BDD6E9227973AEC90648F3BEEA0F56764FD764ED4F4B6E
+Expected: PC app FileHubAIO.exe; tools/NASMountLockBridge.exe, rclone.exe, google-oauth-desktop.json
+Source change commit: 554fc5755e2a16517f2f56156a93ae6a6e867220
+Loopback WinFsp tested: 23 files x 1MiB copy 1.723s and recursive delete 0.923s; no files or directories reappearing; real NAS field test pending.
+Note: existing full UI smoke exit code 1 reproduced on v1.3.134, not a new regression claim.
