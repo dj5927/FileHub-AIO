@@ -23,3 +23,12 @@
 - 기존 Google 파일 열기, 폴더 생성·이름변경, 여러 번 Flush, 신규 업로드, 반복 저장, 동시 수정 충돌, 403 거부/복구 테스트.
 - WebDAV WinFsp 대용량/비정렬 길이 파일 복사 SHA-256, Excel 임시파일 교체, 파일 잠금/이름변경·삭제/복구 테스트.
 - 모든 실사용 서버의 속도 동일성을 보장하는 테스트는 아니며, Google 계정 실제 연결과 사용자의 NAS에서는 현장 검증이 필요함.
+
+## 최종 빌드 및 배포 추적 (2026-11-23)
+
+- PC v1.3.131 Windows 실행파일/WinFsp 엔진 빌드 성공. 정식 배포 ZIP: FileHub-AIO-PC-1.3.131-win-x64.zip, 168,927,907 bytes, SHA-256 A4853F0A24C4084C346639BC1F3559C2CDBED7B490886F8B5929AC36983C8382.
+- 검증된 v1.3.130 기본 패키지의 Google publisher OAuth, MyBox/TeraBox, rclone 관련 부가 구성요소를 보존하고 새 1.3.131 앱과 WinFsp 엔진으로 교체.
+- 실제 WinFsp 네트워크 모의 Google 드라이브로 8,388,731바이트 파일 CopyFileEx: Windows 진행 샘플 10회, 진행 구간 약 748ms, 전부 같은 바이트 확인. 신규 파일 스트리밍 중 서버에 미완료 게시 금지, 취소 시 로컬 저널 보존 통과.
+- 구글 기존 파일 여러 번 저장, Office 플러시, 충돌, 403 실패 로컬 복구, 구글 로그인 UI/게시자 OAuth, PC updater/EXE/설정 백업 테스트 통과.
+- WebDAV 로컬 WinFsp 복사 24MiB/23,600,123바이트 SHA-256, 파일 잠금, 한글 폴더 이름변경, 엑셀 임시파일 교체 테스트 통과. 사용자 NAS의 99% 마지막 응답 지연은 아직 실기기 재검증 필요.
+- 공식 릴리즈 URL: https://github.com/dj5927/FileHub-AIO/releases/tag/pc-v1.3.131
