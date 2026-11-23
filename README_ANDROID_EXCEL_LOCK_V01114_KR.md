@@ -57,3 +57,14 @@ at the beginning of the editing session.
   in every proprietary Excel version is not guaranteed.
 - An abandoned remote ~$ file should only be removed manually after all
   editors are closed.
+
+## 정식 Android 빌드 및 OTA 인수인계 (2026-11-23)
+
+- 최신 Android 버전: v0.1.114, versionCode 115, Android applicationId com.nasmount.mobile.
+- 기존 퍼블리셔 서명 v0.1.113과 새 v0.1.114 서명 인증서 SHA-256 일치: E2B6FECE09666DBFB26044C381227953F93A1EB1685EA6890139BBDA89EFEEB8.
+- 로컬 Gradle testDebugUnitTest 총 586개 테스트 통과, 실패 0, WebDavExcelLeaseTest 8개 통과. GitHub Android 37 JavaScript 및 Android 테스트/디버그 APK Actions run 45133864314 success.
+- Publisher 서명 Release APK: FileHub-AIO-v0.1.114.apk 72,631,889 bytes, SHA-256 A27758AD2EBF517C4FCE91245731915E2FAAA34838814EBCEEB3EFF45A48F975.
+- Gradle assembleRelease 성공, Android apksigner 검증 성공, aapt2 package/version 확인, APK 342개 엔트리 압축 검증 및 Office 자산 검증 PASS.
+- 공식 최신 Android OTA: https://github.com/dj5927/FileHub-AIO/releases/tag/v0.1.114
+- 구버전 staged OTA workflow는 0.1.113/0.1.114 태그에서는 실행하지 않고, 체크섬 고정 배포 workflow에서 발행한다.
+- 실제 사용자 NAS에서 RaiDrive와 안드로이드 Excel 동시 열기 최종 현장 테스트는 미수행. PC 버전, 다른 Android 스토리지 공급자 및 사용자 NAS 데이터는 변경하지 않음.
