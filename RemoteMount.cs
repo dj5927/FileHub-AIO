@@ -45,7 +45,7 @@ internal static partial class RemoteMount
     // provider and disk journal. Legacy rclone remains for other protocols
     // until they have an equally complete, verified native backend.
     internal static bool UsesDirectWebDav(NasProfile profile) =>
-        profile.Protocol == "WebDAV" && !profile.UseNativeWebDavLocks;
+        profile.Protocol == "WebDAV";
 
     internal static string CurrentWebDavEngine(Guid id)
     {

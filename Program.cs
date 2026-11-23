@@ -23,8 +23,20 @@ internal static class Program
                 if (!RemoteMount.UsesDirectWebDav(webdav))
                     throw new IOException("Read-only WebDAV must select direct WinFsp");
                 webdav.UseNativeWebDavLocks = true;
-                if (RemoteMount.UsesDirectWebDav(webdav))
-                    throw new IOException("Explicit native RFC-lock gateway must retain its original path");
+                if (webdav.UseNativeWebDavLocks ||
+                    !RemoteMount.UsesDirectWebDav(webdav))
+                    throw new IOException("Removed native-lock mode reactivated");
+                var legacyProfile =
+                    System.Text.Json.JsonSerializer.Deserialize<NasProfile>(
+                        "{\"Protocol\":\"WebDAV\",\"UseLockBridge\":true," +
+                        "\"UseNativeWebDavLocks\":true}");
+                if (legacyProfile is null ||
+                    legacyProfile.UseNativeWebDavLocks ||
+                    !RemoteMount.UsesDirectWebDav(legacyProfile) ||
+                    System.Text.Json.JsonSerializer.Serialize(legacyProfile)
+                        .Contains("UseNativeWebDavLocks", StringComparison.Ordinal))
+                    throw new IOException(
+                        "Legacy native-lock settings were not migrated safely");
                 foreach (var provider in new[] { "SFTP", "FTP", "GoogleDrive", "TeraBox", "OneDrive", "MyBox" })
                 {
                     if (RemoteMount.UsesDirectWebDav(new NasProfile { Protocol = provider }))
@@ -1907,13 +1919,9 @@ internal static class Program
                     var startupToggle = settings.Controls.OfType<CheckBox>()
                         .SingleOrDefault(x => x.Text.StartsWith(
                             "Windows 로그인 시", StringComparison.Ordinal));
-                    var nativeProbeButton = settings.Controls.OfType<Button>()
-                        .SingleOrDefault(x => x.Text == "WebDAV 서버 LOCK 지원 검사");
-                    if (nativeProbeButton is null || !nativeProbeButton.Visible ||
-                        nativeProbeButton.Right > settings.ClientSize.Width ||
-                        nativeProbeButton.Bottom > settings.ClientSize.Height)
-                        throw new InvalidOperationException(
-                            "WebDAV native lock capability test button missing or clipped");
+                    if (settings.Controls.OfType<Button>().Any(x =>
+                        x.Text.Contains("LOCK", StringComparison.OrdinalIgnoreCase)))
+                        throw new InvalidOperationException("Removed WebDAV native lock option is still visible");
                     if (inventoryButton is null || closeButton is null ||
                         inventoryButton.Bounds.IntersectsWith(closeButton.Bounds) ||
                         inventoryButton.Bottom > settings.ClientSize.Height ||

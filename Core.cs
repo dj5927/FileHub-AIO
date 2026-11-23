@@ -32,9 +32,11 @@ public sealed class NasProfile
     public int SftpTrustedPort { get; set; }
     public bool AllowUnprotectedWrites { get; set; }
     public bool UseLockBridge { get; set; }
-    // Requires the loopback WebDAV upload-token gateway and a server
-    // supporting native RFC4918 locks. Never silently enable for old profiles.
-    public bool UseNativeWebDavLocks { get; set; }
+    // Deprecated experimental RFC4918 gateway switch. Read-only compatibility
+    // shim: legacy JSON/imports may carry true, but the old connection mode
+    // must never activate again after the v1.3.134 migration.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool UseNativeWebDavLocks { get => false; set { } }
     public bool FastReadOnly { get; set; }
     public bool OfficeReadTuning { get; set; }
     // With false, preserve legacy rclone --network-mode (UNC \\server\...).

@@ -34,8 +34,7 @@ internal static class LockStatusPresentation
             return "● 연결됨 · 서버 공유 권한에 따름";
         if (profile.Protocol != "WebDAV")
             return "● 연결됨 · 탐색기 접근 확인";
-        if (profile.UseLockBridge && profile.UseNativeWebDavLocks)
-            return "● 연결됨 · WebDAV 서버 기본 잠금 (폴더 없음)";
+
         if (profile.UseLockBridge)
             return "● 연결됨 · 파일잠금 브리지 사용";
         if (profile.AllowUnprotectedWrites)

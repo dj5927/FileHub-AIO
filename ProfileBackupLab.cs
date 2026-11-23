@@ -33,7 +33,7 @@ internal static class ProfileBackupLab
         var recovered = ProfileBackup.Unpack(sealed1, password);
         if (recovered.Config.Profiles.Count != 1 ||
             recovered.Config.Profiles[0].Id != profile.Id ||
-            !recovered.Config.Profiles[0].UseNativeWebDavLocks ||
+            recovered.Config.Profiles[0].UseNativeWebDavLocks ||
             recovered.Passwords[profile.Id] != "not-a-real-credential")
             throw new InvalidOperationException("Settings backup round-trip differs");
         byte[] portable = PortableProfileBackup.Pack(sample, password);
@@ -43,7 +43,7 @@ internal static class ProfileBackupLab
         var imported = ProfileBackup.Unpack(portable, password);
         if (imported.Config.Profiles.Count != 1 ||
             imported.Config.Profiles[0].Id != profile.Id ||
-            !imported.Config.Profiles[0].UseNativeWebDavLocks ||
+            imported.Config.Profiles[0].UseNativeWebDavLocks ||
             imported.Passwords[profile.Id] != "not-a-real-credential")
             throw new InvalidOperationException("Android-compatible backup differs");
         var desktopGoogle = new NasProfile {

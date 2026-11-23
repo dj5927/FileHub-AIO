@@ -79,12 +79,6 @@ internal sealed partial class MainForm
             () => _ = ConnectAll(true), height: 37);
         retry.SetBounds(282, 180, 244, 33);
         window.Controls.Add(retry);
-        // Keep the RFC4918 test but present it as a full-size standard button.
-        var nativeLockProbe = ModernTheme.Button(
-            "WebDAV 서버 LOCK 지원 검사", 243,
-            () => _ = CheckWebDavStandardLock(), height: 37);
-        nativeLockProbe.SetBounds(28, 221, 243, 33);
-        window.Controls.Add(nativeLockProbe);
         var diagnoseGhost = ModernTheme.Button(
             "빨간 X 원인 정밀 진단 저장", 244,
             () =>
@@ -114,7 +108,7 @@ internal sealed partial class MainForm
                         MessageBoxIcon.Warning);
                 }
             }, height: 37);
-        diagnoseGhost.SetBounds(282, 221, 244, 33);
+        diagnoseGhost.SetBounds(28, 221, 244, 33);
         window.Controls.Add(diagnoseGhost);
         var backup = ModernTheme.Button("설정 내보내기", 243,
             () => ExportSettings(window), height: 37);

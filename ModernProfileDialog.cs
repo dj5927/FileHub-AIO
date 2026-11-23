@@ -26,7 +26,6 @@ internal sealed class ModernProfileDialog : Form
     private readonly CompactCheck rememberBox = new();
     private readonly CompactCheck anonymousBox = new();
     private readonly CompactCheck webDavHttpBox = new();
-    private readonly CompactCheck nativeDavBox = new();
     private readonly CompactCheck cloudNetworkBox = new();
     private readonly CompactCheck ftpPasv = new();
     private readonly CompactCheck ftpExplicit = new();
@@ -224,11 +223,6 @@ internal sealed class ModernProfileDialog : Form
             132, 171, 550, 28, 9f, ModernTheme.Muted);
         Check(webDavHttpBox, "HTTP 사용", 132, 231);
         webDavHttpBox.Checked = profile.WebDavUseHttp;
-        Check(nativeDavBox, "서버 기본 잠금 (실험 · 폴더 없음)", 132, 368);
-        nativeDavBox.Checked = profile.UseNativeWebDavLocks;
-        tip.SetToolTip(nativeDavBox,
-            "WebDAV LOCK/UNLOCK으로 파일 옆에 .nasmount.lock 폴더를 만들지 않습니다. " +
-            "기존 버전의 FileHub AIO와 같은 문서를 동시에 편집하지 마세요.");
         tip.SetToolTip(webDavHttpBox, "HTTP WebDAV는 암호와 파일 내용이 암호화되지 않을 수 있습니다. HTTPS 권장");
 
         Rule(261);
@@ -604,7 +598,6 @@ internal sealed class ModernProfileDialog : Form
         Toggle(ftpExplicit, 549, 369);
         Toggle(ftpModeZ, 646, 369);
         Toggle(cloudNetworkBox, inputX, 368);
-        Toggle(nativeDavBox, inputX, 368);
 
         Place(googleInfo, inputX, 134, 418, 23);
         Place(googleAccount, inputX, 163, 418, 23);
@@ -956,8 +949,6 @@ internal sealed class ModernProfileDialog : Form
         tip.SetToolTip(teraCookieHelp,
             mybox ? "MYBOX PAT 발급 방법 보기" : "ndus 쿠키 확인 방법 보기");
         webDavHttpBox.Visible = dav;
-        nativeDavBox.Visible = dav;
-        nativeDavBox.Enabled = dav && modeIndex == 0;
         ftpCharsetLabel.Visible = ftp || sftp;
         ftpCharset.Visible = ftp || sftp;
         ftpPasv.Visible = ftp;
@@ -1047,7 +1038,6 @@ internal sealed class ModernProfileDialog : Form
         {
             modeIndex = index;
             for (int i = 0; i < modes.Length; i++) modes[i].Checked = i == index;
-            nativeDavBox.Enabled = currentProtocol == "WebDAV" && index == 0;
         }
         finally { switching = false; }
     }
@@ -1056,7 +1046,6 @@ internal sealed class ModernProfileDialog : Form
     {
         profile.AllowUnprotectedWrites = false;
         profile.UseLockBridge = profile.Protocol is not ("SMB" or "GoogleDrive" or "TeraBox" or "OneDrive" or "MyBox") && selected == 0;
-        if (!profile.UseLockBridge) profile.UseNativeWebDavLocks = false;
         profile.AllowUnprotectedWrites = profile.Protocol is "GoogleDrive" or "TeraBox" or "OneDrive" or "MyBox" && selected == 0;
         // The old fast-read mode is removed. Existing profiles are migrated
         // to the safer standard read-only mode on Save, never faster caching.
@@ -1117,16 +1106,6 @@ internal sealed class ModernProfileDialog : Form
         next.ExplicitTls = ftpSecurity.SelectedIndex == 1;
         next.FtpTls12Only = ftpTlsVersion.SelectedIndex == 1;
         ApplyPerformanceMode(next, modeIndex);
-        next.UseNativeWebDavLocks = next.Protocol == "WebDAV" &&
-            next.UseLockBridge && nativeDavBox.Checked;
-        if (next.UseNativeWebDavLocks &&
-            MessageBox.Show(this,
-                "서버 기본 잠금은 .nasmount.lock 폴더를 만들지 않는 실험 기능입니다. " +
-                "연결 전에 실제 서버의 WebDAV LOCK/UNLOCK과 배타적 쓰기 차단을 검사합니다. " +
-                "서버가 호환되지 않으면 안전을 위해 연결 자체를 중단합니다. " +
-                "구 버전 FileHub AIO와 같은 문서를 동시에 열지 마세요. 사용하시겠습니까?",
-                "서버 기본 잠금 호환성 확인", MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning) != DialogResult.Yes) return;
         if (next.Protocol == "MyBox")
         {
             if ((!existing || passwordBox.TextLength > 0) &&
@@ -1203,7 +1182,6 @@ internal sealed class ModernProfileDialog : Form
         Profile.FtpTls12Only = next.FtpTls12Only;
         Profile.AllowUnprotectedWrites = next.AllowUnprotectedWrites;
         Profile.UseLockBridge = next.UseLockBridge;
-        Profile.UseNativeWebDavLocks = next.UseNativeWebDavLocks;
         Profile.FastReadOnly = next.FastReadOnly;
         Profile.OfficeReadTuning = next.OfficeReadTuning;
         DialogResult = DialogResult.OK;
