@@ -1,0 +1,63 @@
+name: Publish verified FileHub Android v0.1.116 signed OTA
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[ANDROID_V116_BINARY_HANDOFF_20261123]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Verify immutable publisher-signed v0.1.116 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --http1.1 --fail --location --retry 7 --retry-all-errors --retry-delay 4 --connect-timeout 15 --max-time 850 'https://outlined-harmony-once-send.trycloudflare.com/FileHub-AIO-v0.1.116.apk' -o FileHub-AIO-v0.1.116.apk
+          test "$(stat -c '%s' FileHub-AIO-v0.1.116.apk)" -eq 72642748
+          echo '5438C7E979A7360728433E28C046FAAC452677B0D277503958B96874ABDE4BCC  FileHub-AIO-v0.1.116.apk' | sha256sum -c -
+          unzip -tqq FileHub-AIO-v0.1.116.apk
+          for name in AndroidManifest.xml classes.dex assets/office_hwp/office-gestures.js assets/office_hwp/excel-grid.js assets/office_hwp/excel-ooxml.js assets/office_hwp/office-host.css; do
+            unzip -Z1 FileHub-AIO-v0.1.116.apk | grep -Fx "$name"
+          done
+          printf '%s\n' '5438C7E979A7360728433E28C046FAAC452677B0D277503958B96874ABDE4BCC  FileHub-AIO-v0.1.116.apk' > SHA256SUMS
+          echo 'SIGNED_ANDROID_116_APK_SHA256_VERIFIED'
+      - name: Publish Android v0.1.116 latest with correct OTA metadata
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.1.116 >/dev/null 2>&1; then
+            echo 'Release already exists; refusing overwrite'
+            exit 1
+          fi
+          cat > release-notes.txt <<'NOTES'
+          versionCode: 117
+
+          FileHub AIO Android v0.1.116 (publisher-signed)
+          - Fixed two-finger Excel pinch freezing after a 1-2% scale change. Stable cell DOM during a gesture, content follows the fingers, native one-finger scrolling preserved.
+          - Display standard embedded PNG, JPEG, GIF, WebP and BMP workbook drawings at stored worksheet anchors, sizes and positions, including images farther down a sheet.
+          - Allow long unwrapped text to extend through adjacent empty cells without altering original fills, borders or styles; stop before populated/merged cells.
+          - Respect stored default Excel row heights and column widths instead of approximate fixed dimensions; keep existing line-wrap, custom widths and merged cells.
+          - XLSX edited-cell saves preserve embedded drawing/media parts and unchanged worksheet/style ZIP entries.
+          - Android JVM tests: 587 cases, 586 passed, 1 skipped, 0 failures. Headless Chromium tests passed for 180%, 130%, 65% zoom; stable touch targets; drawing decode/position; spill; geometry; and lossless OOXML save.
+          - Existing publisher certificate matches signed v0.1.115; new Android versionCode 117.
+          - APK SHA-256: 5438C7E979A7360728433E28C046FAAC452677B0D277503958B96874ABDE4BCC
+          - Actual Samsung multi-touch and a real user workbook should be retested. Complex Office shapes, vector/WMF/EMF, OLE and modern in-cell rich images may still differ from Microsoft Excel.
+          NOTES
+          grep -Fx 'versionCode: 117' release-notes.txt
+          gh release create v0.1.116 FileHub-AIO-v0.1.116.apk SHA256SUMS --target "$GITHUB_SHA" --latest --title 'FileHub AIO Android v0.1.116' --notes-file release-notes.txt
+          gh release view v0.1.116 --json tagName,body,url,assets > release.json
+          python3 - <<'PY'
+          import json,re
+          rel=json.load(open('release.json',encoding='utf-8'))
+          assert rel['tagName']=='v0.1.116'
+          assert re.search(r'(?m)^versionCode:\s*117\s*$',rel['body'])
+          apk=next(a for a in rel['assets'] if a['name']=='FileHub-AIO-v0.1.116.apk')
+          assert apk['size']==72642748
+          assert apk.get('digest','').lower()=='sha256:5438c7e979a7360728433e28c046faac452677b0d277503958b96874abde4bcc'
+          print('ANDROID_116_OFFICIAL_OTA_RELEASE_SUCCESS')
+          PY
