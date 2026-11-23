@@ -1,0 +1,9 @@
+FileHub AIO Android 0.1.117 verified publisher binary handoff
+VersionCode: 118
+Expected file: FileHub-AIO-v0.1.117.apk
+Size: 72644632 bytes
+SHA256: A705B7816CABA5B55CD0F84F9832C907CBC025466737A1C53F5D5D78DEE44D02
+Signer SHA256: e2b6fece09666dbfb26044c381227953f93a1eb1685ea6890139bbda89efeeb8
+Source release changes: 8b148051c40c3e6fb5061389f076761c8c914ac3
+Android signed APK Gradle build and unit tests successful.
+Physical device Excel original styling validation remains outstanding.
