@@ -1,0 +1,46 @@
+name: Repair Android OTA v0.1.115 metadata
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  repair:
+    if: contains(github.event.head_commit.message, '[FIX_OTA115_METADATA_20261123]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify existing signed release and restore required versionCode line
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release view v0.1.115 --json assets,body,tagName > existing.json
+          python3 - <<'PY'
+          import json
+          release=json.load(open("existing.json",encoding="utf-8"))
+          assert release["tagName"]=="v0.1.115"
+          asset=next(a for a in release["assets"] if a["name"]=="FileHub-AIO-v0.1.115.apk")
+          assert asset["size"]==72639184
+          assert asset.get("digest","").lower()=="sha256:4b98d025e2ba28b267ac1bdc8b3db6df2c1d0e34b59ee644761f9af44eda47a9"
+          body=release["body"] or ""
+          assert "Publisher-signed Android v0.1.115 (versionCode 116)" in body
+          if not any(line.strip()=="versionCode: 116" for line in body.splitlines()):
+              body="versionCode: 116\n\n"+body
+          with open("fixed-notes.txt","w",encoding="utf-8") as f:
+              f.write(body)
+          print("OTA_METADATA_VERSIONCODE_RESTORED")
+          PY
+          gh release edit v0.1.115 --notes-file fixed-notes.txt
+          gh release view v0.1.115 --json body,assets,tagName > verified.json
+          python3 - <<'PY'
+          import json,re
+          release=json.load(open("verified.json",encoding="utf-8"))
+          assert release["tagName"]=="v0.1.115"
+          assert re.search(r"(?m)^versionCode:\s*116\s*$",release["body"])
+          apk=next(a for a in release["assets"] if a["name"]=="FileHub-AIO-v0.1.115.apk")
+          assert apk["size"]==72639184 and apk.get("digest","").lower()=="sha256:4b98d025e2ba28b267ac1bdc8b3db6df2c1d0e34b59ee644761f9af44eda47a9"
+          print("OTA115_EXISTING_APK_UNCHANGED_AND_METADATA_VALID")
+          PY
