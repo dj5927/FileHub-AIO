@@ -1,0 +1,66 @@
+name: Publish verified FileHub PC v1.3.136 Synology WebDAV delete and transfer fix
+on:
+  push:
+    branches: [pc/windows]
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[PC_V136_BINARY_HANDOFF_20261123]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Download, reassemble and verify publisher-built Windows archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in {00..10}; do
+            curl --http1.1 --fail --location --retry 6 --retry-all-errors --retry-delay 3 --connect-timeout 15 --max-time 330 "https://ace-relation-led-temporarily.trycloudflare.com/pc-v136-part${i}" -o "pc-v136-part${i}"
+            test -s "pc-v136-part${i}"
+            echo "PC136_PART_${i}_READY"
+          done
+          cat pc-v136-part{00..10} > FileHub-AIO-PC-1.3.136-win-x64.zip
+          test "$(stat -c '%s' FileHub-AIO-PC-1.3.136-win-x64.zip)" -eq 169189500
+          echo '9DD521D049CB6D7B389A12CDF40997FEC5D51830E3424FFFB16DD112C15C47D5  FileHub-AIO-PC-1.3.136-win-x64.zip' | sha256sum -c -
+          unzip -tqq FileHub-AIO-PC-1.3.136-win-x64.zip
+          for file in FileHubAIO.exe tools/NASMountLockBridge.exe tools/rclone.exe tools/google-oauth-desktop.json README_PC_V136_KR.txt; do
+            unzip -Z1 FileHub-AIO-PC-1.3.136-win-x64.zip | grep -Fx "$file"
+          done
+          printf '%s\n' '9DD521D049CB6D7B389A12CDF40997FEC5D51830E3424FFFB16DD112C15C47D5  FileHub-AIO-PC-1.3.136-win-x64.zip' > SHA256SUMS
+          echo 'PC136_ARCHIVE_HASH_AND_STRUCTURE_PASS'
+      - name: Publish PC-only OTA release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view pc-v1.3.136 >/dev/null 2>&1; then
+            echo 'Refusing to overwrite PC v1.3.136'
+            exit 1
+          fi
+          cat > notes.txt <<'NOTES'
+          FileHub AIO PC v1.3.136
+          - Fix Synology WebDAV HTTP 412 on explicit user file/folder DELETE: do not send stale If-Match on interactive deletion, re-fetch server metadata first; retain strict If-Match for internal Office replacement.
+          - Fix slow delete: WinFsp DELETE-only opens (0x10080) no longer download the whole remote file and create a local edit journal.
+          - Map existing-directory MKCOL HTTP 405 to a normal name collision.
+          - Stop repeatedly attempting failed progressive stage uploads: switch to direct conditional PUT for the remainder of the mount after the first stage upload failure.
+          - Add privacy-safe DIRECT_WEBDAV_COPY_TIMING_MS and DIRECT_WEBDAV_DELETE_TIMING_MS to isolate remaining real-NAS latency.
+          - Strict 412 and progressive-failure WinFsp test: 23 x 1 MiB plus 4 x 3 MiB copied then 27 files/folder deleted, no reappearance; nested Soccer folder deleted preserving parent.
+          - Excel repeated-save / conflict / crash recovery verification passed.
+          - Actual Synology latency is not yet measured on this build; local loopback timings must not be extrapolated.
+          - The older full UI smoke test already exits 1 on v1.3.134 and is not asserted passing.
+          - Android, cloud providers and other PC protocols unchanged.
+          - SHA256: 9DD521D049CB6D7B389A12CDF40997FEC5D51830E3424FFFB16DD112C15C47D5
+          NOTES
+          gh release create pc-v1.3.136 FileHub-AIO-PC-1.3.136-win-x64.zip SHA256SUMS --target "$GITHUB_SHA" --latest=false --title 'FileHub AIO PC v1.3.136' --notes-file notes.txt
+          gh release view pc-v1.3.136 --json tagName,url,assets > release.json
+          python3 - <<'PY'
+          import json
+          r=json.load(open('release.json',encoding='utf-8'))
+          assert r['tagName']=='pc-v1.3.136'
+          archive=next(a for a in r['assets'] if a['name']=='FileHub-AIO-PC-1.3.136-win-x64.zip')
+          assert archive['size']==169189500
+          assert archive.get('digest','').lower()=='sha256:9dd521d049cb6d7b389a12cdf40997fec5d51830e3424fffb16dd112c15c47d5'
+          print('PC136_OFFICIAL_RELEASE_SUCCESS')
+          PY
