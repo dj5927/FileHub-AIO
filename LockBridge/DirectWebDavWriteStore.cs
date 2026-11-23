@@ -1012,6 +1012,17 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 retained++;
                 continue;
             }
+            // A crashed queued upload must never be silently replayed:
+            // another WebDAV client may have deleted the destination since
+            // the Explorer copy window closed. Only an exact existing remote
+            // match can be retired automatically.
+            if (journal.Created && journal.Status is ("queued" or "uploading"))
+            {
+                retained++;
+                Console.Error.WriteLine(
+                    "DIRECT_RECOVERY_BACKGROUND_RETAINED_NO_AUTO_REPLAY");
+                continue;
+            }
             string? leaseKey = null;
             try
             {
@@ -1450,6 +1461,26 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     throw new IOException("Crash-replay overwrote another PC edit");
             }
             Console.WriteLine("DIRECT_WEBDAV_CRASH_REPLAY_CONFLICT_FAIL_CLOSED_PASS");
+            string deferred = "/" + folder + "/queued-external-delete.txt";
+            string deferredId;
+            using (var queued = write.Begin(deferred, create: true,
+                fastCopy: true))
+            {
+                deferredId = queued.Id;
+                write.Write(queued, 0,
+                    Encoding.UTF8.GetBytes("new file not yet on NAS"));
+                write.QueueNewFile(queued);
+                // Mimic a crash before the background uploader starts.
+                // A different client may have deleted the folder meanwhile.
+            }
+            recovery = restart.RecoverPending();
+            if (read.StatFresh(deferred) is not null ||
+                !write.PendingRecovery().Any(x => x.Id == deferredId) ||
+                recovery.retained < 1)
+                throw new IOException(
+                    "Queued background copy was replayed after an external deletion");
+            Console.WriteLine(
+                "DIRECT_WEBDAV_QUEUED_RECOVERY_NO_RESURRECTION_PASS");
         }
         finally
         {

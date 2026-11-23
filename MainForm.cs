@@ -9,8 +9,22 @@ internal sealed partial class MainForm : Form
 {
     readonly AppConfig cfg;
     readonly Label status = new() { Dock = DockStyle.Fill, ForeColor = Color.LightGray };
+    readonly ProgressBar nasUploadProgress = new()
+    {
+        Dock = DockStyle.Bottom, Height = 5, Minimum = 0,
+        Maximum = 1000, Style = ProgressBarStyle.Continuous,
+        Visible = false
+    };
     NotifyIcon tray = null!;
     readonly System.Windows.Forms.Timer timer = new() { Interval = 30000 };
+    // The Explorer copy window reflects local WinFsp staging. Only this
+    // independent local-pipe status reports NAS-accepted uploads.
+    readonly System.Windows.Forms.Timer webDavTransferTimer = new()
+        { Interval = 1700 };
+    private bool webDavStatusPolling;
+    private bool webDavHadPending;
+    private DateTime webDavCompletedAtUtc;
+    private string webDavTransferFooter = "";
     readonly ExplorerRefreshCoalescer shellRefresh;
     readonly ShellArrivalBatch batchArrivals;
     bool connectBatchRunning;
@@ -79,6 +93,10 @@ internal sealed partial class MainForm : Form
         Disposed += (_, _) => shellRefresh.Dispose();
         Disposed += (_, _) => batchArrivals.Dispose();
         InitializeModernUi(minimized);
+        webDavTransferTimer.Tick += async (_, _) =>
+            await PollWebDavTransferStatusAsync();
+        webDavTransferTimer.Start();
+        FormClosed += (_, _) => { webDavTransferTimer.Stop(); webDavTransferTimer.Dispose(); };
         if (previewConfig is null)
         {
             try { AppStore.UpdateExistingAutoStartTarget(); }
@@ -915,10 +933,124 @@ internal sealed partial class MainForm : Form
             MessageBoxButtons.OK,result.Success?MessageBoxIcon.Information:MessageBoxIcon.Warning);
     }
 
-    // The main dashboard intentionally has no idle/upload/recovery footer.
-    // Remote upload probes are explicit via [업로드 상태 확인] only. This also
-    // avoids polling rclone/WinFsp every five seconds while files are in use.
-    private static string NormalTransferFooter() => "";
+    // No network polling: a lightweight local bridge-pipe status every
+    // 1.7 seconds is needed to distinguish staged bytes from server ACK.
+    private string NormalTransferFooter() => webDavTransferFooter;
+
+    private async Task PollWebDavTransferStatusAsync()
+    {
+        if (webDavStatusPolling || shutdownRequested || exiting ||
+            Disposing || IsDisposed) return;
+        webDavStatusPolling = true;
+        try
+        {
+            var mounted = cfg.Profiles.Where(p =>
+                p.Protocol == "WebDAV" && RemoteMount.IsRunning(p)).ToArray();
+            int queued = 0, uploading = 0, failed = 0;
+            long accepted = 0, confirmed = 0, canceled = 0;
+            bool unknown = mounted.Length == 0 && webDavHadPending;
+            bool recoveryNeedsReview = false;
+            foreach (var profile in mounted)
+            {
+                try
+                {
+                    var state = await RemoteMount.GetDirectWebDavStatusForUi(profile);
+                    if (state is null) { unknown = true; continue; }
+                    queued += state.Queued;
+                    uploading += state.Uploading;
+                    failed += state.Errors;
+                    accepted += state.Accepted;
+                    confirmed += state.Confirmed;
+                    canceled += state.Canceled;
+                    recoveryNeedsReview |= state.BlockedReason?.Contains(
+                        "복구 기록", StringComparison.Ordinal) == true;
+                }
+                catch (Exception ex) when (ex is IOException or
+                    OperationCanceledException or TimeoutException)
+                {
+                    unknown = true;
+                }
+            }
+            if (IsDisposed || Disposing || shutdownRequested) return;
+            bool pending = queued + uploading > 0;
+            long eligible = Math.Max(0, accepted - canceled);
+            if (pending && eligible > 0)
+            {
+                nasUploadProgress.Value = (int)Math.Clamp(
+                    confirmed * 1000 / eligible, 0, 999);
+                nasUploadProgress.Visible = true;
+            }
+            else if (!pending && !unknown && webDavHadPending &&
+                failed == 0 && !recoveryNeedsReview)
+            {
+                nasUploadProgress.Value = 1000;
+                nasUploadProgress.Visible = true;
+            }
+            else if (!pending && !webDavHadPending &&
+                DateTime.UtcNow - webDavCompletedAtUtc > TimeSpan.FromSeconds(12))
+                nasUploadProgress.Visible = false;
+            if (pending)
+            {
+                if (!webDavHadPending && queued + uploading >= 3)
+                    tray.ShowBalloonTip(3000, "FileHub AIO NAS 업로드 중",
+                        "Windows 탐색기 복사 완료 후에도 NAS 전송이 진행될 수 있습니다. " +
+                        "NAS 전송 완료 알림 전에는 다른 앱에서 삭제하지 마세요.",
+                        ToolTipIcon.Info);
+                webDavHadPending = true;
+                string progress = eligible > 0
+                    ? $" · 서버 확인 {confirmed}/{eligible}" : "";
+                webDavTransferFooter = "NAS 실제 업로드 중 · 대기 " + queued +
+                    " / 전송 " + uploading + progress +
+                    (failed > 0 ? " / 실패 " + failed : "") +
+                    " · 탐색기 완료는 로컬 캐시 기준";
+            }
+            else if (failed > 0 || recoveryNeedsReview)
+            {
+                webDavTransferFooter = failed > 0
+                    ? "NAS 업로드 실패 " + failed + "개 · 복구 확인 필요"
+                    : "NAS 복구 기록 확인 필요 · 서버 완료로 표시하지 않음";
+                webDavHadPending = false;
+            }
+            else if (unknown && webDavHadPending)
+            {
+                // A broken status pipe must never be presented as success.
+                webDavTransferFooter = "NAS 업로드 상태 확인 중 · 완료 미확인";
+            }
+            else if (!unknown && webDavHadPending)
+            {
+                webDavHadPending = false;
+                webDavCompletedAtUtc = DateTime.UtcNow;
+                webDavTransferFooter = "NAS 전송 완료 · 서버 응답 확인됨";
+                tray.ShowBalloonTip(4500, "FileHub AIO NAS 업로드 완료",
+                    "대기 중이던 파일의 NAS 전송이 모두 완료됐습니다.",
+                    ToolTipIcon.Info);
+            }
+            else if (DateTime.UtcNow - webDavCompletedAtUtc >
+                TimeSpan.FromSeconds(12))
+                webDavTransferFooter = "";
+
+            string title = "FileHub AIO v" + PcUpdateService.DisplayVersion;
+            tray.Text = unknown && webDavHadPending
+                ? "FileHub NAS 업로드 상태 미확인"
+                : pending
+                ? ("FileHub NAS 전송 중 " + (queued + uploading) + "개")
+                : failed > 0 ? ("FileHub NAS 전송 실패 " + failed + "개")
+                : recoveryNeedsReview ? "FileHub NAS 복구 확인 필요" : title;
+            bool criticalOperation =
+                status.Text.Contains("업데이트 파일 다운로드",
+                    StringComparison.Ordinal) ||
+                status.Text.StartsWith("PC 업데이트",
+                    StringComparison.Ordinal);
+            if (!criticalOperation &&
+                (pending || failed > 0 || recoveryNeedsReview ||
+                status.Text.Length == 0 ||
+                status.Text.StartsWith("NAS ", StringComparison.Ordinal) ||
+                status.Text.StartsWith("● WinFsp",
+                    StringComparison.Ordinal)))
+                status.Text = webDavTransferFooter;
+        }
+        finally { webDavStatusPolling = false; }
+    }
 
     private void NotifyCriticalIntegrityAlerts()
     {
@@ -939,7 +1071,9 @@ internal sealed partial class MainForm : Form
         string savedText = status.Text;
         try
         {
-            if (NormalTransferFooter() != "" || timer.Interval != 30000)
+            if (NormalTransferFooter() != "" || timer.Interval != 30000 ||
+                webDavTransferTimer.Interval != 1700 ||
+                nasUploadProgress.Maximum != 1000)
                 throw new InvalidOperationException("Normal footer is not empty");
             if (typeof(MainForm).GetField("uploadStatusTimer",
                 System.Reflection.BindingFlags.NonPublic |
@@ -950,7 +1084,7 @@ internal sealed partial class MainForm : Form
             if (status.Text != "PC 업데이트 파일 다운로드 중...")
                 throw new InvalidOperationException(
                     "Integrity inspection overwrote unrelated operation");
-            Console.WriteLine("QUIET_DASHBOARD_NO_AUTO_UPLOAD_POLL_POLICY_PASS");
+            Console.WriteLine("WEBDAV_REMOTE_ACK_PROGRESS_LOCAL_PIPE_ONLY_POLICY_PASS");
         }
         finally
         {

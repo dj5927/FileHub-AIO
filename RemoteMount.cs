@@ -24,7 +24,8 @@ internal static partial class RemoteMount
         IntegrityAlerts.TryGetValue(id, out var message)
             ? message : PersistedGoogleRecoveryAlert(id);
     internal sealed record UploadState(int Queued, int Uploading, int Errors,
-        bool OutOfSpace, string? BlockedReason = null)
+        bool OutOfSpace, string? BlockedReason = null,
+        long Accepted = 0, long Confirmed = 0, long Canceled = 0)
     {
         public bool IsSafeToDisconnect => Queued == 0 && Uploading == 0 &&
             Errors == 0 && !OutOfSpace && BlockedReason is null;
@@ -947,15 +948,72 @@ internal static partial class RemoteMount
         int writers = Count(fields, "writers");
         int recovery = Count(fields, "recovery");
         int leases = Count(fields, "lease");
+        static int OptionalCount(string[] tokens, string key)
+        {
+            string prefix = key + "=";
+            string? token = tokens.FirstOrDefault(t =>
+                t.StartsWith(prefix, StringComparison.Ordinal));
+            if (token is null) return 0; // pre-v1.3.138 bridge
+            if (!int.TryParse(token[prefix.Length..], out int n) || n < 0)
+                throw new IOException("Invalid WebDAV upload count: " + key);
+            return n;
+        }
+        int queued = OptionalCount(fields, "queued");
+        int uploading = OptionalCount(fields, "uploading");
+        int failed = OptionalCount(fields, "failed");
+        static long OptionalLong(string[] tokens, string key)
+        {
+            string prefix = key + "=";
+            string? token = tokens.FirstOrDefault(t =>
+                t.StartsWith(prefix, StringComparison.Ordinal));
+            if (token is null) return 0;
+            if (!long.TryParse(token[prefix.Length..], out long n) || n < 0)
+                throw new IOException("Invalid WebDAV upload counter: " + key);
+            return n;
+        }
+        long accepted = OptionalLong(fields, "accepted");
+        long confirmed = OptionalLong(fields, "confirmed");
+        long canceled = OptionalLong(fields, "canceled");
+        if (confirmed + canceled > accepted)
+            throw new IOException("Confirmed uploads exceed accepted uploads");
         if (fields[^1] == "SAFE")
-            return new UploadState(0, 0, 0, false);
+        {
+            if (queued != 0 || uploading != 0 || failed != 0)
+                throw new IOException("WebDAV reported SAFE with uploads pending");
+            return new UploadState(0, 0, 0, false,
+                Accepted: accepted, Confirmed: confirmed, Canceled: canceled);
+        }
+        // A normal pending upload also has a recovery manifest; do not
+        // mislabel it as corrupted or already committed to the NAS.
+        int unassignedRecovery = Math.Max(0, recovery - queued - uploading);
+        int openWriters = Math.Max(0, writers - queued - uploading);
         var reasons = new List<string>();
-        if (writers > 0) reasons.Add($"열린 쓰기 파일 {writers}개");
-        if (leases > 0) reasons.Add($"편집 잠금 {leases}개");
-        if (recovery > 0) reasons.Add($"복구 기록 {recovery}개 확인 필요");
-        if (reasons.Count == 0) reasons.Add("활성 작업 확인 필요");
-        return new UploadState(0, 0, 0, false,
-            string.Join(" / ", reasons) + " (안전한 연결 해제 보류)");
+        if (openWriters > 0) reasons.Add($"열린 쓰기 파일 {openWriters}개");
+        if (leases > 0 && queued + uploading == 0)
+            reasons.Add($"편집 잠금 {leases}개");
+        if (unassignedRecovery > 0)
+            reasons.Add($"복구 기록 {unassignedRecovery}개 확인 필요");
+        if (reasons.Count == 0 && queued + uploading + failed == 0)
+            reasons.Add("활성 작업 확인 필요");
+        return new UploadState(queued, uploading, failed, false,
+            reasons.Count == 0 ? null :
+            string.Join(" / ", reasons) + " (안전한 연결 해제 보류)",
+            accepted, confirmed, canceled);
+    }
+
+    // This status is served by the LOCAL bridge pipe, not by an extra
+    // WebDAV request for every copied file.
+    internal static async Task<UploadState?> GetDirectWebDavStatusForUi(
+        NasProfile profile)
+    {
+        Instance? instance;
+        lock (Guard) Running.TryGetValue(profile.Id, out instance);
+        if (instance is null || !instance.DirectWebDav ||
+            instance.Process.HasExited) return null;
+        using var timeout = new CancellationTokenSource(
+            TimeSpan.FromMilliseconds(1500));
+        return ParseDirectWebDavUploadStatus(
+            await DirectCommandAsync(profile.Id, "STATUS", timeout.Token));
     }
 
     internal static void DirectWebDavUploadStatusPolicyTest()
@@ -974,6 +1032,17 @@ internal static partial class RemoteMount
         if (recovery.IsSafeToDisconnect ||
             !recovery.Summary.Contains("복구 기록 1개"))
             throw new InvalidOperationException("Recovery journal guard was lost");
+        var uploading = ParseDirectWebDavUploadStatus(
+            "READY 12 writers=12 recovery=12 lease=0 queued=10 uploading=2 failed=0 accepted=30 confirmed=18 BUSY");
+        if (uploading.Queued != 10 || uploading.Uploading != 2 ||
+            uploading.Errors != 0 || uploading.IsSafeToDisconnect ||
+            uploading.Accepted != 30 || uploading.Confirmed != 18 ||
+            uploading.Summary.Contains("복구 기록"))
+            throw new InvalidOperationException("WebDAV remote upload progress was masked");
+        var failed = ParseDirectWebDavUploadStatus(
+            "READY 0 writers=0 recovery=1 lease=0 queued=0 uploading=0 failed=1 BUSY");
+        if (failed.Errors != 1 || failed.IsSafeToDisconnect)
+            throw new InvalidOperationException("WebDAV upload failure went unreported");
         try
         {
             ParseDirectWebDavUploadStatus("READY 0 SAFE");

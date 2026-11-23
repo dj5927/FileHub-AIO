@@ -144,6 +144,18 @@ internal static class ManagedDirectWebDavHost
                         ? wr.ActiveWriteHandles : 0) +
                     " recovery=" + (store?.PendingRecovery().Length ?? 0) +
                     " lease=" + (leases?.ActiveHandles ?? 0) +
+                    " queued=" + (provider is DirectWebDavWritableFileSystem q
+                        ? q.UploadsQueued : 0) +
+                    " uploading=" + (provider is DirectWebDavWritableFileSystem a
+                        ? a.UploadingNow : 0) +
+                    " failed=" + (provider is DirectWebDavWritableFileSystem f
+                        ? f.FailedUploads : 0) +
+                    " accepted=" + (provider is DirectWebDavWritableFileSystem t
+                        ? t.AcceptedUploads : 0) +
+                    " confirmed=" + (provider is DirectWebDavWritableFileSystem c
+                        ? c.ConfirmedUploads : 0) +
+                    " canceled=" + (provider is DirectWebDavWritableFileSystem x
+                        ? x.CancelledUploads : 0) +
                     " " + (safe ? "SAFE" : "BUSY"));
                 continue;
             }

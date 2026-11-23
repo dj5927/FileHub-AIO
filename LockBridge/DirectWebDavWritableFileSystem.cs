@@ -43,6 +43,18 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         new(StringComparer.OrdinalIgnoreCase);
     private int _outstandingUploads;
     internal int OutstandingUploads => Volatile.Read(ref _outstandingUploads);
+    private int _uploadingNow;
+    private int _failedUploads;
+    private long _confirmedUploads;
+    private long _acceptedUploads;
+    private long _cancelledUploads;
+    internal int UploadingNow => Volatile.Read(ref _uploadingNow);
+    internal int UploadsQueued => Math.Max(0,
+        OutstandingUploads - UploadingNow);
+    internal int FailedUploads => Volatile.Read(ref _failedUploads);
+    internal long ConfirmedUploads => Interlocked.Read(ref _confirmedUploads);
+    internal long AcceptedUploads => Interlocked.Read(ref _acceptedUploads);
+    internal long CancelledUploads => Interlocked.Read(ref _cancelledUploads);
     private sealed class PendingCopy(WriteDescriptor writer)
     {
         internal readonly WriteDescriptor Writer = writer;
@@ -120,6 +132,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             throw new IOException("A copy of this name is already queued");
         writer.Queued = true;
         int pending = Interlocked.Increment(ref _outstandingUploads);
+        Interlocked.Increment(ref _acceptedUploads);
         Console.WriteLine("DIRECT_WEBDAV_WRITE_BEHIND_LOCAL_QUEUED bytes=" +
             writer.Session.Local.Length + " pending=" + pending +
             " remoteCommitted=false");
@@ -133,15 +146,18 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         string key = writer.Entry.Path;
         bool slot = false;
         bool successful = false;
+        bool canceled = false;
         try
         {
             await _uploadSlots.WaitAsync().ConfigureAwait(false);
             slot = true;
+            Interlocked.Increment(ref _uploadingNow);
             Interlocked.Exchange(ref job.Started, 1);
             if (Volatile.Read(ref job.DeleteRequested) != 0)
             {
                 _writes.Discard(writer.Session);
                 successful = true;
+                canceled = true;
             }
             else
             {
@@ -151,8 +167,11 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
                     {
                         _writes.Commit(writer.Session);
                         if (Volatile.Read(ref job.DeleteRequested) != 0)
+                        {
                             _writes.Delete(key, writer.Session.ExpectedEtag,
                                 explicitUserDelete: true);
+                            canceled = true;
+                        }
                         _writes.Close(writer.Session, commit: false);
                         successful = true;
                         break;
@@ -160,12 +179,36 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
                     catch (Exception ex) when (ex is IOException or
                         HttpRequestException or InvalidOperationException)
                     {
-                        if (attempt == 3)
+                        // A WebDAV conflict, HTTP 412/423, or an upload whose
+                        // outcome is uncertain must NOT be retried blindly.
+                        // Another client may have deleted/replaced the path;
+                        // a later retry could recreate the file after their
+                        // successful DELETE. Preserve local recovery instead.
+                        bool terminal = writer.Session.UploadMayHaveCommitted ||
+                            ex.Message.Contains("Concurrent NAS edit",
+                                StringComparison.Ordinal) ||
+                            ex.Message.Contains("conflict",
+                                StringComparison.OrdinalIgnoreCase) ||
+                            ex.Message.Contains("HTTP 412",
+                                StringComparison.Ordinal) ||
+                            ex.Message.Contains("HTTP 423",
+                                StringComparison.Ordinal) ||
+                            // Another client may have removed the parent
+                            // directory. Retrying 404/405/409 against a path
+                            // recreated later would resurrect deleted data.
+                            ex.Message.Contains("HTTP 404",
+                                StringComparison.Ordinal) ||
+                            ex.Message.Contains("HTTP 405",
+                                StringComparison.Ordinal) ||
+                            ex.Message.Contains("HTTP 409",
+                                StringComparison.Ordinal);
+                        if (terminal || attempt == 3)
                         {
                             Console.Error.WriteLine(
                                 "DIRECT_WEBDAV_WRITE_BEHIND_FAILED id=" +
                                 writer.Session.Id + " pendingRecovery=true type=" +
-                                ex.GetType().Name + " attempts=" + attempt);
+                                ex.GetType().Name + " attempts=" + attempt +
+                                " terminal=" + terminal);
                             break;
                         }
                         await Task.Delay(attempt * 500).ConfigureAwait(false);
@@ -182,20 +225,30 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         finally
         {
             if (!successful)
+            {
+                Interlocked.Increment(ref _failedUploads);
                 try { writer.Session.Dispose(); } catch (IOException) { }
+            }
+            else if (canceled) Interlocked.Increment(ref _cancelledUploads);
+            else Interlocked.Increment(ref _confirmedUploads);
             if (successful)
             {
                 _pendingCopies.TryRemove(key, out _);
                 _overlay.TryRemove(key, out _);
             }
             job.Completion.TrySetResult(successful);
-            if (slot) _uploadSlots.Release();
+            if (slot)
+            {
+                Interlocked.Decrement(ref _uploadingNow);
+                _uploadSlots.Release();
+            }
             int pending = Interlocked.Decrement(ref _outstandingUploads);
             Interlocked.Decrement(ref _activeWriteHandles);
             ReleaseOfficeLease(writer.LeaseKey);
             writer.LeaseKey = null;
             Console.WriteLine("DIRECT_WEBDAV_WRITE_BEHIND_STATUS pending=" +
-                pending + " remoteCommitted=" + successful +
+                pending + " remoteCommitted=" + (successful && !canceled) +
+                " canceled=" + canceled +
                 " recoveryRetained=" + !successful);
         }
     }

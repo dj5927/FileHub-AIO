@@ -478,6 +478,9 @@ internal sealed partial class MainForm
         status.TextAlign = ContentAlignment.MiddleLeft;
         status.Padding = new Padding(7, 0, 0, 0);
         bottom.Controls.Add(status);
+        // Unlike Windows Explorer's local-cache progress, this bar advances
+        // only for WebDAV PUT operations acknowledged by the NAS.
+        bottom.Controls.Add(nasUploadProgress);
         footerNotices.Controls.Add(updateNotice);
         footerNotices.Controls.Add(winFspNotice);
         bottom.Controls.Add(footerNotices);
@@ -497,7 +500,18 @@ internal sealed partial class MainForm
         tray.ContextMenuStrip.Items.Add("모두 연결", null, async (_, _) => await ConnectAll(true));
         tray.ContextMenuStrip.Items.Add("프로그램 종료", null, async (_, _) => await ExitProgramFast());
         tray.BalloonTipClicked += async (_, _) =>
-            await CheckForPcUpdateAsync(preferCached: true, startDownloadNow: true);
+        {
+            // NAS transfer notifications belong to the upload-status UI.
+            // They must not unexpectedly launch the PC updater.
+            if (tray.BalloonTipTitle.Contains("NAS 업로드",
+                    StringComparison.Ordinal))
+            {
+                ShowWindow();
+                return;
+            }
+            await CheckForPcUpdateAsync(preferCached: true,
+                startDownloadNow: true);
+        };
         tray.DoubleClick += (_, _) => ShowWindow();
         FormClosed += (_, _) => tray.Dispose();
         FormClosing += (_, e) =>
@@ -610,8 +624,10 @@ internal sealed partial class MainForm
                     RemoteMount.HasManagedRecord(p);
                 UpdateModernCardView(modernCardViews[p.Id], online, running);
             }
-            string footer = $"{(RemoteMount.HasWinFsp ? "● WinFsp 정상" : "● WinFsp 설치 필요")}    ·    " +
-                "NAS 연결 및 파일 잠금 상태";
+            string footer = NormalTransferFooter();
+            if (footer.Length == 0)
+                footer = $"{(RemoteMount.HasWinFsp ? "● WinFsp 정상" : "● WinFsp 설치 필요")}    ·    " +
+                    "NAS 연결 및 파일 잠금 상태";
             if (status.Text != footer)
                 status.Text = footer;
             NotifyCriticalIntegrityAlerts();
