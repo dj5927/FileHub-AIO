@@ -21,6 +21,11 @@ internal static class PcUpdateService
     internal const long MaxUncompressedBytes = 2L * 1024 * 1024 * 1024;
     internal static readonly Version InstalledVersion =
         Assembly.GetEntryAssembly()?.GetName().Version ?? new Version(0, 0);
+    // One authoritative display version for title bar, tray and dialogs.
+    // It comes from the running executable, not a manually updated UI label.
+    internal static string DisplayVersion =>
+        InstalledVersion.Build >= 0
+            ? InstalledVersion.ToString(3) : InstalledVersion.ToString();
     internal static string UpdateRoot =>
         Path.Combine(AppStore.DirectoryPath, "updates");
 

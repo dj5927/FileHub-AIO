@@ -11,6 +11,39 @@ internal sealed partial class MainForm
     private LinkLabel winFspNotice = null!;
     private Panel footerNotices = null!;
 
+    private void ClearPcUpdateCheckStatus()
+    {
+        // The normal dashboard footer is intentionally empty. Clearing this
+        // in finally is essential: the no-update, cancelled, failed and
+        // declined-install paths all exit the check at different locations.
+        if (!IsDisposed && !status.IsDisposed)
+            status.Text = NormalTransferFooter();
+    }
+
+    internal void VerifyVersionAndUpdateFooterForUiTest()
+    {
+        string expected = "FileHub AIO v" + PcUpdateService.DisplayVersion;
+        if (!Text.StartsWith(expected, StringComparison.Ordinal) ||
+            tray.Text != expected ||
+            tray.ContextMenuStrip?.Items[0].Text is not string menuTitle ||
+            !menuTitle.StartsWith(expected, StringComparison.Ordinal) ||
+            Controls.Find("FileHubVersionLabel", true).FirstOrDefault()
+                is not Label label ||
+            label.Text != "FileHub AIO  v" + PcUpdateService.DisplayVersion)
+            throw new InvalidOperationException(
+                "FileHub title, header and tray version are inconsistent");
+        string before = status.Text;
+        try
+        {
+            status.Text = "GitHub PC 릴리즈 확인 중...";
+            ClearPcUpdateCheckStatus();
+            if (status.Text != NormalTransferFooter())
+                throw new InvalidOperationException(
+                    "PC update check left a permanent checking footer");
+        }
+        finally { status.Text = before; }
+    }
+
     private void ResizeFooterNotices()
     {
         if (footerNotices is null || footerNotices.IsDisposed) return;
@@ -189,7 +222,11 @@ internal sealed partial class MainForm
                     "PC 업데이트 실패", MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
         }
-        finally { checkingPcUpdate = false; }
+        finally
+        {
+            checkingPcUpdate = false;
+            ClearPcUpdateCheckStatus();
+        }
     }
 
     private sealed class PcUpdateDownloadForm : Form

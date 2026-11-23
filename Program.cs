@@ -1531,6 +1531,27 @@ internal static class Program
             }
             return;
         }
+        if (args.Contains("--pc-title-footer-policy-test",
+            StringComparer.OrdinalIgnoreCase))
+        {
+            // Isolated UI assertion. No NAS, Google account or GitHub access.
+            Environment.SetEnvironmentVariable("NASMOUNT_UI_SMOKE", "1");
+            try
+            {
+                using var dashboard = new MainForm(false, new AppConfig());
+                dashboard.Show();
+                Application.DoEvents();
+                dashboard.VerifyVersionAndUpdateFooterForUiTest();
+                Console.WriteLine("PC_TITLE_VERSION_AND_UPDATE_FOOTER_POLICY_PASS version=" +
+                    PcUpdateService.DisplayVersion);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("PC_TITLE_FOOTER_POLICY_FAILED " + ex);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
         if (args.Contains("--ui-smoke-test", StringComparer.OrdinalIgnoreCase))
         {
             ProtocolIconFactory.VerifyProtocolDistinctnessForUiTest();
@@ -1568,6 +1589,7 @@ internal static class Program
                 dashboard.VerifySafeExitNoKeepAliveForUiTest();
                 dashboard.VerifyCloseToTrayPolicyForUiTest();
                 dashboard.VerifyTransferFooterForUiTest();
+                dashboard.VerifyVersionAndUpdateFooterForUiTest();
                 if (dashboard.ClientSize.Width < 755 || dashboard.ClientSize.Width > 785 ||
                     dashboard.ClientSize.Height < 550 || dashboard.ClientSize.Height > 582)
                     throw new InvalidOperationException("Compact window dimensions invalid");
