@@ -82,3 +82,12 @@ User reports after Android 0.1.114:
   that honor it. Server-side atomic file locking is not enabled.
 - Real Android + RaiDrive on the user's NAS and long-file GUI performance
   require final installation testing.
+
+## Signed Android v0.1.115 distribution (2026-11-23)
+
+- GitHub release: https://github.com/dj5927/FileHub-AIO/releases/tag/v0.1.115
+- FileHub-AIO-v0.1.115.apk 72,639,184 bytes, SHA-256 4B98D025E2BA28B267AC1BDC8B3DB6DF2C1D0E34B59EE644761F9AF44EDA47A9.
+- Android applicationId com.nasmount.mobile, versionCode 116, versionName 0.1.115, signed with existing v0.1.114 publisher certificate SHA-256 E2B6FECE09666DBFB26044C381227953F93A1EB1685EA6890139BBDA89EFEEB8.
+- Local Gradle unit tests 587 cases total (586 passed, 1 skipped, 0 failed); WebDavExcelLeaseTest 10 passed. Headless Chromium synthetic OOXML fixture tested styles/fills/widths/merges, scrolling, zoom, worksheet tabs, and preserving styles.xml after edited cell saved; PASS.
+- Uploaded GitHub source commit b95069482c7ce9aca75d6f5bd3e8ebfa907f16c5, official Android main branch. Publishing workflow verifies immutable signed APK SHA-256 and package contents before release.
+- Real user NAS and Android+RaiDrive field confirmation still needed. No change to PC branch or user NAS data.
