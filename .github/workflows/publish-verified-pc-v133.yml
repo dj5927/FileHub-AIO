@@ -1,0 +1,46 @@
+name: Publish FileHub PC v1.3.133 verified Excel owner interop
+on:
+  push:
+    branches: [pc/windows]
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[PC_BINARY_HANDOFF_20261123_V133]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Download and verify pinned Windows ZIP parts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in {00..10}; do
+            curl --http1.1 --fail --location --retry 6 --retry-all-errors --retry-delay 3 --connect-timeout 15 --max-time 320 "https://clinics-luxury-keyboards-truck.trycloudflare.com/pc-v133-part${i}" -o "pc-v133-part${i}"
+            test -s "pc-v133-part${i}"
+            echo "PC133_PART_${i}_READY"
+          done
+          cat pc-v133-part{00..10} > FileHub-AIO-PC-1.3.133-win-x64.zip
+          test "$(stat -c '%s' FileHub-AIO-PC-1.3.133-win-x64.zip)" -eq 168932839
+          echo 'F67D257DE161ED24CCECAA8F4E1F55F717881D6D8F80709A60585E3C8D531E72  FileHub-AIO-PC-1.3.133-win-x64.zip' | sha256sum -c -
+          unzip -tqq FileHub-AIO-PC-1.3.133-win-x64.zip
+          unzip -Z1 FileHub-AIO-PC-1.3.133-win-x64.zip | grep -Fx FileHubAIO.exe
+          unzip -Z1 FileHub-AIO-PC-1.3.133-win-x64.zip | grep -Fx tools/NASMountLockBridge.exe
+          unzip -Z1 FileHub-AIO-PC-1.3.133-win-x64.zip | grep -Fx tools/rclone.exe
+          unzip -Z1 FileHub-AIO-PC-1.3.133-win-x64.zip | grep -Fx tools/google-oauth-desktop.json
+          unzip -Z1 FileHub-AIO-PC-1.3.133-win-x64.zip | grep -Fx README_PC_V133_KR.txt
+          printf '%s\n' 'F67D257DE161ED24CCECAA8F4E1F55F717881D6D8F80709A60585E3C8D531E72  FileHub-AIO-PC-1.3.133-win-x64.zip' > SHA256SUMS
+          echo 'PC133_ARCHIVE_VERIFIED'
+      - name: Publish official Windows-only v1.3.133 release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view pc-v1.3.133 >/dev/null 2>&1; then
+            echo 'Official release already exists, refusing overwrite'
+            exit 1
+          fi
+          gh release create pc-v1.3.133 FileHub-AIO-PC-1.3.133-win-x64.zip SHA256SUMS --target "$GITHUB_SHA" --latest=false --title 'FileHub AIO PC v1.3.133' --notes 'WebDAV WinFsp Excel: interoperable Microsoft Office ~$ owner-file locking for .xlsx/.xls/.xlsm/.xlsb. New FileHub Excel editing no longer creates .nasmount.lock, still honors legacy markers. Independently created remote ~$ blocks edit and allows read-only; FileHub-created ~$ bytes commit to the NAS immediately. Both Korean Excel filename variants recognized; existing remote owner files are NEVER automatically deleted on crash. ETag-based owned-owner exemption permits Excel internal SaveAs/atomic replacement. Real Microsoft Excel three saves, Korean workbook five saves, 24MiB and odd-length copies, crash journal recovery, ETag conflict protection and Google/update/publisher policy tests passed. Other Office and provider types unchanged. A Microsoft owner file is cooperative, not an atomic universal lock; real RaiDrive + NAS concurrent test remains for the user. SHA-256 F67D257DE161ED24CCECAA8F4E1F55F717881D6D8F80709A60585E3C8D531E72.'
+          gh release view pc-v1.3.133 --json tagName,url,assets
+          echo 'PC133_OFFICIAL_RELEASE_SUCCESS'
