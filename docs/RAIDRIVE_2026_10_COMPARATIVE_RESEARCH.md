@@ -81,3 +81,45 @@ something that can be solved by changing ProgressBar to 99%.
 - Real Synology LAN/WAN FileHub performance and cross-client deletion races
   require field QA after each release; local loopback numbers are not proof
   of real-NAS parity.
+
+## 2026-11-24 follow-up: managed IL disassembly and control-flow limits
+
+The read-only single-file .NET bundle manifest and 8,064,000-byte embedded
+managed mount-service assembly were parsed locally. ILSpy 11.2 decompiled
+929 private investigation files **only in the analyst's scratch workspace**;
+none of these derived proprietary source files is checked into FileHub.
+
+Independent raw PE/ECMA-335 metadata inspection:
+
+| Metadata observation | Count |
+| --- | ---: |
+| All method definitions | 18,233 |
+| Methods with a managed IL body | 17,340 |
+| IL bodies at most ten bytes | 15,805 |
+| Methods marked NoInlining | 17,336 |
+
+Some methods bearing upload/close-related signatures disassemble to a few
+bytes that merely return a constant, despite the running RaiDrive service
+performing full transfers. This is evidence that ordinary **static source
+decompilation does not expose all effective runtime logic**; it is not proof
+of a particular vendor protection technology. The exact runtime rewrite or
+dispatch mechanism has not been validated, so do not infer call order from
+these placeholder bodies.
+
+Two retained enums distinguish the following lifecycle operation categories:
+
+- **AddUploadWhere**: open, change file size, write-upload, final upload.
+- **FinalCloseWhere**: set file time, flush, cleanup, handle close, file
+  close, merge upload, and delete eligibility.
+
+These categories are real metadata, not evidence of which phase blocks for
+HTTP acknowledgment. The discovery weakens the claim that RaiDrive consists
+solely of a single synchronous Cleanup operation, but cannot by itself
+establish its exact asynchronous pipeline.
+
+For the next level of confidence, perform **black-box tracing against a
+disposable WebDAV test account** and correlate server-received PUT response
+timestamps with caller-observed handle close/Explorer completion. Do not
+attach a debugger, inject code, or modify the user's active production
+RaiDrive service for this purpose. Prefer observable behavior over attempting
+to reconstruct or distribute protected vendor code.
