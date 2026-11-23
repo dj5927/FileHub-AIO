@@ -91,3 +91,12 @@ User reports after Android 0.1.114:
 - Local Gradle unit tests 587 cases total (586 passed, 1 skipped, 0 failed); WebDavExcelLeaseTest 10 passed. Headless Chromium synthetic OOXML fixture tested styles/fills/widths/merges, scrolling, zoom, worksheet tabs, and preserving styles.xml after edited cell saved; PASS.
 - Uploaded GitHub source commit b95069482c7ce9aca75d6f5bd3e8ebfa907f16c5, official Android main branch. Publishing workflow verifies immutable signed APK SHA-256 and package contents before release.
 - Real user NAS and Android+RaiDrive field confirmation still needed. No change to PC branch or user NAS data.
+
+## Official OTA publication confirmation (2026-11-23)
+
+- GitHub Actions run 45143672133 succeeded; SHA-256, APK ZIP validity and required application/assets all verified by CI.
+- Official Android release v0.1.115: https://github.com/dj5927/FileHub-AIO/releases/tag/v0.1.115
+- Published signed APK FileHub-AIO-v0.1.115.apk: 72,639,184 bytes, GitHub asset SHA256 4B98D025E2BA28B267AC1BDC8B3DB6DF2C1D0E34B59EE644761F9AF44EDA47A9. Local signed APK checksum identical.
+- Existing Android publisher certificate unchanged; app version 0.1.115 / code 116; Gradle 587 tests (586 passed, 1 skipped, 0 failure), OOXML browser rendering/export tests passed.
+- Temporary signed APK HTTP host, HTTPS tunnel and browser test server stopped after official release publication.
+- Real NAS and device usability still requires end-user confirmation; exact pixel equivalence with proprietary Excel is not asserted.
