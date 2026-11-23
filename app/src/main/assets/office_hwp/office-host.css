@@ -13,6 +13,7 @@ button { padding:9px; border:1px solid #53646c; border-radius:6px; background:#1
   color:var(--fg); white-space:nowrap; }
 button:disabled { opacity:0.4; }
 #bottom-actions { display:flex; padding:8px 10px; border-top:1px solid #25323c; }
+#bottom-actions[hidden] { display:none!important; }
 #save-original { flex:1; padding:12px; color:white; font-weight:700; background:#087a72; }
 #spreadsheet-shell { display:flex; flex-direction:column; overflow:hidden; }
 #spreadsheet-shell[hidden],#hwp-shell[hidden] { display:none; }

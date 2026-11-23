@@ -85,9 +85,16 @@ function styleCatalog(xml,theme) {
       for(const edge of ['top','right','bottom','left']){
         const side=first(border,edge);
         if(!side || !attr(side,'style'))continue;
-        const width=['medium','thick','double'].includes(attr(side,'style'))?'2px':'1px';
+        const borderType=attr(side,'style');
+        const width=borderType==='thick'?'3px':
+          ['medium','mediumDashed','mediumDashDot','mediumDashDotDot'].includes(borderType)?
+          '2px':borderType==='hair'?'0.5px':'1px';
+        const lineType=borderType==='double'?'double':
+          borderType.toLowerCase().includes('dash')?'dashed':
+          ['dotted','hair'].includes(borderType)?'dotted':'solid';
         style['border'+edge[0].toUpperCase()+edge.slice(1)]=
-          width+' solid '+(color(first(side,'color'),theme)||'#777');
+          (borderType==='double'?'3px':width)+' '+lineType+' '+
+          (color(first(side,'color'),theme)||'#202020');
       }
     }
     const alignment=first(xf,'alignment');
@@ -99,6 +106,9 @@ function styleCatalog(xml,theme) {
     if(attr(alignment,'wrapText')==='1'){
       style.whiteSpace='pre-wrap';style.wordBreak='break-word';
     }
+    if(attr(alignment,'shrinkToFit')==='1')style.shrinkToFit=true;
+    const indent=Number(attr(alignment,'indent'));
+    if(indent>0 && indent<=30)style.paddingLeft=(4+indent*9)+'px';
     return style;
   });
 }
@@ -112,6 +122,7 @@ function resolvePath(target) {
 function rowColMeta(xml) {
   const doc=parse(xml);
   const cells=new Map(),rowHeights=new Map(),colWidths=new Map();
+  const rowStyles=new Map(),colStyles=new Map();
   const format=first(doc,'sheetFormatPr');
   const defaultRowPoints=Number(attr(format,'defaultRowHeight'));
   const defaultColChars=Number(attr(format,'defaultColWidth'));
@@ -124,6 +135,9 @@ function rowColMeta(xml) {
     const h=Number(attr(row,'ht'));
     if(Number.isInteger(n) && n>=0 && h>0)
       rowHeights.set(n,Math.max(12,Math.min(400,h*96/72)));
+    if(Number.isInteger(n) && n>=0 && row.hasAttribute('s') &&
+       attr(row,'customFormat')!=='0')
+      rowStyles.set(n,Number(attr(row,'s'))||0);
   }
   for(const column of tags(first(doc,'cols'),'col')){
     const min=Number(attr(column,'min'))-1,max=Number(attr(column,'max'))-1;
@@ -131,12 +145,16 @@ function rowColMeta(xml) {
     if(Number.isFinite(w) && min>=0 && max>=min)
       for(let c=min;c<=Math.min(max,16383);c++)
         colWidths.set(c,Math.max(32,Math.min(600,Math.round(w*7+5))));
+    if(column.hasAttribute('style') && min>=0 && max>=min)
+      for(let c=min;c<=Math.min(max,16383);c++)
+        colStyles.set(c,Number(attr(column,'style'))||0);
   }
   for(const cell of tags(first(doc,'sheetData'),'c'))
     if(attr(cell,'r'))cells.set(attr(cell,'r'),Number(attr(cell,'s')||0));
   const merges=tags(first(doc,'mergeCells'),'mergeCell')
     .map(m=>attr(m,'ref')).filter(Boolean);
-  return {cells,rowHeights,colWidths,merges,defaultRowPx,defaultColPx,images:[]};
+  return {cells,rowHeights,colWidths,rowStyles,colStyles,merges,
+    defaultRowPx,defaultColPx,images:[]};
 }
 
 const IMAGE_MIMES={
@@ -269,6 +287,7 @@ export async function openXlsxArchive(bytes, sheetNames) {
       sheetMeta.push(meta);
     } else sheetMeta.push({
       cells:new Map(),rowHeights:new Map(),colWidths:new Map(),merges:[],
+      rowStyles:new Map(),colStyles:new Map(),
       defaultRowPx:20,defaultColPx:64,images:[]
     });
   }

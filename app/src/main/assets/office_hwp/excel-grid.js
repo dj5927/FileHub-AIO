@@ -30,6 +30,14 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
   const state={rowPrefix:[],colPrefix:[],maxRow:0,maxCol:0,
     sheet:null,meta:null,zoom:1,selected:selectedAddress,
     raf:false,lastKey:'',visible:[],pinching:false,pinchAnchor:null};
+  const measure=document.createElement('canvas').getContext('2d');
+  function styleFor(address,row,col,cell){
+    const id=state.meta?.cells.has(address)?
+      state.meta.cells.get(address):
+      (cell?.s ?? state.meta?.rowStyles?.get(row) ??
+        state.meta?.colStyles?.get(col) ?? 0);
+    return styleContext?.styles?.[id] || null;
+  }
   function buildPrefix(sheet,meta){
     let range;
     try{range=XLSX.utils.decode_range(sheet['!ref']||'A1');}
@@ -58,6 +66,40 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
         meta?.defaultColPx||64;
       state.colPrefix[c+1]=state.colPrefix[c]+Math.min(600,Math.max(32,size));
     }
+    // Excel auto-sizes rows with wrapped content unless the row height was
+    // explicitly set. A fixed-height row must keep its intentional clipping.
+    const autoHeights=new Map();
+    for(const [address,cell] of Object.entries(sheet)){
+      if(!/^[A-Z]+[1-9][0-9]*$/.test(address) ||
+         typeof cell?.v!=='string' || !cell.v.length)continue;
+      const pos=XLSX.utils.decode_cell(address);
+      if(pos.r>=state.maxRow || pos.c>=state.maxCol ||
+         meta?.rowHeights?.has(pos.r))continue;
+      const css=styleFor(address,pos.r,pos.c,cell);
+      if(css?.whiteSpace!=='pre-wrap')continue;
+      const merged=(sheet['!merges']||[]).find(m=>
+        m.s.r===pos.r && m.s.c===pos.c);
+      const endCol=merged?Math.min(state.maxCol,merged.e.c+1):pos.c+1;
+      const width=state.colPrefix[endCol]-state.colPrefix[pos.c]-8;
+      if(width<=0)continue;
+      const fontSize=parseFloat(css.fontSize)||12;
+      let lines=0;
+      for(const part of cell.v.split('\n')){
+        let units=0;
+        for(const char of part)units+=char.charCodeAt(0)>255?1:0.55;
+        lines+=Math.max(1,Math.ceil(units*fontSize/width));
+      }
+      const height=Math.min(400,Math.max(meta?.defaultRowPx||20,
+        Math.ceil(lines*fontSize*1.3+6)));
+      if(height>(autoHeights.get(pos.r)||0))autoHeights.set(pos.r,height);
+    }
+    if(autoHeights.size){
+      for(let r=0;r<state.maxRow;r++){
+        const baseline=state.rowPrefix[r+1]-state.rowPrefix[r];
+        state.rowPrefix[r+1]=state.rowPrefix[r]+
+          Math.max(baseline,autoHeights.get(r)||0);
+      }
+    }
   }
   function updateSurfaceSize(){
     surface.style.zoom=String(state.zoom);
@@ -77,7 +119,8 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
       (cell.v!==undefined && cell.v!==null && cell.v!=='')));
   }
   function overflowWidth(r,c,style,merged) {
-    if(merged || style?.whiteSpace==='pre-wrap')return null;
+    if(merged || style?.whiteSpace==='pre-wrap' || style?.shrinkToFit)
+      return null;
     const rightward=style?.textAlign!=='right';
     let left=HEADER_WIDTH+state.colPrefix[c];
     let right=HEADER_WIDTH+state.colPrefix[c+1];
@@ -162,9 +205,24 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
           state.colPrefix[endCol]-state.colPrefix[c],
           state.rowPrefix[endRow]-state.rowPrefix[r]);
         node.dataset.address=address;
-        const styleId=state.meta?.cells.get(address) ?? cell?.s ?? 0;
-        const style=styleContext?.styles?.[styleId];
-        if(style)Object.assign(node.style,style);
+        const style=styleFor(address,r,c,cell);
+        if(style){
+          const {shrinkToFit,...css}=style;
+          Object.assign(node.style,css);
+        }
+        if(merged){
+          // Merge edge strokes may be attached to hidden bottom/right cells.
+          const rightCell=XLSX.utils.encode_cell({r,c:merged.e.c});
+          const bottomCell=XLSX.utils.encode_cell({r:merged.e.r,c});
+          const cornerCell=XLSX.utils.encode_cell({r:merged.e.r,c:merged.e.c});
+          const right=styleFor(rightCell,r,merged.e.c,state.sheet[rightCell]);
+          const bottom=styleFor(bottomCell,merged.e.r,c,state.sheet[bottomCell]);
+          const corner=styleFor(cornerCell,merged.e.r,merged.e.c,state.sheet[cornerCell]);
+          if(!style?.borderRight && (right?.borderRight||corner?.borderRight))
+            node.style.borderRight=right?.borderRight||corner.borderRight;
+          if(!style?.borderBottom && (bottom?.borderBottom||corner?.borderBottom))
+            node.style.borderBottom=bottom?.borderBottom||corner.borderBottom;
+        }
         if(cell?.t==='n' && !style?.textAlign)node.style.textAlign='right';
         if(node.style.textAlign==='right')node.style.justifyContent='flex-end';
         else if(node.style.textAlign==='center')
@@ -173,8 +231,21 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
         else if(style?.verticalAlign==='bottom')
           node.style.alignItems='flex-end';
         if(style?.whiteSpace==='pre-wrap')node.style.display='block';
+        if(style?.shrinkToFit && text!=='' && measure){
+          const fontPx=parseFloat(style.fontSize)||12;
+          measure.font=(style.fontStyle||'normal')+' '+
+            (style.fontWeight||'400')+' '+fontPx+'px '+
+            (style.fontFamily||'Arial,sans-serif');
+          const available=Math.max(8,
+            state.colPrefix[endCol]-state.colPrefix[c]-12);
+          const length=measure.measureText(String(text)).width;
+          if(length>available)
+            node.style.fontSize=Math.max(5,
+              Math.min(fontPx,fontPx*available/length))+'px';
+        }
         const isString=cell && typeof cell.v==='string' && cell.v.length>0;
-        if(isString && !merged && style?.whiteSpace!=='pre-wrap') {
+        if(isString && !merged && style?.whiteSpace!=='pre-wrap' &&
+           !style?.shrinkToFit) {
           const overflow=overflowWidth(r,c,style,merged);
           const ownWidth=state.colPrefix[c+1]-state.colPrefix[c];
           if(overflow && overflow.width>ownWidth+1) {

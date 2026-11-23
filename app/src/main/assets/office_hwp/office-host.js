@@ -76,7 +76,7 @@ function applyCellEdit() {
   }
   selectCell(address);
   renderSheet();
-  status('셀 변경사항이 있습니다. NAS 원본에 저장하려면 아래 저장 버튼을 누르세요.');
+  status('셀 변경사항이 있습니다. 상단 저장 아이콘을 누르면 원본에 저장됩니다.');
 }
 function renderSheet() {
   gridController?.refresh();
@@ -136,6 +136,7 @@ async function openSpreadsheet(bytes) {
   excelArchive=await openXlsxArchive(bytes,workbook.SheetNames);
   const shell=document.getElementById('spreadsheet-shell');
   shell.hidden=false;
+  document.getElementById('bottom-actions').hidden=true;
   renderSheetTabs();
   const scroller=document.getElementById('grid-scroll');
   gridController=mountExcelGrid(scroller,workbook,excelArchive,
@@ -283,6 +284,7 @@ window.OfficeNativeSaveResult=async function(success,message){
   pendingNotify=false;setBusy(false);
 };
 saveButton.onclick=saveDocument;
+window.OfficeRequestSave=saveDocument;
 window.addEventListener('error',e=>status('편집 엔진 오류: '+e.message,true));
 window.addEventListener('unhandledrejection',e=>status(
   '편집 엔진 오류: '+(e.reason?.message || String(e.reason)),true));

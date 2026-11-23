@@ -14,6 +14,7 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import androidx.core.graphics.Insets;
@@ -54,6 +55,7 @@ public final class BuiltInOfficeActivity extends Activity {
     private WebView web;
     private TextView status;
     private TextView documentTitle;
+    private ImageButton spreadsheetSave;
     private volatile boolean busy, loaded, saved;
     private OfficeJsBridge bridge;
 
@@ -88,6 +90,10 @@ public final class BuiltInOfficeActivity extends Activity {
         setContentView(root);
         ViewCompat.requestApplyInsets(root);
 
+        LinearLayout titleBar = new LinearLayout(this);
+        titleBar.setOrientation(LinearLayout.HORIZONTAL);
+        titleBar.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        root.addView(titleBar, Ui.lp(this, -1, 36));
         TextView title = Ui.text(this, "‹  " + name, 16, Ui.TEXT, true);
         documentTitle = title;
         title.setTextSize(14);
@@ -95,8 +101,26 @@ public final class BuiltInOfficeActivity extends Activity {
         title.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         title.setPadding(Ui.dp(this, 12), 0, 0, 0);
         title.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        root.addView(title, Ui.lp(this, -1, 32));
+        titleBar.addView(title, new LinearLayout.LayoutParams(0, -1, 1f));
         title.setOnClickListener(view -> askClose());
+        if ("sheet".equals(OfficeFileTypes.mode(name))) {
+            spreadsheetSave = new ImageButton(this);
+            spreadsheetSave.setImageResource(R.drawable.ic_excel_save);
+            spreadsheetSave.setContentDescription("원본 엑셀 파일 저장");
+            spreadsheetSave.setBackgroundColor(Color.TRANSPARENT);
+            spreadsheetSave.setPadding(Ui.dp(this, 8), Ui.dp(this, 5),
+                    Ui.dp(this, 8), Ui.dp(this, 5));
+            spreadsheetSave.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+            titleBar.addView(spreadsheetSave,
+                    new LinearLayout.LayoutParams(Ui.dp(this, 44), Ui.dp(this, 36)));
+            spreadsheetSave.setEnabled(false);
+            spreadsheetSave.setOnClickListener(view -> {
+                if (loaded && web != null && !isFinishing() && !isDestroyed() &&
+                        (excelLease == null || !excelLease.readOnly())) {
+                    web.evaluateJavascript("window.OfficeRequestSave && window.OfficeRequestSave()", null);
+                }
+            });
+        }
         status = Ui.text(this, "내장 문서 엔진 준비 중...", 12, Ui.MUTED, false);
         status.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), 0);
         root.addView(status, Ui.lp(this, -1, 24));
@@ -188,6 +212,9 @@ public final class BuiltInOfficeActivity extends Activity {
                 showStatus("내장 문서 편집기를 여는 중...");
                 runOnUiThread(() -> {
                     if (!isDestroyed() && !isFinishing()) {
+                        if (spreadsheetSave != null)
+                            spreadsheetSave.setEnabled(excelLease == null ||
+                                    !excelLease.readOnly());
                         if (excelLease != null && excelLease.readOnly()) {
                             documentTitle.setText("‹ " + name + "  🔒");
                             documentTitle.setContentDescription(name + ", 읽기 전용");

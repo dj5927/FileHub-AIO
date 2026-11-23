@@ -1,0 +1,105 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<link rel="stylesheet" href="../../app/src/main/assets/office_hwp/office-host.css">
+<script src="../../app/src/main/assets/office_hwp/jszip.min.js"></script>
+<script src="../../app/src/main/assets/office_hwp/xlsx.full.min.js"></script>
+<style>body{margin:0}#grid-scroll{width:420px;height:600px;overflow:auto}</style>
+</head><body><div id="result">RUNNING</div><div id="grid-scroll"></div>
+<script type="module">
+import {openXlsxArchive,exportXlsxArchive} from '../../app/src/main/assets/office_hwp/excel-ooxml.js';
+import {mountExcelGrid} from '../../app/src/main/assets/office_hwp/excel-grid.js';
+const ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+const check=(ok,msg)=>{if(!ok)throw Error(msg)};
+const first=(node,local)=>node.getElementsByTagNameNS(ns,local)[0];
+const serialize=doc=>new XMLSerializer().serializeToString(doc);
+const add=(doc,owner,local)=>{const n=doc.createElementNS(ns,local);owner.appendChild(n);return n};
+try{
+  const source=new Uint8Array(await (await fetch('../android_excel_v115/fixture-v115.xlsx')).arrayBuffer());
+  const zip=await JSZip.loadAsync(source);
+  const styles=parseXml(await zip.file('xl/styles.xml').async('string'));
+  function parseXml(xml){return new DOMParser().parseFromString(xml,'application/xml')}
+  const xfs=first(styles,'cellXfs'),base=xfs.children[0];
+  function addAlignment(key,value){
+    const xf=base.cloneNode(true);
+    xf.setAttribute('applyAlignment','1');
+    const alignment=add(styles,xf,'alignment');
+    alignment.setAttribute(key,value);
+    const i=xfs.children.length;xfs.appendChild(xf);return i;
+  }
+  const shrinkId=addAlignment('shrinkToFit','1');
+  const wrapId=addAlignment('wrapText','1');
+  const borders=first(styles,'borders'),border=add(styles,borders,'border');
+  add(styles,border,'left');add(styles,border,'bottom');
+  add(styles,border,'top').setAttribute('style','double');
+  add(styles,border,'right').setAttribute('style','mediumDashed');
+  const borderId=borders.children.length-1;
+  const borderXf=base.cloneNode(true);
+  borderXf.setAttribute('borderId',String(borderId));
+  const edgeId=xfs.children.length;xfs.appendChild(borderXf);
+  xfs.setAttribute('count',String(xfs.children.length));
+  borders.setAttribute('count',String(borders.children.length));
+  zip.file('xl/styles.xml',serialize(styles));
+
+  const sheetPath='xl/worksheets/sheet1.xml';
+  const sheetDoc=parseXml(await zip.file(sheetPath).async('string'));
+  first(sheetDoc,'dimension').setAttribute('ref','A1:H2100');
+  const sheetData=first(sheetDoc,'sheetData');
+  function row(number,config={}){
+    const r=add(sheetDoc,sheetData,'row');
+    r.setAttribute('r',number);
+    for(const [key,value] of Object.entries(config))r.setAttribute(key,String(value));
+    return r;
+  }
+  function cell(parent,address,value,style){
+    const c=add(sheetDoc,parent,'c');
+    c.setAttribute('r',address);c.setAttribute('s',String(style));
+    c.setAttribute('t','inlineStr');
+    const inline=add(sheetDoc,c,'is');
+    add(sheetDoc,inline,'t').textContent=value;
+  }
+  cell(row(2001),'A2001','이 텍스트는 셀에 맞게 축소되어야 합니다'.repeat(3),shrinkId);
+  cell(row(2002,{ht:'15',customHeight:'1'}),'A2002','고정 높이 줄바꿈 문장'.repeat(15),wrapId);
+  cell(row(2003),'A2003','자동 높이 줄바꿈 문장'.repeat(15),wrapId);
+  cell(row(2004),'A2004','테두리',edgeId);
+  const yellowStyle=(await openXlsxArchive(source,['26년 11월','신규 가격표']))
+    .sheetMeta[0].cells.get('B4');
+  row(2005,{s:String(yellowStyle),customFormat:'1'});
+  row(2006);
+  const cols=first(sheetDoc,'cols');
+  const col=add(sheetDoc,cols,'col');
+  col.setAttribute('min','5');col.setAttribute('max','5');
+  col.setAttribute('width','12');
+  col.setAttribute('customWidth','1');col.setAttribute('style',String(yellowStyle));
+  zip.file(sheetPath,serialize(sheetDoc));
+  const bytes=await zip.generateAsync({type:'uint8array'});
+  const wb=XLSX.read(bytes,{type:'array',cellStyles:true,cellNF:true});
+  const ctx=await openXlsxArchive(bytes,wb.SheetNames);
+  const scroll=document.getElementById('grid-scroll');
+  const grid=mountExcelGrid(scroll,wb,ctx,()=>0,'A1',()=>{},false);
+  grid.jump('A2001');
+  const one=address=>scroll.querySelector('[data-address="'+address+'"]');
+  const shrink=one('A2001'),fixed=one('A2002'),auto=one('A2003');
+  const edge=one('A2004'),rowStyled=one('A2005'),colStyled=one('E2006');
+  check(shrink&&!shrink.querySelector('.excel-spill'),'Shrink-to-fit incorrectly spills');
+  check(parseFloat(shrink.style.fontSize)<12,'Shrink-to-fit ignored cell property');
+  check(fixed && parseFloat(fixed.style.height)<31,
+        'Explicit fixed-height row was stretched');
+  check(auto && parseFloat(auto.style.height)>90,
+        'Wrapped row without custom height failed auto-fit');
+  check(edge && getComputedStyle(edge).borderTopStyle==='double' &&
+        getComputedStyle(edge).borderRightStyle==='dashed',
+        'Excel border styles disappeared');
+  check(rowStyled && getComputedStyle(rowStyled).backgroundColor==='rgb(255, 255, 0)',
+        'Row default style missing');
+  check(colStyled && getComputedStyle(colStyled).backgroundColor==='rgb(255, 255, 0)',
+        'Column default style missing');
+  const saved=await exportXlsxArchive(ctx,new Map([['0:A2001',{kind:'string',value:'수정됨'}]]));
+  const after=await JSZip.loadAsync(saved);
+  check(await after.file('xl/styles.xml').async('string')===
+        await zip.file('xl/styles.xml').async('string'),
+        'XLSX XML save altered source styles');
+  document.getElementById('result').textContent=
+    'PASS: double/dashed border, shrink-to-fit, fixed vs auto row height, row and column styles, lossless save';
+}catch(error){
+  document.getElementById('result').textContent='FAIL: '+error.message;console.error(error);
+}
+</script></body></html>
