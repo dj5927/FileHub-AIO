@@ -1,0 +1,46 @@
+name: Publish verified FileHub PC v1.3.132 UI version and OTA footer fix
+on:
+  push:
+    branches: [pc/windows]
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[PC_BINARY_HANDOFF_20261123_V132]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Verify and reconstruct 11 immutable Windows package parts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in {00..10}; do
+            curl --http1.1 --fail --location --retry 6 --retry-all-errors --retry-delay 3 --connect-timeout 15 --max-time 320 "https://handbook-european-duke-reviewer.trycloudflare.com/pc-v132-part${i}" -o "pc-v132-part${i}"
+            test -s "pc-v132-part${i}"
+            echo "PC132_PART_${i}_READY"
+          done
+          cat pc-v132-part{00..10} > FileHub-AIO-PC-1.3.132-win-x64.zip
+          test "$(stat -c '%s' FileHub-AIO-PC-1.3.132-win-x64.zip)" -eq 168929804
+          echo '1EC46115479F9CF89ADC3104E2B3B594E871E59AB1E586C25F5A3BD3702C44FC  FileHub-AIO-PC-1.3.132-win-x64.zip' | sha256sum -c -
+          unzip -tqq FileHub-AIO-PC-1.3.132-win-x64.zip
+          unzip -Z1 FileHub-AIO-PC-1.3.132-win-x64.zip | grep -Fx FileHubAIO.exe
+          unzip -Z1 FileHub-AIO-PC-1.3.132-win-x64.zip | grep -Fx tools/NASMountLockBridge.exe
+          unzip -Z1 FileHub-AIO-PC-1.3.132-win-x64.zip | grep -Fx tools/rclone.exe
+          unzip -Z1 FileHub-AIO-PC-1.3.132-win-x64.zip | grep -Fx tools/google-oauth-desktop.json
+          unzip -Z1 FileHub-AIO-PC-1.3.132-win-x64.zip | grep -Fx README_PC_V132_KR.txt
+          printf '%s\n' '1EC46115479F9CF89ADC3104E2B3B594E871E59AB1E586C25F5A3BD3702C44FC  FileHub-AIO-PC-1.3.132-win-x64.zip' > SHA256SUMS
+          echo 'PC132_OFFICIAL_ARCHIVE_VERIFIED'
+      - name: Publish Windows-only v1.3.132 OTA release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view pc-v1.3.132 >/dev/null 2>&1; then
+            echo 'Version already published - refusing overwrite'
+            exit 1
+          fi
+          gh release create pc-v1.3.132 FileHub-AIO-PC-1.3.132-win-x64.zip SHA256SUMS --target "$GITHUB_SHA" --latest=false --title 'FileHub AIO PC v1.3.132' --notes 'Windows UI-only fix: header brand, window title, tray tooltip/menu, and diagnostic message box now derive display version from running FileHubAIO.exe assembly version, never hardcoded v1.3.126. Manual GitHub PC update check now clears the temporary bottom-left checking/downloading text in finally on no-update, success, rejection, cancellation or error. WinFsp and update availability notices are independent and preserved. Isolated --pc-title-footer-policy-test passed for 1.3.132. PC updater, publisher OAuth, direct WebDAV routing, backup and LockBridge self-test passed. Prior v1.3.131 Google Drive and WebDAV fixes plus MYBOX/TeraBox retained. ZIP SHA256: 1EC46115479F9CF89ADC3104E2B3B594E871E59AB1E586C25F5A3BD3702C44FC.'
+          gh release view pc-v1.3.132 --json tagName,url,assets
+          echo 'PC132_OFFICIAL_RELEASE_SUCCESS'
