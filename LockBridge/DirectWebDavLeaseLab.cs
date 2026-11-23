@@ -17,20 +17,19 @@ internal static class DirectWebDavLeaseLab
             .TrimStart('/');
         if (!WriteIntent.IsDocument(normalized))
             throw new ArgumentException("Office lock probe requires a document path");
-        var profile = new NasProfile {
-            Protocol = "WebDAV", Host = server.Host, Port = server.Port,
-            Share = "", WebDavUseHttp = true, IsAnonymous = true
-        };
-        var rival = new LeaseCoordinator(profile, "", TimeSpan.Zero);
-        bool acquired = false;
-        try { rival.AddHandle(normalized); acquired = true; }
+        // The second-client test must behave like RaiDrive/Excel: inspect
+        // the actual Office owner file without creating a FileHub sidecar.
+        // An old test used LeaseCoordinator.AddHandle, which could itself
+        // CREATE a .nasmount.lock on the live test workbook, blocking Excel
+        // after the test returned and falsely appearing as a save failure.
+        using var independent = new DirectWebDavReadOnlyBackend(server);
+        try { ExcelOwnerInterop.RequireAvailable(independent, normalized); }
         catch (CooperativeLocks.LockConflictException)
         {
             Console.WriteLine("DIRECT_WEBDAV_LIVE_EXCEL_SECOND_PC_EDIT_BLOCKED_PASS");
             return;
         }
-        finally { if (acquired) rival.ReleaseHandle(normalized); }
-        throw new IOException("Second FileHub editor acquired live Excel document lock");
+        throw new IOException("Second client ignored the live Excel owner file");
     }
 
     internal static void Run(Uri server)

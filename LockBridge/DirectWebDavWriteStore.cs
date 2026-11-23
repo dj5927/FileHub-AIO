@@ -857,6 +857,21 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 retained++;
                 continue;
             }
+            if (ExcelOwnerInterop.IsOwnerFile(journal.Path))
+            {
+                // A ~$ owner is Office-owned metadata, not workbook data.
+                // Never restore it after a crash and silently re-lock a NAS
+                // document. Only clear this client's local orphan journal;
+                // existing remote owner files remain for manual cleanup.
+                try
+                {
+                    File.Delete(ManifestPath(journal.Id));
+                    File.Delete(DataPath(journal.Id));
+                    Console.WriteLine("DIRECT_EXCEL_OWNER_LOCAL_RECOVERY_DISCARDED");
+                }
+                catch (IOException) { retained++; }
+                continue;
+            }
             // A preallocated, partly copied NEW file contains zero-filled
             // unwritten ranges. It is never safe to replay that as a
             // completed user file after a crash. Preserve its local
@@ -873,7 +888,16 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             string? leaseKey = null;
             try
             {
-                if (WriteIntent.IsDocument(journal.Path))
+                if (ExcelOwnerInterop.IsWorkbook(journal.Path))
+                {
+                    // Office owner files are managed by Excel, not by a
+                    // recovery worker. Never introduce a new sidecar lease
+                    // while recovering a workbook. If an owner is still
+                    // present (including a stale owner after a crash), keep
+                    // the journal for manual recovery instead of overwriting.
+                    ExcelOwnerInterop.RequireAvailable(_read, journal.Path);
+                }
+                else if (WriteIntent.IsDocument(journal.Path))
                 {
                     if (officeLeases is null) { retained++; continue; }
                     leaseKey = journal.Path.TrimStart('/');

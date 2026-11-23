@@ -441,6 +441,15 @@ internal static class Program
                 DirectWebDavReadOnlyBackend.PolicyTest();
                 DirectWebDavReadOnlyFileSystem.PolicyTest();
                 DirectWebDavWriteStore.PolicyTest();
+                string[] koreanOwners = ExcelOwnerInterop.PossibleOwners(
+                    "/11\uC6D4\uB9E4\uCD9C.xlsx");
+                if (koreanOwners.Length != 2 ||
+                    !koreanOwners.Contains("/~$11\uC6D4\uB9E4\uCD9C.xlsx") ||
+                    !koreanOwners.Contains("/~$\uC6D4\uB9E4\uCD9C.xlsx") ||
+                    !ExcelOwnerInterop.IsWorkbook("/11\uC6D4\uB9E4\uCD9C.xlsx") ||
+                    !ExcelOwnerInterop.IsOwnerFile("/~$11\uC6D4\uB9E4\uCD9C.xlsx"))
+                    throw new IOException("Korean Excel owner-name policy failed");
+                Console.WriteLine("EXCEL_OWNER_FILE_NAMING_POLICY_PASS");
                 Ptfs.ExecutableOpenPolicyTest();
                 ExecutableSecurityMetadataCache.PolicyTest();
                 MissingMuiLookupCache.PolicyTest();

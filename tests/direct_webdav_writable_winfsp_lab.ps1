@@ -1,4 +1,4 @@
-﻿param([int]$Port = 18800, [switch]$SkipExcel)
+﻿param([int]$Port = 18800, [switch]$SkipExcel, [switch]$ExcelInteropOnly)
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $rclone=if($env:FILEHUB_LAB_RCLONE){$env:FILEHUB_LAB_RCLONE}else{'E:\NASMount_Releases\NASMount_1_3_35_ICON_TITLEBAR\tools\rclone.exe'}
@@ -71,6 +71,176 @@ public static class FileHubDiskQuotaProbe {
    throw 'WEB_DAV_VOLUME_ZERO_FREE_OR_INVALID_EXPLORER_COPY_BLOCKED'
  }
  Write-Output 'ONE_LAYER_RW_EXPLORER_COPY_HAS_SPACE_PASS'
+
+ # Excel/RaiDrive interoperability: a Microsoft owner file created in the
+ # mounted drive must become visible on the real NAS before its WinFsp write
+ # returns. Other clients check it without FileHub's private lock folder.
+ $workbookName='office-interop.xlsx'
+ $ownerName='~$'+$workbookName
+ $sourceWorkbook=Join-Path $server $workbookName
+ $mountedWorkbook=Join-Path $drive $workbookName
+ $remoteOwner=Join-Path $server $ownerName
+ $mountedOwner=Join-Path $drive $ownerName
+ $legacyDir=Join-Path $server ($workbookName+'.nasmount.lock')
+ [IO.File]::WriteAllBytes($mountedWorkbook,[byte[]](1,2,3,4,5,6))
+ if(!(Test-Path $sourceWorkbook)){throw 'Interop workbook not uploaded to NAS'}
+ $ownerUrl='http://127.0.0.1:'+$proxyPort+'/'+[Uri]::EscapeDataString($ownerName)
+ Add-Type -AssemblyName System.Net.Http
+ $client=[System.Net.Http.HttpClient]::new()
+ $request=[System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Put,$ownerUrl)
+ $request.Headers.TryAddWithoutValidation('If-None-Match','*')|Out-Null
+ $request.Content=[System.Net.Http.ByteArrayContent]::new([byte[]](11,12,13,14))
+ $response=$client.SendAsync($request).GetAwaiter().GetResult()
+ if(!$response.IsSuccessStatusCode){throw ('Remote RaiDrive fixture PUT HTTP '+[int]$response.StatusCode)}
+ $response.Dispose();$request.Dispose()
+ $blocked=$false
+ try {
+   $opened=[IO.File]::Open($mountedWorkbook,[IO.FileMode]::Open,
+     [IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite)
+   $opened.Dispose()
+ }catch [IO.IOException] { $blocked=$true }
+ if(!$blocked){throw 'RaiDrive-style existing ~$ owner did not block FileHub write'}
+ $readonly=[IO.File]::Open($mountedWorkbook,[IO.FileMode]::Open,
+   [IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
+ $readonly.Dispose()
+ Write-Output 'ONE_LAYER_RW_REMOTE_RAI_OWNER_BLOCKS_EDIT_BUT_READ_ALLOWED_PASS'
+ $head=$client.SendAsync([System.Net.Http.HttpRequestMessage]::new(
+   [System.Net.Http.HttpMethod]::Head,$ownerUrl)).GetAwaiter().GetResult()
+ $etag=$head.Headers.ETag.ToString();$head.Dispose()
+ $request=[System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Delete,$ownerUrl)
+ $request.Headers.TryAddWithoutValidation('If-Match',$etag)|Out-Null
+ $response=$client.SendAsync($request).GetAwaiter().GetResult()
+ if(!$response.IsSuccessStatusCode){throw ('Fixture DELETE HTTP '+[int]$response.StatusCode)}
+ $response.Dispose();$request.Dispose()
+ $legacyUrl='http://127.0.0.1:'+$proxyPort+'/'+
+   [Uri]::EscapeDataString($workbookName+'.nasmount.lock')
+ $request=[System.Net.Http.HttpRequestMessage]::new(
+   [System.Net.Http.HttpMethod]::new('MKCOL'),$legacyUrl)
+ $response=$client.SendAsync($request).GetAwaiter().GetResult()
+ if(!$response.IsSuccessStatusCode){throw ('Legacy MKCOL HTTP '+[int]$response.StatusCode)}
+ $response.Dispose();$request.Dispose()
+ $blocked=$false
+ try {
+   $opened=[IO.File]::Open($mountedWorkbook,[IO.FileMode]::Open,
+     [IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite)
+   $opened.Dispose()
+ }catch [IO.IOException] { $blocked=$true }
+ if(!$blocked){throw 'Existing legacy FileHub sidecar did not block write'}
+ $request=[System.Net.Http.HttpRequestMessage]::new(
+   [System.Net.Http.HttpMethod]::Delete,$legacyUrl)
+ $response=$client.SendAsync($request).GetAwaiter().GetResult()
+ if(!$response.IsSuccessStatusCode){throw ('Legacy DELETE HTTP '+[int]$response.StatusCode)}
+ $response.Dispose();$request.Dispose()
+ Write-Output 'ONE_LAYER_RW_LEGACY_LOCK_READ_COMPAT_PASS'
+ $opened=[IO.File]::Open($mountedWorkbook,[IO.FileMode]::Open,
+   [IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite)
+ try {
+   $ownerStream=[IO.File]::Open($mountedOwner,[IO.FileMode]::CreateNew,
+     [IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite)
+   try {
+     $excelBytes=[byte[]](1,0,2,0,3,0,4,0,5,0,6,0)
+     $ownerStream.Write($excelBytes,0,$excelBytes.Length)
+     $ownerStream.Flush($true)
+     if(!(Test-Path $remoteOwner) -or
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($remoteOwner)) -ne
+        [Convert]::ToBase64String($excelBytes)){
+        throw 'Excel owner was not immediately published to NAS'
+     }
+     if(Test-Path $legacyDir){throw 'Excel owner-only mode created nasmount.lock'}
+   } finally { $ownerStream.Dispose() }
+ } finally { $opened.Dispose() }
+ # A workbook saved through this SAME FileHub mount may reopen itself
+ # internally during Excel SaveAs/atomic replacement. It is allowed only
+ # because its exact remote owner ETag was published by THIS mount.
+ # An unrelated RaiDrive/FileHub mount lacks that local ETag ownership and
+ # takes the remote-owner conflict path tested above.
+ $opened=[IO.File]::Open($mountedWorkbook,[IO.FileMode]::Open,
+   [IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite)
+ $opened.Dispose()
+ Write-Output 'ONE_LAYER_RW_OWNED_EXCEL_SAME_MOUNT_SAVE_REOPEN_PASS'
+ [IO.File]::Delete($mountedOwner)
+ if(Test-Path $remoteOwner){throw 'Manual ~$ cleanup did not remove NAS owner'}
+ $opened=[IO.File]::Open($mountedWorkbook,[IO.FileMode]::Open,
+   [IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite)
+ $opened.Dispose()
+ if(Test-Path $legacyDir){throw 'Excel session left nasmount.lock directory'}
+ Write-Output 'ONE_LAYER_RW_EXCEL_OWNER_ONLY_RAI_INTEROP_PASS'
+
+ # Some Office versions replace the workbook's first two characters with
+ # ~$ instead of prefixing the complete name. Verify Korean names too.
+ $korName='11'+[char]0xC6D4+[char]0xB9E4+[char]0xCD9C+'.xlsx'
+ $korLocal=Join-Path $drive $korName
+ [IO.File]::WriteAllBytes($korLocal,[byte[]](7,8,9))
+ $korOwner='~$'+$korName.Substring(2)
+ $korOwnerUrl='http://127.0.0.1:'+$proxyPort+'/'+
+   [Uri]::EscapeDataString($korOwner)
+ $request=[System.Net.Http.HttpRequestMessage]::new(
+   [System.Net.Http.HttpMethod]::Put,$korOwnerUrl)
+ $request.Headers.TryAddWithoutValidation('If-None-Match','*')|Out-Null
+ $request.Content=[System.Net.Http.ByteArrayContent]::new([byte[]](13,14))
+ $response=$client.SendAsync($request).GetAwaiter().GetResult()
+ if(!$response.IsSuccessStatusCode){throw 'Korean alternative owner fixture PUT failed'}
+ $response.Dispose();$request.Dispose()
+ $blocked=$false
+ try {
+   $opened=[IO.File]::Open($korLocal,[IO.FileMode]::Open,
+     [IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite)
+   $opened.Dispose()
+ }catch [IO.IOException] {$blocked=$true}
+ if(!$blocked){throw 'Korean alternate ~$ owner not honored'}
+ $head=$client.SendAsync([System.Net.Http.HttpRequestMessage]::new(
+   [System.Net.Http.HttpMethod]::Head,$korOwnerUrl)).GetAwaiter().GetResult()
+ $etag=$head.Headers.ETag.ToString();$head.Dispose()
+ $request=[System.Net.Http.HttpRequestMessage]::new(
+   [System.Net.Http.HttpMethod]::Delete,$korOwnerUrl)
+ $request.Headers.TryAddWithoutValidation('If-Match',$etag)|Out-Null
+ $response=$client.SendAsync($request).GetAwaiter().GetResult()
+ if(!$response.IsSuccessStatusCode){throw 'Korean owner manual cleanup failed'}
+ $response.Dispose();$request.Dispose()
+ $opened=[IO.File]::Open($korLocal,[IO.FileMode]::Open,
+   [IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite)
+ $opened.Dispose()
+ Write-Output 'ONE_LAYER_RW_KOREAN_ALTERNATE_EXCEL_OWNER_PASS'
+ if($ExcelInteropOnly){
+   $app=New-Object -ComObject Excel.Application
+   $app.Visible=$false
+   $app.DisplayAlerts=$false
+   $workbook=$null
+   try {
+     $document=Join-Path $drive 'ActualInterop.xlsx'
+     $workbook=$app.Workbooks.Add()
+     $workbook.Worksheets.Item(1).Cells.Item(2,2).Value2='INITIAL'
+     $workbook.SaveAs($document,51)
+     if(!(Test-Path (Join-Path $server '~$ActualInterop.xlsx')) -and
+        !(Test-Path (Join-Path $server '~$tualInterop.xlsx'))){
+       throw 'Real Excel ~$ owner file not immediately visible on NAS'
+     }
+     Write-Output 'ONE_LAYER_RW_REAL_EXCEL_OWNER_IMMEDIATELY_VISIBLE_PASS'
+     Write-Output 'ONE_LAYER_RW_REAL_EXCEL_OWNER_MODE_SAVE_AS_PASS'
+     foreach($round in 1..3){
+       $workbook.Worksheets.Item(1).Cells.Item(2,2).Value2=('ROUND_'+$round)
+       $workbook.Save()
+       Write-Output ('ONE_LAYER_RW_REAL_EXCEL_OWNER_MODE_SAVE_'+$round+'_PASS')
+     }
+     $workbook.Close($false)
+     [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($workbook)
+     $workbook=$null
+     $actual=Join-Path $server 'ActualInterop.xlsx'
+     if(!(Test-Path $actual) -or (Get-Item $actual).Length -lt 4000){
+       throw 'Excel Save did not publish full workbook'
+     }
+     if(Test-Path (Join-Path $server 'ActualInterop.xlsx.nasmount.lock')){
+       throw 'Excel Save created legacy nasmount lock directory'
+     }
+     Write-Output 'ONE_LAYER_RW_REAL_EXCEL_OWNER_ONLY_THREE_SAVES_PASS'
+   }finally{
+     if($workbook){try{$workbook.Close($false)}catch{}}
+     $app.Quit()
+     [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)
+     $client.Dispose()
+   }
+   return
+ }
 
  # Cooperative Office locks are real NAS directories for cross-PC editing,
  # but must never enter the virtual filesystem or a WinFsp Notify event.

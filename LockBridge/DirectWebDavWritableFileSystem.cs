@@ -21,6 +21,12 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
     private const int EndOfFile = unchecked((int)0xC0000011);
     private readonly DirectWebDavWriteStore _writes;
     private readonly LeaseCoordinator? _leases;
+    private readonly object _excelOwnerGate = new();
+    private readonly Dictionary<string, int> _localExcelEditors =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _ownerFilesPublishedHere =
+        new(StringComparer.OrdinalIgnoreCase);
+    private const string ExcelOwnerLeasePrefix = "excel-owner-only:";
     private int _activeWriteHandles;
     internal int ActiveWriteHandles => Volatile.Read(ref _activeWriteHandles);
     // Explorer may retain read-only metadata handles for icon caching.
@@ -101,6 +107,30 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
 
     private string? AcquireOfficeLease(string path)
     {
+        if (ExcelOwnerInterop.IsWorkbook(path))
+        {
+            // Shared marker is Microsoft's actual ~$ owner file. The first
+            // handle must check the NAS without stale metadata caches.
+            // Subsequent handles from THIS mounted editor share its local
+            // session, so Excel can reopen during its atomic save.
+            string workbook = DirectWebDavReadOnlyBackend.Normalize(path);
+            lock (_excelOwnerGate)
+            {
+                if (!_localExcelEditors.TryGetValue(workbook, out int count))
+                {
+                    ExcelOwnerInterop.RequireAvailable(_backend, workbook,
+                        (ownerPath, remoteEtag) =>
+                            DirectWebDavWriteStore.StrongEtag(remoteEtag) &&
+                            _ownerFilesPublishedHere.TryGetValue(ownerPath,
+                                out string? ourEtag) &&
+                            string.Equals(remoteEtag, ourEtag,
+                                StringComparison.Ordinal));
+                    count = 0;
+                }
+                _localExcelEditors[workbook] = count + 1;
+            }
+            return ExcelOwnerLeasePrefix + workbook;
+        }
         if (_leases is null || !WriteIntent.IsDocument(path)) return null;
         string key = path.TrimStart('/').Replace('\\', '/');
         _leases.AddHandle(key);
@@ -109,7 +139,32 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
 
     private void ReleaseOfficeLease(string? key)
     {
-        if (key is not null) _leases?.ReleaseHandle(key);
+        if (key is null) return;
+        if (key.StartsWith(ExcelOwnerLeasePrefix, StringComparison.Ordinal))
+        {
+            string path = key[ExcelOwnerLeasePrefix.Length..];
+            lock (_excelOwnerGate)
+            {
+                if (!_localExcelEditors.TryGetValue(path, out int count)) return;
+                if (count <= 1) _localExcelEditors.Remove(path);
+                else _localExcelEditors[path] = count - 1;
+            }
+            return;
+        }
+        _leases?.ReleaseHandle(key);
+    }
+
+    private void ReleaseExcelOwnerSessionAtCleanup(object descriptor)
+    {
+        // WinFsp Close can arrive well after the last Windows handle is
+        // closed. Re-check the actual NAS ~$ owner on every new Excel open,
+        // not after delayed kernel-object disposal.
+        if (descriptor is not WriteDescriptor writer ||
+            writer.LeaseKey is not { } lease ||
+            !lease.StartsWith(ExcelOwnerLeasePrefix, StringComparison.Ordinal))
+            return;
+        ReleaseOfficeLease(lease);
+        writer.LeaseKey = null;
     }
 
     protected override FileInfo DescribeEntry(
@@ -367,6 +422,21 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             byte[] data = new byte[(int)allowed];
             if (data.Length > 0) Marshal.Copy(buffer, data, 0, data.Length);
             _writes.Write(writer.Session, offset, data, writeToEndOfFile);
+            if (ExcelOwnerInterop.IsOwnerFile(writer.Entry.Path) &&
+                writer.Session.Dirty)
+            {
+                // Excel writes its own binary owner file. Publish the bytes
+                // to the NAS before acknowledging its WinFsp Write, rather
+                // than waiting for eventual Cleanup (which left RaiDrive
+                // unaware of an editor). No synthetic owner file is made.
+                _writes.Commit(writer.Session);
+                _overlay.TryRemove(writer.Entry.Path, out _);
+                RecordCommittedRevision(writer);
+                if (DirectWebDavWriteStore.StrongEtag(writer.Session.ExpectedEtag))
+                    _ownerFilesPublishedHere[writer.Entry.Path] =
+                        writer.Session.ExpectedEtag!;
+                Console.WriteLine("DIRECT_EXCEL_OWNER_REMOTE_VISIBLE");
+            }
             transferred = (uint)data.Length;
             info = Describe(writer);
             _overlay[writer.Entry.Path] = writer.Entry with { Size = writer.Session.Local.Length };
@@ -549,6 +619,13 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
     public override void Cleanup(object fileNode, object fileDesc,
         string fileName, uint flags)
     {
+        try { CleanupOfficeAware(fileNode, fileDesc, fileName, flags); }
+        finally { ReleaseExcelOwnerSessionAtCleanup(fileDesc); }
+    }
+
+    private void CleanupOfficeAware(object fileNode, object fileDesc,
+        string fileName, uint flags)
+    {
         if (Environment.GetEnvironmentVariable("FILEHUB_DIRECT_DEBUG") == "1")
             Console.Error.WriteLine("DIRECT_RW_CLEANUP path=" + fileName + " flags=" + flags);
         if ((flags & CleanupDelete) == 0)
@@ -590,6 +667,8 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             var existing = _backend.Stat(key);
             if (existing is not null)
                 _writes.Delete(key, existing.ETag);
+            if (ExcelOwnerInterop.IsOwnerFile(key))
+                _ownerFilesPublishedHere.TryRemove(key, out _);
             if (fileDesc is WriteDescriptor owned) owned.Deleted = true;
             _overlay.TryRemove(key, out _);
         }
