@@ -65,3 +65,13 @@ horizontal and vertical scrolling was otherwise acceptable.
   on-device touch testing remains the last field check.
 - This is a spreadsheet UI fix: WebDAV locks, file storage and OTA
   behavior are unchanged.
+
+## Verified Android v0.1.116 publisher APK handoff (2026-11-23)
+
+- GitHub official OTA release: https://github.com/dj5927/FileHub-AIO/releases/tag/v0.1.116
+- Signed APK FileHub-AIO-v0.1.116.apk: 72,642,748 bytes; SHA256 5438C7E979A7360728433E28C046FAAC452677B0D277503958B96874ABDE4BCC.
+- Android applicationId com.nasmount.mobile; versionCode 117, versionName 0.1.116; publisher certificate SHA256 E2B6FECE09666DBFB26044C381227953F93A1EB1685EA6890139BBDA89EFEEB8 identical to signed v0.1.115.
+- Android Gradle testDebugUnitTest/assembleRelease: success; 587 tests, 0 failures, 1 skipped.
+- Headless Chromium browser regressions: pinch 100% -> 180% -> 130% -> 65%, stable DOM, native one-finger touch, source OOXML fill/width/merge, two PNG drawing anchors with scrolling, Korean overflow into only empty cells, default geometry, and byte-identical embedded media after edited-cell save all passed.
+- GitHub release notes MUST contain standalone `versionCode: 117` line; SHA256-guarded publishing workflow checks this before reporting success. Previous staged OTA workflow excludes v0.1.116.
+- Actual Android Samsung touch and user workbook rendering not tested on physical device; device confirmation still necessary. No live NAS files changed.
