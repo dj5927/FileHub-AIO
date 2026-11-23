@@ -106,3 +106,12 @@ User reports after Android 0.1.114:
 - Root cause: Android OtaReleasePolicy.parse requires a standalone `versionCode: 116` line in the release body, while v0.1.115 originally shipped release notes with only `(versionCode 116)` inline. This caused the manual update check to report it could not read update information even though the signed APK existed.
 - Fix: Repair v0.1.115 GitHub release notes in place, preserving the already verified signed APK and its checksum; existing installed clients can re-check OTA without upgrading or reinstalling.
 - Triggered via a one-time checksum-guarded GitHub Actions workflow; no Android package change.
+
+### OTA v0.1.115 metadata incident: fixed and verified (2026-11-23)
+
+- Symptom on existing Android v0.1.114: manual OTA check said it could not retrieve update information after v0.1.115 was published.
+- Confirmed root cause against public GitHub API `GET /repos/dj5927/FileHub-AIO/releases/latest`: the v0.1.115 release body had only inline `(versionCode 116)` whereas `OtaReleasePolicy.parse` requires a standalone `versionCode: 116` line. Other release details and APK were valid.
+- Applied surgical GitHub Actions release-notes repair run `45144990025` success; prepended `versionCode: 116` while retaining existing release content and APK.
+- Verified with exactly the Android OTA API URL, request headers, tag matcher, versionCode regex, expected APK filename, browser_download_url, SHA-256 digest and size; all PASS. Latest `v0.1.115`, code `116`; installed code `115` correctly qualifies as an update. GitHub asset unchanged at 72,639,184 bytes, SHA-256 `4B98D025E2BA28B267AC1BDC8B3DB6DF2C1D0E34B59EE644761F9AF44EDA47A9`.
+- Existing installed Android 0.1.114 needs no reinstallation or new APK for OTA discovery. Press Update Check again. Real device UI result has not been directly tested.
+- For future releases, release descriptions MUST contain `versionCode: <actual APK versionCode>` as a standalone line; regression checking this requirement before publishing prevents this failure.
