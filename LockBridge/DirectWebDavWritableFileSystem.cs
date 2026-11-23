@@ -272,7 +272,14 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             bool directory = (createOptions & 1) != 0;
             if (directory)
             {
-                _writes.MakeDirectory(key);
+                try { _writes.MakeDirectory(key); }
+                catch (IOException ex) when (ex.Message.Contains("MKCOL failed HTTP 405",
+                    StringComparison.Ordinal))
+                {
+                    if (_backend.StatFresh(key)?.IsDirectory == true)
+                        return Collision;
+                    throw;
+                }
                 var stat = _backend.Stat(key) ??
                     new DirectWebDavReadOnlyBackend.Entry(key,
                         key.Split('/').Last(), true, 0, DateTime.UtcNow);
@@ -340,10 +347,15 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             RegisterOpenHandle();
             return Success;
         }
-        // An Excel attribute-only handle does not need to download the
-        // entire workbook a second time or create a recovery journal.
-        if (!WriteIntent.IsWrite(grantedAccess) &&
-            (grantedAccess & 0x100u) != 0)
+        // Windows Explorer and PowerShell commonly open a file with
+        // DELETE|READ_ATTRIBUTES (0x10080) before removing or renaming it.
+        // DELETE is an operation on the NAME, not a request to edit bytes.
+        // The previous WriteIntent.IsWrite() treated DELETE as content-write,
+        // then downloaded the entire 1 MB photo and created/fsynced a full
+        // recovery journal for EVERY deletion! Return a metadata descriptor.
+        const uint contentWrite = 0x2u | 0x4u | 0x40000000u | 0x10000000u;
+        if ((grantedAccess & contentWrite) == 0 &&
+            (grantedAccess & (0x100u | 0x10000u | 0x10u)) != 0)
         {
             fileNode = null!; fileDesc = null!; info = default; normalizedName = null!;
             var attr = _backend.Stat(fileName);
@@ -574,13 +586,12 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         if (key == "/") return AccessDenied;
         try
         {
-            var entry = _backend.Stat(key);
+            var entry = _backend.StatFresh(key);
             if (entry?.IsDirectory == true &&
                 _backend.RefreshList(key).Length != 0)
                 return unchecked((int)0xC0000101); // STATUS_DIRECTORY_NOT_EMPTY
-            if (entry is { IsDirectory:false } &&
-                !DirectWebDavWriteStore.StrongEtag(entry.ETag))
-                return AccessDenied;
+            // Explicit user deletes use fresh path resolution, not an ETag
+            // which Synology can change after writing.
         }
         catch (IOException ex) { return Failure(ex, "CanDelete"); }
         return Success;
@@ -597,6 +608,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         string from = fileDesc switch {
             WriteDescriptor writer => writer.Entry.Path,
             DirectWebDavReadOnlyBackend.Entry entry => entry.Path,
+            AttributeDescriptor metadata => metadata.Entry.Path,
             _ => DirectWebDavReadOnlyBackend.Normalize(fileName)
         };
         string to = DirectWebDavReadOnlyBackend.Normalize(newFileName);
@@ -683,6 +695,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         string key = fileDesc switch {
             WriteDescriptor writer => writer.Entry.Path,
             DirectWebDavReadOnlyBackend.Entry entry => entry.Path,
+            AttributeDescriptor metadata => metadata.Entry.Path,
             _ => DirectWebDavReadOnlyBackend.Normalize(fileName)
         };
         try
@@ -693,9 +706,16 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
                 _overlay.TryRemove(key, out _);
                 return; // uncommitted new file was never on NAS
             }
-            var existing = _backend.Stat(key);
+            var existing = _backend.StatFresh(key);
             if (existing is not null)
-                _writes.Delete(key, existing.ETag, existing.IsDirectory);
+            {
+                bool wasDirectory = fileDesc is
+                    DirectWebDavReadOnlyBackend.Entry { IsDirectory: true };
+                if (existing.IsDirectory != wasDirectory)
+                    throw new IOException("Delete target changed resource type");
+                _writes.Delete(key, existing.ETag, existing.IsDirectory,
+                    explicitUserDelete: true);
+            }
             if (ExcelOwnerInterop.IsOwnerFile(key))
                 _ownerFilesPublishedHere.TryRemove(key, out _);
             if (fileDesc is WriteDescriptor owned) owned.Deleted = true;

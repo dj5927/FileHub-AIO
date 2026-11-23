@@ -23,6 +23,8 @@ EMIT_MOVE_ETAG = os.environ.get(
     "FILEHUB_STRICT_DAV_EMIT_MOVE_ETAG") == "1"
 DENY_REAL_STAGE_PUT = os.environ.get(
     "FILEHUB_STRICT_DAV_DENY_REAL_STAGE_PUT") == "1"
+REJECT_DELETE_IF_MATCH = os.environ.get(
+    "FILEHUB_STRICT_DAV_REJECT_DELETE_IF_MATCH") == "1"
 WRITE_LOCK = threading.RLock()
 
 
@@ -73,6 +75,17 @@ class Handler(BaseHTTPRequestHandler):
         write = self.command in ("PUT", "DELETE", "MOVE", "MKCOL", "COPY")
         guard = WRITE_LOCK if write else threading.RLock()
         with guard:
+            # Reproduce Synology's refusal of valid conditional DELETE after
+            # a recent upload. Explicit Explorer deletion must work without
+            # an If-Match, while automatic Office replacement retains it.
+            if (REJECT_DELETE_IF_MATCH and self.command == "DELETE" and
+                    self.headers.get("If-Match")):
+                self.send_response(412)
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+                return
             if (DENY_REAL_STAGE_PUT and self.command == "PUT" and
                 re.fullmatch(r"\.nasmount-stage-[0-9a-f]{32}",
                              urlsplit(request_path).path.rsplit("/", 1)[-1])):

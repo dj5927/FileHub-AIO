@@ -94,6 +94,8 @@ internal sealed class DirectWebDavWriteStore : IDisposable
     private bool _exclusiveMkcolVerified;
     private readonly HashSet<string> _safeStageMoveDirectories =
         new(StringComparer.OrdinalIgnoreCase);
+    // Stop repeated Synology stage-upload failures for this mount.
+    private int _progressiveUnsupported;
 
     // MOVE Overwrite:F cannot be assumed to work uniformly on all WebDAV
     // servers. Probe ONLY on private, unique objects in the target directory
@@ -425,7 +427,9 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             // A known allocation alone is not enough to enable streaming.
             // Only a new, sequential, fixed-size non-Office file qualifies.
             if (handle.Progressive is null &&
-                !handle.ProgressiveUnavailable && handle.Created &&
+                !handle.ProgressiveUnavailable &&
+                Volatile.Read(ref _progressiveUnsupported) == 0 &&
+                handle.Created &&
                 handle.PlannedCopySize >= 2 * 1024 * 1024 &&
                 position == 0 && !append && data.Length > 0 &&
                 !WriteIntent.IsDocument(handle.RemotePath))
@@ -469,6 +473,9 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         if (upload is not null &&
             !upload.WaitForSent(waitFor, TimeSpan.FromSeconds(25)))
         {
+            if (Interlocked.Exchange(ref _progressiveUnsupported, 1) == 0)
+                Console.WriteLine(
+                    "DIRECT_PROGRESSIVE_DISABLED_FOR_MOUNT reason=stage_not_sent");
             lock (handle.Gate)
             {
                 if (ReferenceEquals(upload, handle.Progressive))
@@ -628,8 +635,11 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     "Progressive rename outcome unverified; recovery retained",
                     error);
             }
-            Console.WriteLine("DIRECT_PROGRESSIVE_FALLBACK reason=" +
-                error.GetType().Name);
+            string reason = ProgressiveFailureCode(error);
+            if (Interlocked.Exchange(ref _progressiveUnsupported, 1) == 0)
+                Console.WriteLine(
+                    "DIRECT_PROGRESSIVE_DISABLED_FOR_MOUNT reason=" + reason);
+            Console.WriteLine("DIRECT_PROGRESSIVE_FALLBACK reason=" + reason);
             return false;
         }
         finally
@@ -652,10 +662,28 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         {
             if (handle.Created && handle.Local.Length == 0 &&
                 handle.Progressive is null && !handle.ProgressiveUnavailable &&
+                Volatile.Read(ref _progressiveUnsupported) == 0 &&
                 length >= 2 * 1024 * 1024 &&
                 !WriteIntent.IsDocument(handle.RemotePath))
                 handle.PlannedCopySize = length;
         }
+    }
+
+    private static string ProgressiveFailureCode(Exception error)
+    {
+        // Do not expose filenames, server addresses or credentials in logs.
+        string message = error.Message;
+        if (message.Contains("stage PUT rejected HTTP", StringComparison.Ordinal))
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(message,
+                @"HTTP\s+([345][0-9]{2})");
+            return "stage_put_http_" + (m.Success ? m.Groups[1].Value : "unknown");
+        }
+        if (message.Contains("stage size/ETag", StringComparison.Ordinal))
+            return "stage_metadata_unverified";
+        if (message.Contains("stage was not completely written", StringComparison.Ordinal))
+            return "stage_incomplete";
+        return error.GetType().Name;
     }
 
     internal int Read(Handle handle, long offset, Span<byte> output)
@@ -677,6 +705,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             string path = handle.RemotePath;
             lock (_locks.GetOrAdd(path, _ => new object()))
             {
+                var commitTimer = System.Diagnostics.Stopwatch.StartNew();
                 if (handle.Progressive is not null &&
                     TryCommitProgressive(handle))
                     return;
@@ -703,6 +732,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     }
                 }
                 SaveJournal(handle, "uploading");
+                long journalMs = commitTimer.ElapsedMilliseconds;
                 using var request = new HttpRequestMessage(HttpMethod.Put, Remote(path));
                 bool newFile = handle.Created;
                 if (newFile)
@@ -718,6 +748,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 handle.UploadMayHaveCommitted = true;
                 using var result = _http.Send(request,
                     HttpCompletionOption.ResponseHeadersRead);
+                long putMs = commitTimer.ElapsedMilliseconds - journalMs;
                 if (result.StatusCode is HttpStatusCode.PreconditionFailed or
                     HttpStatusCode.Conflict or HttpStatusCode.Locked)
                 {
@@ -759,6 +790,8 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                         " etagStrong=" + StrongEtag(committed?.ETag));
                     throw new IOException("WebDAV POST_PUT_METADATA verification failed; recovery retained");
                 }
+                long metadataMs = commitTimer.ElapsedMilliseconds -
+                    journalMs - putMs;
                 // For a brand new, non-Office media file, an accepted
                 // conditional PUT followed by a strong server ETag and exact
                 // remote length is sufficient to finish a normal Explorer
@@ -786,6 +819,14 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 handle.Dirty = false;
                 handle.UploadMayHaveCommitted = false;
                 SaveJournal(handle, "committed");
+                Console.WriteLine("DIRECT_WEBDAV_COPY_TIMING_MS new=" + newFile +
+                    " bytes=" + handle.Local.Length +
+                    " journal=" + journalMs +
+                    " put=" + putMs +
+                    " metadata=" + metadataMs +
+                    " finalize=" + (commitTimer.ElapsedMilliseconds -
+                        journalMs - putMs - metadataMs) +
+                    " total=" + commitTimer.ElapsedMilliseconds);
             }
         }
     }
@@ -1152,28 +1193,32 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         finally { try { File.Delete(stage); } catch (IOException) { } }
     }
 
-    internal void Delete(string path, string? etag, bool directory = false)
+    internal void Delete(string path, string? etag, bool directory = false,
+        bool explicitUserDelete = false)
     {
+        var deleteTimer = System.Diagnostics.Stopwatch.StartNew();
         path = DirectWebDavReadOnlyBackend.Normalize(path);
         if (path == "/")
             throw new IOException("Refusing to delete the WebDAV root");
-        // Some NAS WebDAV servers never issue ETags for collections.
-        // Folder DELETE is allowed only after an authoritative, uncached
-        // empty-directory check. File deletes keep their ETag condition.
+        // Explorer DELETE is explicit removal of the named object. Synology
+        // can change ETags immediately after a copy and reject DELETE
+        // If-Match with HTTP 412. Internal Office replacement source cleanup
+        // still retains strict conditional deletion.
         if (directory)
         {
             var children = _read.RefreshList(path);
             if (children.Length != 0)
                 throw new IOException("Directory is not empty on NAS");
         }
-        else RequireVerifiedConditionalWrites();
-        if (!directory && !StrongEtag(etag))
+        else if (!explicitUserDelete) RequireVerifiedConditionalWrites();
+        if (!directory && !explicitUserDelete && !StrongEtag(etag))
             throw new IOException("Refusing DELETE without strong source ETag");
         using var request = new HttpRequestMessage(HttpMethod.Delete, Remote(path));
-        if (StrongEtag(etag))
+        if (!directory && !explicitUserDelete && StrongEtag(etag))
             request.Headers.TryAddWithoutValidation("If-Match", etag);
         using var result = _http.Send(request);
-        if (!result.IsSuccessStatusCode && result.StatusCode != HttpStatusCode.NotFound)
+        if (!result.IsSuccessStatusCode &&
+            !(explicitUserDelete && result.StatusCode == HttpStatusCode.NotFound))
             throw new IOException("WebDAV DELETE rejected HTTP " + (int)result.StatusCode);
         _read.Invalidate(path);
         if (directory)
@@ -1183,6 +1228,9 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             string parent = path[..path.LastIndexOf('/')];
             _read.Invalidate(string.IsNullOrEmpty(parent) ? "/" : parent);
         }
+        Console.WriteLine("DIRECT_WEBDAV_DELETE_TIMING_MS directory=" +
+            directory + " explicit=" + explicitUserDelete +
+            " elapsed=" + deleteTimer.ElapsedMilliseconds);
     }
 
     public void Dispose() => _http.Dispose();

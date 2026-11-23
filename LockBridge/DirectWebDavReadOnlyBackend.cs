@@ -235,6 +235,13 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
         return result;
     }
 
+    // Never use the 15-second metadata cache for destructive operations.
+    internal Entry? StatFresh(string path)
+    {
+        Invalidate(path);
+        return Stat(path);
+    }
+
     internal Entry[] List(string folder)
     {
         string p = Normalize(folder);
