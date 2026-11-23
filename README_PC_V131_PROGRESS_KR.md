@@ -32,3 +32,12 @@
 - 구글 기존 파일 여러 번 저장, Office 플러시, 충돌, 403 실패 로컬 복구, 구글 로그인 UI/게시자 OAuth, PC updater/EXE/설정 백업 테스트 통과.
 - WebDAV 로컬 WinFsp 복사 24MiB/23,600,123바이트 SHA-256, 파일 잠금, 한글 폴더 이름변경, 엑셀 임시파일 교체 테스트 통과. 사용자 NAS의 99% 마지막 응답 지연은 아직 실기기 재검증 필요.
 - 공식 릴리즈 URL: https://github.com/dj5927/FileHub-AIO/releases/tag/pc-v1.3.131
+
+## 공식 GitHub 배포 완료 (2026-11-23)
+
+- GitHub Actions run 45108436212: 성공. PC v1.3.131 11개 분할 파일 재결합, 압축 구조, 필수 파일, 전체 SHA-256 검증 후 PC 전용 공식 릴리즈 게시.
+- 공식 릴리즈 https://github.com/dj5927/FileHub-AIO/releases/tag/pc-v1.3.131
+- 게시 ZIP 168,927,907 bytes, SHA256 A4853F0A24C4084C346639BC1F3559C2CDBED7B490886F8B5929AC36983C8382. GitHub asset digest와 로컬 빌드 해시 일치.
+- 실제 Google 계정의 대용량 파일 복사 시간은 사용자 실기기에서 최종 확인 필요. Google 테스트는 Mock API + 실제 Windows WinFsp CopyFileEx(8MiB+123B)로 네이티브 진행률 및 정확한 바이트 검증, 별도 로그인/반복 저장/복구 회귀 PASS.
+- WebDAV는 서버의 마지막 PUT/MOVE 응답으로 발생하는 99% 대기를 완전히 제거한 상태는 아님. v1.3.131에서는 짧은 FileStream read 재시도 및 기존 스트리밍 무결성 유지, 서버별 추가 분석은 실사용 로그 필요.
+- 릴리즈 전송 임시 터널 및 HTTP 서버 종료. 사용자의 기존 FileHub 연결과 원격 NAS 데이터는 변경하지 않음.
