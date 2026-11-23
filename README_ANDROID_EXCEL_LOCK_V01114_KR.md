@@ -68,3 +68,12 @@ at the beginning of the editing session.
 - 공식 최신 Android OTA: https://github.com/dj5927/FileHub-AIO/releases/tag/v0.1.114
 - 구버전 staged OTA workflow는 0.1.113/0.1.114 태그에서는 실행하지 않고, 체크섬 고정 배포 workflow에서 발행한다.
 - 실제 사용자 NAS에서 RaiDrive와 안드로이드 Excel 동시 열기 최종 현장 테스트는 미수행. PC 버전, 다른 Android 스토리지 공급자 및 사용자 NAS 데이터는 변경하지 않음.
+
+## 공식 릴리즈 최종 완료 (2026-11-23)
+
+- GitHub Actions run 45134612630: success. 배포 APK 다운로드 후 고정 크기 및 전체 SHA-256, ZIP 구성 무결성 검증하고 정식 Android OTA `v0.1.114` 게시 완료.
+- GitHub 릴리즈 APK 72,631,889 bytes 및 `sha256:a27758ad2ebf517c4fce91245731915e2faaa34838814ebceeb3eff45a48f975`와 빌드 원본 SHA-256 일치.
+- 공식 다운로드 https://github.com/dj5927/FileHub-AIO/releases/download/v0.1.114/FileHub-AIO-v0.1.114.apk
+- 기존 v0.1.113과 apk signer 인증서 동일 확인. 전체 Java 테스트 586개 중 실패 0, WebDAV Excel 신규 8개 포함. GitHub Actions 테스트/디버그 빌드 run 45133864314 success.
+- 임시 파일 배포 HTTP 서버 및 Cloudflare Tunnel 종료. 기존 NAS 데이터와 PC판 배포에는 변경 없음.
+- 미검증: 사용자 Android 기기와 실 NAS에서 RaiDrive/Excel 교차 편집 화면 동작은 직접 확인 필요.
