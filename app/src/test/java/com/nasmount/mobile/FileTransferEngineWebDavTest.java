@@ -146,26 +146,162 @@ public class FileTransferEngineWebDavTest {
         }
     }
 
-    @Test public void remoteFolderDeleteTraversesChildBeforeParent()
+    @Test public void remoteWebDavCollectionDeleteIsOneServerAcknowledgedRequest()
             throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.start();
-            server.enqueue(listing("/folder/", "sub/", "note.txt"));
-            server.enqueue(listing("/folder/sub/", "deep.bin"));
-            for (int i = 0; i < 4; i++)
-                server.enqueue(new MockResponse().setResponseCode(204));
+            server.enqueue(new MockResponse().setResponseCode(204));
             Models.Entry folder = new Models.Entry("folder", "/folder", true);
             assertEquals(1, FileTransferEngine.delete(null,
                     Collections.singletonList(FileTransferEngine.remote(
                             profile(server), folder))));
-            String[] expected = {"PROPFIND", "PROPFIND", "DELETE",
-                    "DELETE", "DELETE", "DELETE"};
-            for (String method : expected) {
-                RecordedRequest request = server.takeRequest(2, TimeUnit.SECONDS);
-                assertNotNull(request);
-                assertEquals(method, request.getMethod());
-            }
-            assertEquals(6, server.getRequestCount());
+            RecordedRequest request = server.takeRequest(2, TimeUnit.SECONDS);
+            assertNotNull(request);
+            assertEquals("DELETE", request.getMethod());
+            assertEquals("/dav/folder/", request.getPath());
+            assertEquals(1, server.getRequestCount());
+        }
+    }
+
+    @Test public void multiStatusFolderDeleteCannotBeReportedAsSuccess()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setResponseCode(207)
+                    .setBody("<d:multistatus xmlns:d='DAV:'/>"));
+            Models.Entry folder = new Models.Entry("folder", "/folder", true);
+            FileTransferEngine.BatchFailure failure = assertThrows(
+                    FileTransferEngine.BatchFailure.class,
+                    () -> FileTransferEngine.delete(null,
+                            Collections.singletonList(FileTransferEngine.remote(
+                                    profile(server), folder))));
+            assertEquals(0, failure.completed);
+            assertTrue(failure.getCause().getMessage().contains("207"));
+            assertEquals(1, server.getRequestCount());
+        }
+    }
+
+    @Test public void sameAccountCopyUsesServerCopyWithoutDownloading()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(listing("/destination/"));
+            server.enqueue(new MockResponse().setResponseCode(201));
+            Models.RemoteProfile account = profile(server);
+            Models.Entry file = new Models.Entry(
+                    "image.jpg", "/source/image.jpg", false);
+            file.size = 4096;
+            assertEquals(1, FileTransferEngine.transfer(null,
+                    Collections.singletonList(FileTransferEngine.remote(account, file)),
+                    FileTransferEngine.remoteFolder(account, "/destination"), false));
+            assertEquals("PROPFIND",
+                    server.takeRequest(2, TimeUnit.SECONDS).getMethod());
+            RecordedRequest copied = server.takeRequest(2, TimeUnit.SECONDS);
+            assertNotNull(copied);
+            assertEquals("COPY", copied.getMethod());
+            assertEquals("F", copied.getHeader("Overwrite"));
+            assertTrue(copied.getHeader("Destination")
+                    .endsWith("/destination/image.jpg"));
+            assertEquals(2, server.getRequestCount());
+        }
+    }
+
+    @Test public void sameAccountFolderCopiesRecursivelyOnServerWithOneCopy()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(listing("/destination/"));
+            server.enqueue(new MockResponse().setResponseCode(201));
+            Models.RemoteProfile account = profile(server);
+            Models.Entry folder = new Models.Entry("photos", "/source/photos", true);
+            assertEquals(1, FileTransferEngine.transfer(null,
+                    Collections.singletonList(FileTransferEngine.remote(account, folder)),
+                    FileTransferEngine.remoteFolder(account, "/destination"), false));
+            assertEquals("PROPFIND",
+                    server.takeRequest(2, TimeUnit.SECONDS).getMethod());
+            RecordedRequest copy = server.takeRequest(2, TimeUnit.SECONDS);
+            assertNotNull(copy);
+            assertEquals("COPY", copy.getMethod());
+            assertEquals("infinity", copy.getHeader("Depth"));
+            assertEquals("F", copy.getHeader("Overwrite"));
+            assertEquals("/dav/source/photos/", copy.getPath());
+            assertTrue(copy.getHeader("Destination")
+                    .endsWith("/destination/photos/"));
+            assertEquals(2, server.getRequestCount());
+        }
+    }
+
+    @Test public void folderCopyFallsBackWhenServerDoesNotSupportCopy()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(listing("/destination/"));
+            server.enqueue(new MockResponse().setResponseCode(405));
+            server.enqueue(new MockResponse().setResponseCode(201)); // MKCOL
+            server.enqueue(listing("/source/photos/", "one.txt"));
+            server.enqueue(new MockResponse().setResponseCode(200).setBody("DATA"));
+            server.enqueue(new MockResponse().setResponseCode(201)); // PUT
+            server.enqueue(new MockResponse().setResponseCode(201)); // MOVE
+            Models.RemoteProfile account = profile(server);
+            Models.Entry folder = new Models.Entry("photos", "/source/photos", true);
+            assertEquals(1, FileTransferEngine.transfer(null,
+                    Collections.singletonList(FileTransferEngine.remote(account, folder)),
+                    FileTransferEngine.remoteFolder(account, "/destination"), false));
+            String[] expected = {"PROPFIND", "COPY", "MKCOL", "PROPFIND",
+                    "GET", "PUT", "MOVE"};
+            for (String method : expected)
+                assertEquals(method,
+                        server.takeRequest(2, TimeUnit.SECONDS).getMethod());
+            assertEquals(7, server.getRequestCount());
+        }
+    }
+
+    @Test public void unsupportedServerCopyFallsBackOnceForWholeBatch()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(listing("/destination/"));
+            server.enqueue(new MockResponse().setResponseCode(405));
+            server.enqueue(new MockResponse().setResponseCode(200).setBody("AAAA"));
+            server.enqueue(new MockResponse().setResponseCode(201));
+            server.enqueue(new MockResponse().setResponseCode(201));
+            server.enqueue(new MockResponse().setResponseCode(200).setBody("BBBB"));
+            server.enqueue(new MockResponse().setResponseCode(201));
+            server.enqueue(new MockResponse().setResponseCode(201));
+            Models.RemoteProfile account = profile(server);
+            Models.Entry first = new Models.Entry("first.txt", "/source/first.txt", false);
+            Models.Entry second = new Models.Entry("second.txt", "/source/second.txt", false);
+            first.size = 4;
+            second.size = 4;
+            assertEquals(2, FileTransferEngine.transfer(null,
+                    Arrays.asList(FileTransferEngine.remote(account, first),
+                            FileTransferEngine.remote(account, second)),
+                    FileTransferEngine.remoteFolder(account, "/destination"), false));
+            String[] expected = {"PROPFIND", "COPY", "GET", "PUT", "MOVE",
+                    "GET", "PUT", "MOVE"};
+            for (String method : expected)
+                assertEquals(method,
+                        server.takeRequest(2, TimeUnit.SECONDS).getMethod());
+            assertEquals(8, server.getRequestCount());
+        }
+    }
+
+    @Test public void partialServerCopyNeverFallsBackOrReportsCompletion()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(listing("/destination/"));
+            server.enqueue(new MockResponse().setResponseCode(207));
+            Models.RemoteProfile account = profile(server);
+            Models.Entry file = new Models.Entry("file.txt", "/source/file.txt", false);
+            FileTransferEngine.BatchFailure failure = assertThrows(
+                    FileTransferEngine.BatchFailure.class,
+                    () -> FileTransferEngine.transfer(null,
+                            Collections.singletonList(FileTransferEngine.remote(account, file)),
+                            FileTransferEngine.remoteFolder(account, "/destination"), false));
+            assertEquals(0, failure.completed);
+            assertTrue(failure.getCause().getMessage().contains("207"));
+            assertEquals(2, server.getRequestCount());
         }
     }
 }

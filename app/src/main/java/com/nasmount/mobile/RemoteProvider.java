@@ -959,6 +959,37 @@ final class RemoteProvider {
         }
     }
 
+    /**
+     * Same-account server-side COPY, without Android round-tripping the
+     * file body. Only 201/204 confirms success. No blind retries for 207
+     * Multi-Status or uncertain HTTP errors.
+     *
+     * @return false only if the WebDAV server does not support COPY.
+     */
+    static boolean tryWebDavServerCopy(Models.RemoteProfile p, String source,
+                                      String destination, boolean directory)
+            throws Exception {
+        if (!"WebDAV".equals(p.protocol))
+            throw new IllegalArgumentException("WebDAV storage required");
+        requireWritable(p);
+        if (relativePath(source).equals(relativePath(destination)))
+            throw new IOException("원본과 대상이 같은 WebDAV 파일입니다.");
+        Request.Builder request = webRequest(p, source, directory)
+                .header("Destination",
+                        webUrl(p, destination, directory).toString())
+                .header("Overwrite", "F")
+                .method("COPY", RequestBody.create(new byte[0], null));
+        if (directory) request.header("Depth", "infinity");
+        Request copy = request.build();
+        try (Response response = webClient(p).newCall(copy).execute()) {
+            if (response.code() == 201 || response.code() == 204)
+                return true;
+            if (response.code() == 405 || response.code() == 501)
+                return false;
+            throw new IOException("WebDAV COPY HTTP " + response.code());
+        }
+    }
+
     static void delete(Models.RemoteProfile p, String path, boolean directory)
             throws Exception {
         requireWritable(p);
@@ -998,7 +1029,9 @@ final class RemoteProvider {
             case "WebDAV":
                 try (Response resp = webClient(p).newCall(
                         webRequest(p, path, directory).delete().build()).execute()) {
-                    if (!resp.isSuccessful())
+                    // 207 may contain per-resource errors: never mark the
+                    // entire collection as deleted on a partial response.
+                    if (!resp.isSuccessful() || resp.code() == 207)
                         throw new IOException("WebDAV DELETE HTTP " + resp.code());
                 } return;
             default: throw new IOException("지원하지 않는 저장소");

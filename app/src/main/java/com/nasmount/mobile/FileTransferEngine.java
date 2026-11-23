@@ -14,9 +14,11 @@ import java.io.OutputStream;
 import java.io.FilterInputStream;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;
@@ -128,11 +130,13 @@ final class FileTransferEngine {
         return Long.MAX_VALUE - a < b ? Long.MAX_VALUE : a + b;
     }
 
-    private static long totalSourceBytes(List<Item> sources) throws Exception {
+    private static long totalSourceBytes(List<Item> sources,
+                                         Map<String, Long> sizes) throws Exception {
         long sum = 0;
         int[] budget = {0};
         for (Item item : sources) {
             long size = sourceBytes(item, budget, 0);
+            sizes.put(item.key(), size);
             if (size < 0) return -1;
             sum = safeAdd(sum, size);
         }
@@ -396,10 +400,14 @@ final class FileTransferEngine {
         if (control != null) { control.bindCurrentThread(); control.check(); }
         preflight(sources, destination, move, overwrite);
         if (control != null) control.check();
+        Map<String, Long> sourceSizes = new HashMap<>();
         TransferMeter meter = listener == null ? null :
-                new TransferMeter(listener, totalSourceBytes(sources), sources.size());
+                new TransferMeter(listener,
+                        totalSourceBytes(sources, sourceSizes), sources.size());
         int[] budget = {0};
         int success = 0;
+        // Do not retry an unsupported server-side COPY for every file.
+        Set<String> webDavCopyUnsupported = new HashSet<>();
         for (Item item : sources) {
             try {
                 // Cloud backends support server-side copy AND move, including folders.
@@ -423,6 +431,26 @@ final class FileTransferEngine {
                     String to = RemoteProvider.child(destination.path, item.name);
                     RemoteProvider.rename(item.remote, item.path, to, item.directory);
                     if (meter != null && !item.directory) meter.directComplete(item.size);
+                } else if (!move && !overwrite && "remote".equals(item.kind) &&
+                        "remote".equals(destination.kind) &&
+                        "WebDAV".equals(item.remote.protocol) &&
+                        item.remote.id.equals(destination.remote.id) &&
+                        !webDavCopyUnsupported.contains(item.remote.id)) {
+                    // Server COPY avoids 2x traffic through the phone,
+                    // including entire collections. Directory progress
+                    // derives from the preflight source-size snapshot, so
+                    // no extra listing after a successful COPY is required.
+                    // Count progress only after the NAS accepts 201/204.
+                    String to = RemoteProvider.child(destination.path, item.name);
+                    if (RemoteProvider.tryWebDavServerCopy(item.remote,
+                            item.path, to, item.directory)) {
+                        if (meter != null) meter.directComplete(
+                                sourceSizes.getOrDefault(item.key(), item.size));
+                    } else {
+                        webDavCopyUnsupported.add(item.remote.id);
+                        copyOne(context, item, destination, budget, 0,
+                                overwrite, meter, control);
+                    }
                 } else if (move && "local".equals(item.kind) &&
                         "local".equals(destination.kind) &&
                         tryLocalMove(item.local, new File(destination.local, item.name),
@@ -710,6 +738,9 @@ final class FileTransferEngine {
         if (!item.writable()) throw new IOException("읽기 전용 파일은 삭제할 수 없습니다.");
         if (SftpLinkPolicy.shouldDescendForDelete(item.directory, item.symbolicLink) &&
                 item.remote != null &&
+                // A WebDAV collection DELETE recursively removes children
+                // on the server. Do not issue one HTTP DELETE per child.
+                !"WebDAV".equals(item.remote.protocol) &&
                 !"MYBOX".equals(item.remote.protocol) &&
                 !"TeraBox".equals(item.remote.protocol))
             for (Item child : children(item))
