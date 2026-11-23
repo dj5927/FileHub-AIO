@@ -1,0 +1,83 @@
+<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="../../app/src/main/assets/office_hwp/office-host.css">
+<script src="../../app/src/main/assets/office_hwp/jszip.min.js"></script>
+<script src="../../app/src/main/assets/office_hwp/xlsx.full.min.js"></script>
+<style>
+body{margin:0}
+#sheet-container{display:flex;flex-direction:column;width:420px;height:570px}
+#grid-scroll{height:520px;min-height:520px;width:420px;overflow:auto;flex:1;touch-action:pan-x pan-y}
+</style></head><body>
+<div id="result">RUNNING</div>
+<div id="sheet-container"><div id="grid-scroll"></div></div>
+<script type="module">
+import {openXlsxArchive,exportXlsxArchive} from '../../app/src/main/assets/office_hwp/excel-ooxml.js';
+import {mountExcelGrid} from '../../app/src/main/assets/office_hwp/excel-grid.js';
+const assert=(yes,message)=>{if(!yes)throw Error(message)};
+const tick=()=>new Promise(resolve=>setTimeout(resolve,80));
+try {
+  const bytes=new Uint8Array(await (await fetch('./fixture-v116-images.xlsx')).arrayBuffer());
+  const workbook=XLSX.read(bytes,{type:'array',cellStyles:true,cellNF:true});
+  const archive=await openXlsxArchive(bytes,workbook.SheetNames);
+  assert(archive.sheetMeta[0].images.length===2,
+    'Two embedded OOXML drawing images should be found: '+archive.sheetMeta[0].images.length);
+  assert(archive.sheetMeta[0].images.every(img=>img.src.startsWith('data:image/png;base64,')),
+    'Unexpected image data URL');
+  assert(archive.sheetMeta[0].defaultRowPx>=19 &&
+         archive.sheetMeta[0].defaultRowPx<=21,'Default row 15pt must be 20px');
+  assert(archive.sheetMeta[0].defaultColPx>60 &&
+         archive.sheetMeta[0].defaultColPx<80,'Default column widths not respected');
+  assert(archive.sheetMeta[0].rowHeights.get(1)===60,'Custom row height 45pt lost');
+  let sheet=0;
+  const scroll=document.getElementById('grid-scroll');
+  const grid=mountExcelGrid(scroll,workbook,archive,()=>sheet,'A1',()=>{},false);
+  const image=scroll.querySelector('.excel-drawing-image');
+  assert(image,'First embedded drawing not rendered');
+  await image.decode();
+  assert(image.naturalWidth===160 && image.naturalHeight===70,
+    'Image pixel content unavailable');
+  assert(Math.abs(parseFloat(image.style.width)-160)<1 &&
+         Math.abs(parseFloat(image.style.height)-70)<1,
+    'OneCellAnchor pixel geometry changed');
+  const a4=scroll.querySelector('[data-address="A4"]');
+  const spill=a4?.querySelector('.excel-spill');
+  assert(spill,'Unwrapped long text must extend to adjacent empty cells');
+  assert(parseFloat(spill.style.width)>a4.getBoundingClientRect().width*2,
+    'Text overflow incorrectly clipped to single cell');
+  const b9=scroll.querySelector('[data-address="B9"]');
+  const b9spill=b9?.querySelector('.excel-spill');
+  assert(b9 && !b9spill,
+    'Next occupied C9 should prevent B9 from overflowing');
+  const wrap=scroll.querySelector('[data-address="B12"]');
+  assert(wrap && getComputedStyle(wrap).whiteSpace==='pre-wrap',
+    'Stored wrapText was not applied');
+  grid.jump('G25');
+  await tick();
+  const image2=scroll.querySelector('.excel-drawing-image');
+  assert(image2,'Offscreen image not loaded after scrolling');
+  await image2.decode();
+  assert(image2.naturalWidth===90,'Second embedded drawing did not decode');
+  grid.setZoom(1.6);
+  assert(grid.getZoom()===1.6,'Zoom state unavailable for drawing');
+  grid.load(1);
+  assert(!scroll.querySelector('.excel-drawing-image'),
+    'Image from previous sheet leaked into other sheet');
+  const changed=await exportXlsxArchive(archive,new Map([
+    ['0:A4',{kind:'string',value:'기존 이미지와 서식이 보존되었습니다'}]]));
+  const updated=await JSZip.loadAsync(changed);
+  const original=await JSZip.loadAsync(bytes);
+  for(const name of ['xl/media/image1.png','xl/media/image2.png',
+    'xl/drawings/drawing1.xml','xl/drawings/_rels/drawing1.xml.rels',
+    'xl/styles.xml','xl/worksheets/sheet2.xml']){
+    const initial=await original.file(name).async('uint8array');
+    const next=await updated.file(name).async('uint8array');
+    assert(initial.length===next.length && initial.every((b,i)=>b===next[i]),
+      'Saving modified embedded drawing or style: '+name);
+  }
+  document.getElementById('result').textContent=
+    'PASS: embedded images, anchors, lazy scroll, long text spill, occupied-cell clipping, wrapping, default sizes, lossless drawing save';
+}catch(error){
+  document.getElementById('result').textContent='FAIL: '+error.message;
+  console.error(error);
+}
+</script></body></html>

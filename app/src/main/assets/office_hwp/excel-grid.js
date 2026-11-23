@@ -35,18 +35,27 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
     try{range=XLSX.utils.decode_range(sheet['!ref']||'A1');}
     catch{range={s:{r:0,c:0},e:{r:0,c:0}};}
     // Expose all used rows and columns in one uninterrupted scroll surface.
-    state.maxRow=Math.min(LIMIT_ROW,Math.max(70,range.e.r+41));
-    state.maxCol=Math.min(LIMIT_COL,Math.max(14,range.e.c+7));
+    const pictures=meta?.images||[];
+    const pictureMaxRow=pictures.reduce((m,p)=>Math.max(m,
+      p.to?.row??((p.from?.row||0)+100)),0);
+    const pictureMaxCol=pictures.reduce((m,p)=>Math.max(m,
+      p.to?.col??((p.from?.col||0)+30)),0);
+    state.maxRow=Math.min(LIMIT_ROW,Math.max(70,range.e.r+41,pictureMaxRow+5));
+    state.maxCol=Math.min(LIMIT_COL,Math.max(14,range.e.c+7,pictureMaxCol+5));
     state.rowPrefix=new Float64Array(state.maxRow+1);
     state.colPrefix=new Float64Array(state.maxCol+1);
     for(let r=0;r<state.maxRow;r++){
       const size=meta?.rowHeights.get(r)||
-        sheet['!rows']?.[r]?.hpx||sheet['!rows']?.[r]?.hpt*96/72||27;
-      state.rowPrefix[r+1]=state.rowPrefix[r]+Math.min(400,Math.max(18,size));
+        sheet['!rows']?.[r]?.hpx||sheet['!rows']?.[r]?.hpt*96/72||
+        meta?.defaultRowPx||20;
+      state.rowPrefix[r+1]=state.rowPrefix[r]+Math.min(400,Math.max(16,size));
     }
     for(let c=0;c<state.maxCol;c++){
       const size=meta?.colWidths.get(c)||
-        sheet['!cols']?.[c]?.wpx||Math.round((sheet['!cols']?.[c]?.wch||12)*7+5);
+        sheet['!cols']?.[c]?.wpx||
+        (sheet['!cols']?.[c]?.wch ?
+          Math.round(sheet['!cols'][c].wch*7+5) : null)||
+        meta?.defaultColPx||64;
       state.colPrefix[c+1]=state.colPrefix[c]+Math.min(600,Math.max(32,size));
     }
   }
@@ -62,6 +71,42 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
          c>=merged.s.c && c<=merged.e.c)return merged;
     }
     return null;
+  }
+  function cellBlocksText(cell) {
+    return !!(cell && (cell.f ||
+      (cell.v!==undefined && cell.v!==null && cell.v!=='')));
+  }
+  function overflowWidth(r,c,style,merged) {
+    if(merged || style?.whiteSpace==='pre-wrap')return null;
+    const rightward=style?.textAlign!=='right';
+    let left=HEADER_WIDTH+state.colPrefix[c];
+    let right=HEADER_WIDTH+state.colPrefix[c+1];
+    for(let step=1;step<=48;step++) {
+      const candidate=c+(rightward?step:-step);
+      if(candidate<0 || candidate>=state.maxCol)break;
+      const address=XLSX.utils.encode_cell({r,c:candidate});
+      if(cellBlocksText(state.sheet[address]) || mergeFor(r,candidate))break;
+      if(rightward)right=HEADER_WIDTH+state.colPrefix[candidate+1];
+      else left=HEADER_WIDTH+state.colPrefix[candidate];
+      if(right-left>=3600)break;
+    }
+    return {
+      start:left-(HEADER_WIDTH+state.colPrefix[c]),
+      width:Math.max(0,right-left)
+    };
+  }
+  function imageBox(pic) {
+    const position=point=>({
+      x:HEADER_WIDTH+state.colPrefix[Math.min(point.col,state.maxCol)]+point.colOff,
+      y:HEADER_HEIGHT+state.rowPrefix[Math.min(point.row,state.maxRow)]+point.rowOff
+    });
+    const start=pic.absolute?
+      {x:HEADER_WIDTH+pic.absolute.x,y:HEADER_HEIGHT+pic.absolute.y}:
+      position(pic.from);
+    const end=pic.to?position(pic.to):{
+      x:start.x+pic.cx,y:start.y+pic.cy
+    };
+    return {x:start.x,y:start.y,w:end.x-start.x,h:end.y-start.y};
   }
   function visibleRect(){
     const zoom=state.zoom, top=scroll.scrollTop/zoom,
@@ -127,6 +172,25 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
         if(style?.verticalAlign==='top')node.style.alignItems='flex-start';
         else if(style?.verticalAlign==='bottom')
           node.style.alignItems='flex-end';
+        if(style?.whiteSpace==='pre-wrap')node.style.display='block';
+        const isString=cell && typeof cell.v==='string' && cell.v.length>0;
+        if(isString && !merged && style?.whiteSpace!=='pre-wrap') {
+          const overflow=overflowWidth(r,c,style,merged);
+          const ownWidth=state.colPrefix[c+1]-state.colPrefix[c];
+          if(overflow && overflow.width>ownWidth+1) {
+            // Only the glyphs extend into adjacent empty cells; preserve
+            // each neighbor's original fill, borders and row height.
+            node.textContent='';
+            const span=document.createElement('span');
+            span.className='excel-spill';
+            span.textContent=String(text);
+            span.style.left=overflow.start+'px';
+            span.style.width=overflow.width+'px';
+            span.style.justifyContent=style?.textAlign==='right'?'flex-end':'flex-start';
+            node.classList.add('excel-overflow');
+            node.appendChild(span);
+          }
+        }
         node.addEventListener('click',()=>onSelect(address));
         node.addEventListener('dblclick',()=>{
           onSelect(address);
@@ -134,6 +198,25 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
         });
         append(node);
       }
+    }
+    const viewport={
+      left:rect.left-250,top:rect.top-250,
+      right:rect.left+scroll.clientWidth/state.zoom+250,
+      bottom:rect.top+scroll.clientHeight/state.zoom+250
+    };
+    for(const pic of state.meta?.images||[]) {
+      const box=imageBox(pic);
+      if(!(box.w>0 && box.h>0) || box.w>12000 || box.h>12000 ||
+         box.x>viewport.right || box.y>viewport.bottom ||
+         box.x+box.w<viewport.left || box.y+box.h<viewport.top)continue;
+      const img=document.createElement('img');
+      img.className='excel-drawing-image';
+      img.alt='엑셀 삽입 이미지';
+      img.draggable=false;
+      img.src=pic.src;
+      img.style.cssText='left:'+box.x+'px;top:'+box.y+'px;width:'+
+        box.w+'px;height:'+box.h+'px;';
+      append(img);
     }
     append(element('excel-corner','',rect.left,rect.top,HEADER_WIDTH,HEADER_HEIGHT));
     surface.replaceChildren(fragment);

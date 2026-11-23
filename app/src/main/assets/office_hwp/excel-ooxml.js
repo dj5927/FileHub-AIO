@@ -112,6 +112,13 @@ function resolvePath(target) {
 function rowColMeta(xml) {
   const doc=parse(xml);
   const cells=new Map(),rowHeights=new Map(),colWidths=new Map();
+  const format=first(doc,'sheetFormatPr');
+  const defaultRowPoints=Number(attr(format,'defaultRowHeight'));
+  const defaultColChars=Number(attr(format,'defaultColWidth'));
+  const defaultRowPx=defaultRowPoints>0 ?
+    Math.max(12,Math.min(300,defaultRowPoints*96/72)):20;
+  const defaultColPx=defaultColChars>0 ?
+    Math.max(32,Math.min(600,Math.round(defaultColChars*7+5))):64;
   for(const row of tags(first(doc,'sheetData'),'row')){
     const n=Number(attr(row,'r'))-1;
     const h=Number(attr(row,'ht'));
@@ -129,7 +136,105 @@ function rowColMeta(xml) {
     if(attr(cell,'r'))cells.set(attr(cell,'r'),Number(attr(cell,'s')||0));
   const merges=tags(first(doc,'mergeCells'),'mergeCell')
     .map(m=>attr(m,'ref')).filter(Boolean);
-  return {cells,rowHeights,colWidths,merges};
+  return {cells,rowHeights,colWidths,merges,defaultRowPx,defaultColPx,images:[]};
+}
+
+const IMAGE_MIMES={
+  png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',gif:'image/gif',
+  webp:'image/webp',bmp:'image/bmp'
+};
+const EMU_PER_PIXEL=9525;
+
+function relativePart(base,target) {
+  if(!target || /^([a-z]+:|\/\/)/i.test(target))return null;
+  const url=new URL(target,'https://office.local/'+base);
+  const path=decodeURIComponent(url.pathname.substring(1));
+  // Reject relationship targets outside the XLSX archive / external hosts.
+  return url.host==='office.local' && path.startsWith('xl/') &&
+    !path.split('/').includes('..') ? path:null;
+}
+function relsPath(part) {
+  const last=part.lastIndexOf('/');
+  return part.substring(0,last+1)+'_rels/'+part.substring(last+1)+'.rels';
+}
+async function readRelations(zip,part) {
+  const file=zip.file(relsPath(part));
+  if(!file)return new Map();
+  const relations=tags(parse(await file.async('string')),'Relationship');
+  const result=new Map();
+  for(const relation of relations) {
+    if(attr(relation,'TargetMode').toLowerCase()==='external')continue;
+    const resolved=relativePart(part,attr(relation,'Target'));
+    if(resolved)result.set(attr(relation,'Id'),{
+      path:resolved,type:attr(relation,'Type')
+    });
+  }
+  return result;
+}
+function marker(node) {
+  if(!node)return null;
+  const col=Number(text(first(node,'col')));
+  const row=Number(text(first(node,'row')));
+  const colOff=Number(text(first(node,'colOff'))||0)/EMU_PER_PIXEL;
+  const rowOff=Number(text(first(node,'rowOff'))||0)/EMU_PER_PIXEL;
+  if(!Number.isInteger(col)||col<0||col>16383 ||
+     !Number.isInteger(row)||row<0||row>1048575 ||
+     !Number.isFinite(colOff)||!Number.isFinite(rowOff))return null;
+  return {col,row,colOff,rowOff};
+}
+/**
+ * Return per-sheet image anchors. Extract only supported raster images and
+ * never execute external relationships or embedded SVG/Office OLE objects.
+ */
+async function sheetPictures(zip,sheetPath,sheetXml,mediaCache) {
+  const sheetDoc=parse(sheetXml);
+  const sheetRels=await readRelations(zip,sheetPath);
+  const output=[];
+  for(const drawing of tags(sheetDoc,'drawing')) {
+    const id=drawing.getAttributeNS(REL,'id')||attr(drawing,'r:id');
+    const part=sheetRels.get(id);
+    if(!part||!part.type.endsWith('/drawing'))continue;
+    const source=zip.file(part.path);
+    if(!source)continue;
+    const pictureDoc=parse(await source.async('string'));
+    const imageRels=await readRelations(zip,part.path);
+    for(const anchor of Array.from(pictureDoc.documentElement.children)) {
+      if(!['oneCellAnchor','twoCellAnchor','absoluteAnchor'].includes(anchor.localName))
+        continue;
+      const from=marker(first(anchor,'from'));
+      const to=marker(first(anchor,'to'));
+      const pos=first(anchor,'pos');
+      if(!from && !pos)continue;
+      const extent=first(anchor,'ext');
+      const cx=Number(attr(extent,'cx'))/EMU_PER_PIXEL;
+      const cy=Number(attr(extent,'cy'))/EMU_PER_PIXEL;
+      const blip=first(anchor,'blip');
+      const embedded=blip?.getAttributeNS(REL,'embed')||attr(blip,'r:embed');
+      const media=imageRels.get(embedded);
+      if(!media || !media.type.endsWith('/image'))continue;
+      const ext=media.path.split('.').pop().toLowerCase();
+      const mime=IMAGE_MIMES[ext];
+      if(!mime || !zip.file(media.path))continue;
+      let src=mediaCache.get(media.path);
+      if(src===undefined) {
+        const image=zip.file(media.path);
+        // A single uncompressed image bigger than 20 MB should not lock up
+        // Android WebView; leave other images in the sheet visible.
+        if(image._data?.uncompressedSize>20*1024*1024)continue;
+        src='data:'+mime+';base64,'+await image.async('base64');
+        mediaCache.set(media.path,src);
+      }
+      const entry={from,to,cx,cy,src};
+      if(pos) {
+        entry.absolute={
+          x:Number(attr(pos,'x'))/EMU_PER_PIXEL,
+          y:Number(attr(pos,'y'))/EMU_PER_PIXEL
+        };
+      }
+      output.push(entry);
+    }
+  }
+  return output;
 }
 
 export async function openXlsxArchive(bytes, sheetNames) {
@@ -153,10 +258,19 @@ export async function openXlsxArchive(bytes, sheetNames) {
   const stylesFile=zip.file('xl/styles.xml');
   const styles=styleCatalog(stylesFile?await stylesFile.async('string'):null,theme);
   const sheetMeta=[];
+  const mediaCache=new Map();
   for(const path of paths){
     const file=path&&zip.file(path);
-    sheetMeta.push(file?rowColMeta(await file.async('string')):
-      {cells:new Map(),rowHeights:new Map(),colWidths:new Map(),merges:[]});
+    if(file) {
+      const xml=await file.async('string');
+      const meta=rowColMeta(xml);
+      try { meta.images=await sheetPictures(zip,path,xml,mediaCache); }
+      catch(error){ console.warn('Sheet drawings unavailable',error); }
+      sheetMeta.push(meta);
+    } else sheetMeta.push({
+      cells:new Map(),rowHeights:new Map(),colWidths:new Map(),merges:[],
+      defaultRowPx:20,defaultColPx:64,images:[]
+    });
   }
   return {zip,paths,styles,sheetMeta,bytes:new Uint8Array(bytes)};
 }

@@ -133,6 +133,14 @@ body:has(#spreadsheet-shell:not([hidden])) { background:#f7f8fa; }
   user-select:none;-webkit-user-select:none;
 }
 .excel-cell.selected {outline:2px solid #008c75;outline-offset:-2px;z-index:3;}
+#sheet-surface > .excel-cell.excel-overflow {overflow:visible;z-index:4;}
+.excel-spill {position:absolute;top:0;height:100%;display:flex;
+  align-items:center;box-sizing:border-box;white-space:nowrap;
+  overflow:hidden;padding:0 4px;pointer-events:none;
+  font:inherit;color:inherit;text-decoration:inherit;}
+#sheet-surface > .excel-drawing-image {position:absolute;
+  z-index:6;padding:0;border:0;object-fit:fill;
+  pointer-events:none;user-select:none;-webkit-user-select:none;}
 .excel-col-header,.excel-row-header,.excel-corner {
   display:flex;align-items:center;justify-content:center;
   background:#f3f4f6;color:#5b6771;
