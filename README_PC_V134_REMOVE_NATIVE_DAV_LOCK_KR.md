@@ -39,3 +39,12 @@ the entire editing session. A separate Android implementation should
 check owner files on open/save, show read-only/conflict states, and verify
 ETags before writing. Do not copy WinFsp callbacks to Android or create
 synthetic Microsoft Office owner files without a compatibility test.
+
+## Official release build handoff (2026-11-23)
+
+- GitHub PC v1.3.134: https://github.com/dj5927/FileHub-AIO/releases/tag/pc-v1.3.134
+- Archive FileHub-AIO-PC-1.3.134-win-x64.zip: 168,933,682 bytes, SHA-256 A8FC94E5D73EEA4CFC99BC36CA0B9CBDBD85ACFB1CB7E0080B697BF3D6D69DB8.
+- Verified official PC v1.3.133 archive used as source; replaced v1.3.134 app/bridge binaries, preserving approved OAuth and third-party provider dependencies.
+- Distribution policy PASS: old true native-lock JSON disabled and directly routed, encrypted backup/import, PC updater, version/header/footer, Google OAuth and login, and LockBridge self-test (Excel owner naming, ETag protection, file read/write) all passed.
+- C: volume temporary exhaustion during build resolved by deleting only generated bin/obj directories from old PC worktrees; project sources and published release assets untouched.
+- This version removes an obsolete PC experiment. Separate Android WebDAV Office owner-file conflict detection still requires implementation; no Android APK change or release is included.
