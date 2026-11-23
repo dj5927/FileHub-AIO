@@ -21,7 +21,7 @@ function status(text, error = false) {
 }
 function setBusy(value) {
   busy = value;
-  saveButton.disabled = value;
+  saveButton.disabled = value || !!cfg?.readOnly;
 }
 function inBounds(n) { return Math.max(0, Math.min(1_048_575, n|0)); }
 function toCell(row, col) { return XLSX.utils.encode_cell({r:row,c:col}); }
@@ -37,6 +37,10 @@ function selectCell(address) {
   if (chosen) chosen.classList.add('selected');
 }
 function applyCellEdit() {
+  if(cfg?.readOnly) {
+    status('다른 기기에서 편집 중인 Excel 문서입니다. 읽기 전용입니다.',true);
+    return;
+  }
   const address = document.getElementById('cell-position').value.trim().toUpperCase();
   let loc;
   try { loc = XLSX.utils.decode_cell(address); }
@@ -234,6 +238,10 @@ async function persist(bytes) {
   }
 }
 async function saveDocument() {
+  if(cfg?.readOnly) {
+    status('다른 기기에서 편집 중인 문서는 원본에 저장할 수 없습니다.',true);
+    return;
+  }
   if (busy) return;
   setBusy(true);status('문서를 생성해 NAS Mount에 전달하고 있습니다...');
   try {
@@ -298,6 +306,14 @@ async function start() {
     else if(cfg.mode==='legacy')
       throw Error('구형 .doc/.ppt는 아직 미지원입니다. DOCX 또는 PPTX로 변환 후 열어 주세요.');
     else throw Error('지원하지 않는 문서 형식입니다.');
+    if(cfg.readOnly) {
+      saveButton.disabled=true;
+      for(const id of ['formula-input','cell-position']) {
+        const field=document.getElementById(id);
+        if(field) field.readOnly=true;
+      }
+      status('다른 기기에서 편집 중인 Excel 문서입니다. 읽기 전용입니다.',true);
+    }
   } catch(error) {
     status('문서를 열 수 없습니다: '+(error?.message || error),true);
     saveButton.disabled=true;

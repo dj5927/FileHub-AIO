@@ -49,6 +49,7 @@ public final class BuiltInOfficeActivity extends Activity {
     private final String saveToken = UUID.randomUUID().toString();
     private String kind, name, path, contentUri, profileId;
     private Models.RemoteProfile profile;
+    private volatile WebDavExcelLease excelLease;
     private File workDirectory, sourceFile;
     private WebView web;
     private TextView status;
@@ -154,6 +155,9 @@ public final class BuiltInOfficeActivity extends Activity {
                     }
                     if (profile == null)
                         throw new IOException("연결된 원격 저장소를 찾지 못했습니다.");
+                    if (WebDavExcelLease.applies(profile, name))
+                        excelLease = WebDavExcelLease.acquire(profile,
+                                RemoteProvider.relativePath(path));
                 }
                 workDirectory = new File(getCacheDir(),
                         "office_builtin/" + UUID.randomUUID());
@@ -174,15 +178,24 @@ public final class BuiltInOfficeActivity extends Activity {
                 }
                 if (sourceFile.length() == 0)
                     throw new IOException("빈 문서는 편집할 수 없습니다.");
+                if (excelLease != null && !excelLease.readOnly())
+                    excelLease.verifyBeforeSave();
                 loaded = true;
                 showStatus("내장 문서 편집기를 여는 중...");
                 runOnUiThread(() -> {
                     if (!isDestroyed() && !isFinishing()) {
-                        status.setVisibility(android.view.View.GONE);
+                        if (excelLease != null && excelLease.readOnly()) {
+                            status.setVisibility(android.view.View.VISIBLE);
+                            status.setText(excelLease.reason());
+                        } else status.setVisibility(android.view.View.GONE);
                         web.loadUrl(ASSET_ORIGIN + "/office-host.html");
                     }
                 });
             } catch (Exception e) {
+                if (excelLease != null) {
+                    excelLease.release();
+                    excelLease = null;
+                }
                 runOnUiThread(() -> status.setVisibility(android.view.View.VISIBLE));
                 showStatus("문서 준비 실패: " +
                         (e.getMessage() == null ? "알 수 없는 오류" : e.getMessage()));
@@ -244,10 +257,13 @@ public final class BuiltInOfficeActivity extends Activity {
                     throw new IOException("편집 문서 크기가 올바르지 않습니다.");
                 if ("remote".equals(kind)) {
                     String relative = RemoteProvider.relativePath(path);
+                    if (excelLease != null) excelLease.verifyBeforeSave();
                     try (InputStream src = new FileInputStream(data)) {
                         RemoteProvider.upload(profile, RemoteProvider.parent(relative),
-                                name, src, data.length(), true);
+                                name, src, data.length(), true,
+                                excelLease == null ? null : excelLease.originalEtag());
                     }
+                    if (excelLease != null) excelLease.saved();
                 } else if ("local".equals(kind)) {
                     File output = new File(path);
                     File pending = new File(output.getParentFile(),
@@ -317,6 +333,7 @@ public final class BuiltInOfficeActivity extends Activity {
                 config.put("token", saveToken);
                 config.put("name", name);
                 config.put("mode", OfficeFileTypes.mode(name));
+                config.put("readOnly", excelLease != null && excelLease.readOnly());
                 return config.toString();
             } catch (Exception e) { return "{}"; }
         }
@@ -324,6 +341,7 @@ public final class BuiltInOfficeActivity extends Activity {
         @JavascriptInterface public synchronized String beginSave(String token,
                                                                    long length) {
             if (!saveToken.equals(token) || busy || !loaded ||
+                    (excelLease != null && excelLease.readOnly()) ||
                     length < 1 || length > MAX_DOCUMENT_BYTES ||
                     workDirectory == null) return "ERROR";
             try {
@@ -389,6 +407,10 @@ public final class BuiltInOfficeActivity extends Activity {
     @Override public void onBackPressed() { askClose(); }
 
     @Override protected void onDestroy() {
+        // Release after any in-flight upload, not during it. A killed process
+        // cannot run this callback; its remote ~$ marker remains intentionally.
+        WebDavExcelLease lease = excelLease;
+        if (lease != null) worker.execute(lease::release);
         if (web != null) {
             web.removeJavascriptInterface("NasOfficeBridge");
             web.loadUrl("about:blank");

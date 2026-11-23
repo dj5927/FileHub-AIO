@@ -43,7 +43,7 @@ final class RemoteProvider {
 
     // Relax only WebDAV's DNS-alias name comparison after normal platform
     // CA trust-chain verification. Other protocols keep standard TLS.
-    private static OkHttpClient webClient(Models.RemoteProfile p) {
+    static OkHttpClient webClient(Models.RemoteProfile p) {
         if (!"WebDAV".equals(p.protocol) || !p.ssl) return HTTP;
         return HTTP.newBuilder()
                 .hostnameVerifier(WebDavTlsAliasPolicy.forProfile(p))
@@ -310,7 +310,7 @@ final class RemoteProvider {
         if (folder) b.addPathSegment("");
         return b.build();
     }
-    private static Request.Builder webRequest(Models.RemoteProfile p, String path,
+    static Request.Builder webRequest(Models.RemoteProfile p, String path,
                                               boolean folder) {
         Request.Builder b = new Request.Builder().url(webUrl(p, path, folder));
         if (!p.username.isEmpty()) {
@@ -350,7 +350,7 @@ final class RemoteProvider {
         }
     }
 
-    private static final class WebDavRemoteVersion {
+    static final class WebDavRemoteVersion {
         final boolean exists;
         final String etag;
         WebDavRemoteVersion(boolean exists, String etag) {
@@ -360,7 +360,7 @@ final class RemoteProvider {
     }
 
     /** 404 = absent, existing files require a strong ETag or native lock. */
-    private static WebDavRemoteVersion webdavDestinationState(
+    static WebDavRemoteVersion webdavDestinationState(
             Models.RemoteProfile p, String path, boolean allowLockInsteadOfEtag)
             throws Exception {
         Request head = webRequest(p, path, false).head().build();
@@ -700,6 +700,14 @@ final class RemoteProvider {
     }
     static void upload(Models.RemoteProfile p, String folder, String name,
                        InputStream input, long byteLength, boolean overwrite) throws Exception {
+        upload(p, folder, name, input, byteLength, overwrite, null);
+    }
+
+    /** Expected original WebDAV ETag from the moment an Office edit began.
+     * Other file transfers retain the normal upload behavior. */
+    static void upload(Models.RemoteProfile p, String folder, String name,
+                       InputStream input, long byteLength, boolean overwrite,
+                       String expectedWebDavEtag) throws Exception {
         requireWritable(p);
         if ("MYBOX".equals(p.protocol)) {
             MyBoxWriteApi.LIVE.upload(p, folder, name, input, byteLength, overwrite);
@@ -827,6 +835,11 @@ final class RemoteProvider {
                         webdavDestinationState(p, finalPath,
                                 p.useNativeWebDavLocks) :
                         new WebDavRemoteVersion(false, null);
+                if (expectedWebDavEtag != null) {
+                    if (!overwrite || !before.exists)
+                        throw new IOException("Excel 원본이 삭제되거나 변경되었습니다.");
+                    WebDavWriteGuard.sameVersion(expectedWebDavEtag, before.etag);
+                }
                 String lockToken = overwrite && before.exists &&
                         p.useNativeWebDavLocks ?
                         acquireWebdavWriteLock(p, finalPath) : null;

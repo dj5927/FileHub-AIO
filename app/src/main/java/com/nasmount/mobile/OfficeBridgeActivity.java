@@ -44,6 +44,7 @@ public final class OfficeBridgeActivity extends Activity {
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private String kind, filename, path, uri, profileId;
     private Models.RemoteProfile remote;
+    private volatile WebDavExcelLease excelLease;
     private File staged;
     private byte[] baseline;
     private boolean loading = true, saving, launched;
@@ -120,7 +121,8 @@ public final class OfficeBridgeActivity extends Activity {
     private void updateButtons() {
         if (editButton == null) return;
         editButton.setEnabled(!loading && !saving);
-        saveButton.setEnabled(!loading && !saving);
+        saveButton.setEnabled(!loading && !saving &&
+                (excelLease == null || !excelLease.readOnly()));
         editButton.setAlpha(editButton.isEnabled() ? 1f : 0.45f);
         saveButton.setAlpha(saveButton.isEnabled() ? 1f : 0.45f);
     }
@@ -146,6 +148,9 @@ public final class OfficeBridgeActivity extends Activity {
                         if (p.id.equals(profileId)) { remote = p; break; }
                     if (remote == null) throw new IOException("연결된 원격 저장소를 찾지 못했습니다.");
                 }
+                if (WebDavExcelLease.applies(remote, filename))
+                    excelLease = WebDavExcelLease.acquire(remote,
+                            RemoteProvider.relativePath(path));
                 File folder = new File(getCacheDir(),
                         "office_bridge/" + UUID.randomUUID());
                 if (!folder.mkdirs()) throw new IOException("임시 편집 폴더 생성 실패");
@@ -163,7 +168,13 @@ public final class OfficeBridgeActivity extends Activity {
                     }
                 }
                 baseline = digest(staged);
+                if (excelLease != null && !excelLease.readOnly())
+                    excelLease.verifyBeforeSave();
             } catch (Exception ex) {
+                if (excelLease != null) {
+                    excelLease.release();
+                    excelLease = null;
+                }
                 error = ex.getMessage() == null ? "문서를 준비하지 못했습니다." : ex.getMessage();
             }
             final String failure = error;
@@ -174,6 +185,9 @@ public final class OfficeBridgeActivity extends Activity {
                 if (failure != null) {
                     status.setText("문서를 열지 못했습니다.");
                     showError(failure);
+                } else if (excelLease != null && excelLease.readOnly()) {
+                    status.setText(excelLease.reason() +
+                            "\n원본 저장이 차단된 읽기 전용 문서입니다.");
                 } else {
                     status.setText("파일 준비 완료 (" + (staged.length()/1024) +
                             "KB)\n편집 앱을 연 뒤 앱에서 저장하고 돌아오세요.");
@@ -204,8 +218,9 @@ public final class OfficeBridgeActivity extends Activity {
             Intent open = new Intent(Intent.ACTION_VIEW);
             open.setDataAndType(file, OfficeFileTypes.mime(filename));
             open.setClipData(ClipData.newUri(getContentResolver(), filename, file));
-            open.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION |
-                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            open.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            if (excelLease == null || !excelLease.readOnly())
+                open.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
             launched = true;
             startActivityForResult(Intent.createChooser(open, "편집할 오피스 앱 선택"), 812);
             status.setText("편집 앱에서 문서를 저장한 다음 이 화면으로 돌아와\n" +
@@ -222,6 +237,10 @@ public final class OfficeBridgeActivity extends Activity {
     }
 
     private void commitChanges() {
+        if (excelLease != null && excelLease.readOnly()) {
+            showError(excelLease.reason());
+            return;
+        }
         if (saving || loading || staged == null || baseline == null) return;
         saving = true;
         updateButtons();
@@ -236,10 +255,13 @@ public final class OfficeBridgeActivity extends Activity {
                     if ("remote".equals(kind)) {
                         String relative = RemoteProvider.relativePath(path);
                         String parent = RemoteProvider.parent(relative);
+                        if (excelLease != null) excelLease.verifyBeforeSave();
                         try (InputStream input = new FileInputStream(staged)) {
                             RemoteProvider.upload(remote, parent, filename, input,
-                                    staged.length(), true);
+                                    staged.length(), true,
+                                    excelLease == null ? null : excelLease.originalEtag());
                         }
+                        if (excelLease != null) excelLease.saved();
                     } else if ("saf".equals(kind)) {
                         try (InputStream input = new FileInputStream(staged);
                              OutputStream output = getContentResolver().openOutputStream(
@@ -332,7 +354,10 @@ public final class OfficeBridgeActivity extends Activity {
 
     @Override public void onBackPressed() { confirmClose(); }
     @Override protected void onDestroy() {
-        worker.shutdownNow();
+        WebDavExcelLease lease = excelLease;
+        if (lease != null) worker.execute(lease::release);
+        // Complete any pending commit before releasing the remote owner.
+        worker.shutdown();
         super.onDestroy();
     }
 }
