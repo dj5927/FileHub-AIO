@@ -51,6 +51,12 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         internal bool Closed;
         internal long ContiguousWritten;
         internal bool SequentialWrites = true;
+        // New-file journals are already marked uncommitted at Begin. For an
+        // existing file the first write must mark recovery dirty immediately;
+        // subsequent writes can checkpoint in batches rather than forcing a
+        // durable JSON rewrite and full fsync for every Explorer copy block.
+        internal bool JournalDirtyRecorded;
+        internal long JournalCheckpointBytes;
         internal long PlannedCopySize;
         internal DirectWebDavProgressiveUpload? Progressive;
         internal bool ProgressiveUnavailable;
@@ -62,6 +68,10 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         {
             Owner = owner; Id = id; LocalPath = path; RemotePath = remote;
             ExpectedEtag = etag; Created = created; Dirty = created;
+            // The initial "new-uncommitted" manifest covers zero bytes.
+            // The first actual Write must checkpoint its updated length so
+            // a complete small file remains recoverable after a crash.
+            JournalDirtyRecorded = false;
             Local = stream;
         }
         public void Dispose()
@@ -346,7 +356,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         string local = DataPath(id);
         var stream = new FileStream(local, FileMode.CreateNew,
             FileAccess.ReadWrite, FileShare.Read,
-            65536, FileOptions.RandomAccess | FileOptions.WriteThrough);
+            65536, FileOptions.RandomAccess);
         try
         {
             if (!create)
@@ -402,7 +412,16 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 else if (data.Length != 0)
                     handle.SequentialWrites = false;
             }
-            SaveJournal(handle, "dirty");
+            // The recovery manifest tracks only fully synced checkpoints.
+            // If a copy is interrupted between checkpoints, recovery safely
+            // retains the partial staging file instead of replaying it.
+            if (!handle.JournalDirtyRecorded ||
+                handle.ContiguousWritten - handle.JournalCheckpointBytes >= 1024 * 1024)
+            {
+                SaveJournal(handle, "dirty");
+                handle.JournalDirtyRecorded = true;
+                handle.JournalCheckpointBytes = handle.ContiguousWritten;
+            }
             // A known allocation alone is not enough to enable streaming.
             // Only a new, sequential, fixed-size non-Office file qualifies.
             if (handle.Progressive is null &&
@@ -487,6 +506,8 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             handle.Local.SetLength(size);
             handle.Dirty = true;
             SaveJournal(handle, "dirty");
+            handle.JournalDirtyRecorded = true;
+            handle.JournalCheckpointBytes = handle.ContiguousWritten;
         }
     }
 
@@ -683,7 +704,8 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 }
                 SaveJournal(handle, "uploading");
                 using var request = new HttpRequestMessage(HttpMethod.Put, Remote(path));
-                if (handle.Created)
+                bool newFile = handle.Created;
+                if (newFile)
                     request.Headers.TryAddWithoutValidation("If-None-Match", "*");
                 else if (StrongEtag(handle.ExpectedEtag))
                     request.Headers.TryAddWithoutValidation("If-Match", handle.ExpectedEtag);
@@ -737,7 +759,14 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                         " etagStrong=" + StrongEtag(committed?.ETag));
                     throw new IOException("WebDAV POST_PUT_METADATA verification failed; recovery retained");
                 }
-                if (handle.Local.Length <= 16 * 1024 * 1024)
+                // For a brand new, non-Office media file, an accepted
+                // conditional PUT followed by a strong server ETag and exact
+                // remote length is sufficient to finish a normal Explorer
+                // copy. A redundant full GET for each 1 MB picture adds a
+                // serialized round trip to every file in a 20+ file batch.
+                // Keep full SHA-256 readback for overwrites and documents.
+                if (handle.Local.Length <= 16 * 1024 * 1024 &&
+                    (!newFile || WriteIntent.IsDocument(path)))
                 {
                     using var check = _http.GetAsync(Remote(path),
                         HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
@@ -1123,17 +1152,37 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         finally { try { File.Delete(stage); } catch (IOException) { } }
     }
 
-    internal void Delete(string path, string? etag)
+    internal void Delete(string path, string? etag, bool directory = false)
     {
-        RequireVerifiedConditionalWrites();
-        if (!StrongEtag(etag))
+        path = DirectWebDavReadOnlyBackend.Normalize(path);
+        if (path == "/")
+            throw new IOException("Refusing to delete the WebDAV root");
+        // Some NAS WebDAV servers never issue ETags for collections.
+        // Folder DELETE is allowed only after an authoritative, uncached
+        // empty-directory check. File deletes keep their ETag condition.
+        if (directory)
+        {
+            var children = _read.RefreshList(path);
+            if (children.Length != 0)
+                throw new IOException("Directory is not empty on NAS");
+        }
+        else RequireVerifiedConditionalWrites();
+        if (!directory && !StrongEtag(etag))
             throw new IOException("Refusing DELETE without strong source ETag");
         using var request = new HttpRequestMessage(HttpMethod.Delete, Remote(path));
-        request.Headers.TryAddWithoutValidation("If-Match", etag);
+        if (StrongEtag(etag))
+            request.Headers.TryAddWithoutValidation("If-Match", etag);
         using var result = _http.Send(request);
-        if (!result.IsSuccessStatusCode)
+        if (!result.IsSuccessStatusCode && result.StatusCode != HttpStatusCode.NotFound)
             throw new IOException("WebDAV DELETE rejected HTTP " + (int)result.StatusCode);
         _read.Invalidate(path);
+        if (directory)
+        {
+            // No stale directory listing can remain after a successful
+            // server DELETE, even if the Explorer view is immediately opened.
+            string parent = path[..path.LastIndexOf('/')];
+            _read.Invalidate(string.IsNullOrEmpty(parent) ? "/" : parent);
+        }
     }
 
     public void Dispose() => _http.Dispose();

@@ -515,6 +515,17 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         ulong lastWriteTime, ulong changeTime, out FileInfo info)
     {
         info = default;
+        if (fileDesc is DirectWebDavReadOnlyBackend.Entry directory &&
+            directory.IsDirectory)
+        {
+            // PowerShell Remove-Item -Recurse -Force first clears folder
+            // attributes using FILE_WRITE_ATTRIBUTES before asking WinFsp
+            // to delete the now-empty folder. Failing this harmless local
+            // metadata operation made Windows abort BEFORE CanDelete or
+            // CleanupDelete, so files disappeared but their folder survived.
+            info = DescribeEntry(directory);
+            return Success;
+        }
         if (fileDesc is AttributeDescriptor attribute)
         {
             if (lastWriteTime is > 0 and < long.MaxValue)
@@ -554,6 +565,24 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
     {
         if (Environment.GetEnvironmentVariable("FILEHUB_DIRECT_DEBUG") == "1")
             Console.Error.WriteLine("DIRECT_RW_CAN_DELETE name=" + fileName);
+        string key = fileDesc switch {
+            WriteDescriptor writer => writer.Entry.Path,
+            DirectWebDavReadOnlyBackend.Entry entry => entry.Path,
+            AttributeDescriptor attribute => attribute.Entry.Path,
+            _ => DirectWebDavReadOnlyBackend.Normalize(fileName)
+        };
+        if (key == "/") return AccessDenied;
+        try
+        {
+            var entry = _backend.Stat(key);
+            if (entry?.IsDirectory == true &&
+                _backend.RefreshList(key).Length != 0)
+                return unchecked((int)0xC0000101); // STATUS_DIRECTORY_NOT_EMPTY
+            if (entry is { IsDirectory:false } &&
+                !DirectWebDavWriteStore.StrongEtag(entry.ETag))
+                return AccessDenied;
+        }
+        catch (IOException ex) { return Failure(ex, "CanDelete"); }
         return Success;
     }
 
@@ -666,7 +695,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             }
             var existing = _backend.Stat(key);
             if (existing is not null)
-                _writes.Delete(key, existing.ETag);
+                _writes.Delete(key, existing.ETag, existing.IsDirectory);
             if (ExcelOwnerInterop.IsOwnerFile(key))
                 _ownerFilesPublishedHere.TryRemove(key, out _);
             if (fileDesc is WriteDescriptor owned) owned.Deleted = true;
