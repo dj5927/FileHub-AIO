@@ -26,3 +26,13 @@
 - PC 앱 업데이트, 원격 경로, EXE 실행, Google Chrome 로그인 구성, Google publisher OAuth, PC/Android 백업 정책, LockBridge self-test 통과.
 - 릴리즈 URL: https://github.com/dj5927/FileHub-AIO/releases/tag/pc-v1.3.130
 - 기존 1.3.129 공식 ZIP에서 검증된 Google OAuth/부가 엔진 구성요소 유지, 새 1.3.130 앱 및 WinFsp 엔진으로 교체. Android는 변경 없음.
+
+## 공식 배포 및 검증 인수인계 (2026-11-23)
+
+- GitHub 공식 PC 릴리즈: https://github.com/dj5927/FileHub-AIO/releases/tag/pc-v1.3.130
+- GitHub Actions run 45105956702: 성공. 11개 청크 재결합, ZIP 구조·필수 파일·전체 SHA-256 검증 및 PC 전용 릴리즈 생성 성공.
+- 공식 ZIP FileHub-AIO-PC-1.3.130-win-x64.zip: 168,915,274 bytes. SHA-256 5B2DBE19B6DC7C8234C6E4E2359F5D84B96D5724E08054DABF961F922D58797D. GitHub 게시 asset digest와 로컬 hash 일치.
+- 제한된 테스트 NAS 환경(4MiB/s와 600ms 요청 지연, 24MiB): v1.3.129 복사 완료 직전 대기 약 6127ms, v1.3.130 약 3073ms (MOVE 강한 ETag 응답 가정). 23,600,123 byte 파일도 전송 후 SHA-256 검증 성공.
+- 일반 WebDAV 서버 및 MOVE ETag 미지원 서버에서도 저장/메타데이터/폴백 동작 성공. 전체 WinFsp 목록/이름변경/복사/엑셀 임시파일 교체 회귀 시험 통과. 별도 복구·동시수정·락 시험 통과.
+- 배포된 앱 자체의 PC updater, WinFsp EXE 실행, Google 로그인 및 publisher OAuth, 암호화된 설정 백업, WinFsp LockBridge self-test 모두 통과.
+- 임시 배포 HTTP 서버 및 HTTPS 전송 터널 종료. 사용자 NAS와 현재 실행 중인 기존 PC 앱은 변경하지 않음. 실제 NAS의 99% 대기 시간은 서버 상황에 따라 다르며 최종 확인은 새 버전을 설치해 수행해야 함.
