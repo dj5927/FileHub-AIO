@@ -1,0 +1,9 @@
+FileHub AIO PC v1.3.137 Windows x64 publisher-built binary handoff
+Source commit: d8c88273c5a506d29ecb146039c20cbe3817adbc
+Artifact: FileHub-AIO-PC-1.3.137-win-x64.zip
+Bytes: 169193738
+SHA256: DF21A922C89D71E75419A1FE8B7281EF9F2CB90D4EAE2C97AFD0815DF06C9116
+Contents: FileHubAIO.exe, tools/NASMountLockBridge.exe, tools/rclone.exe, tools/google-oauth-desktop.json, README_PC_V137_KR.txt
+Scope: Windows PC direct WebDAV only, high-throughput write-behind queue across file extensions, up to 64 parallel uploads, no post-PUT readback of new copies. Sync and deferred NAS state are distinct.
+Local 250ms per-response simulated server: 2780 x ~110KB copied in 43.174s, complete remote in ~45.336s. 3000 x 1KB copied in 15.682s local, complete remote in ~46.359s. All received. Actual Synology performance unverified.
+Important: do not interrupt FileHub or power off while pending uploads continue.
