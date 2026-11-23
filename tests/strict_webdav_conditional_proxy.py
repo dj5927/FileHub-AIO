@@ -17,6 +17,10 @@ FRONT = int(os.environ.get("FILEHUB_STRICT_DAV_FRONT", "18786"))
 DENY_ROOT_WRITES = os.environ.get("FILEHUB_STRICT_DAV_DENY_ROOT_WRITES") == "1"
 STAGE_BYTES_PER_SEC = int(os.environ.get(
     "FILEHUB_STRICT_DAV_STAGE_BYTES_PER_SEC", "0"))
+FINALIZE_LATENCY_MS = int(os.environ.get(
+    "FILEHUB_STRICT_DAV_FINALIZE_LATENCY_MS", "0"))
+EMIT_MOVE_ETAG = os.environ.get(
+    "FILEHUB_STRICT_DAV_EMIT_MOVE_ETAG") == "1"
 DENY_REAL_STAGE_PUT = os.environ.get(
     "FILEHUB_STRICT_DAV_DENY_REAL_STAGE_PUT") == "1"
 WRITE_LOCK = threading.RLock()
@@ -142,7 +146,37 @@ class Handler(BaseHTTPRequestHandler):
                 conn.request(self.command, request_path, payload, headers)
                 response = conn.getresponse()
                 result = response.read()
+                if FINALIZE_LATENCY_MS > 0 and (
+                    (self.command == "PROPFIND" and (
+                        "progressive-" in request_path or
+                        ".nasmount-stage-" in request_path)) or
+                    (self.command in ("MOVE", "DELETE") and
+                        ".nasmount-stage-" in request_path) or
+                    (self.command == "PUT" and
+                        ".nasmount-stage-" in request_path and
+                        "move-probe-" not in request_path)
+                ):
+                    time.sleep(FINALIZE_LATENCY_MS / 1000.0)
                 self.send_response(response.status)
+                if (EMIT_MOVE_ETAG and self.command == "MOVE" and
+                        ".nasmount-stage-" in request_path and
+                        "move-probe-" not in request_path and
+                        response.status in (201, 204)):
+                    # Optional lab-only capability: model a WebDAV NAS that
+                    # includes the strong final revision with MOVE success.
+                    destination = self.headers.get("Destination", "")
+                    target = urlsplit(destination).path
+                    verify = http.client.HTTPConnection(
+                        "127.0.0.1", BACKEND, timeout=20)
+                    try:
+                        verify.request("HEAD", target)
+                        head = verify.getresponse()
+                        etag = head.getheader("ETag")
+                        head.read()
+                        if head.status == 200 and etag and not etag.startswith("W/"):
+                            self.send_header("ETag", etag)
+                    finally:
+                        verify.close()
                 for key, value in response.getheaders():
                     if key.lower() in ("content-length", "connection", "transfer-encoding"):
                         continue
@@ -170,4 +204,5 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     print(f"STRICT_DAV_READY front={FRONT} backend={BACKEND}", flush=True)
+    print(f"STRICT_DAV_TEST_CONFIG stageBytesPerSec={STAGE_BYTES_PER_SEC} finalizeLatencyMs={FINALIZE_LATENCY_MS} emitMoveEtag={EMIT_MOVE_ETAG}", flush=True)
     ThreadingHTTPServer(("127.0.0.1", FRONT), Handler).serve_forever()

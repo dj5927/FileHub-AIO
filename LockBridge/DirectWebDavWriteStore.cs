@@ -40,6 +40,9 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         internal readonly string LocalPath;
         internal string RemotePath;
         internal string? ExpectedEtag;
+        // A successful progressive MOVE has already refreshed this metadata.
+        // Reusing it avoids another slow network PROPFIND from WinFsp Flush.
+        internal DirectWebDavReadOnlyBackend.Entry? CommittedEntry;
         internal bool Created;
         internal bool Dirty;
         // A previous PUT may already have reached the NAS even when the
@@ -528,35 +531,66 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         if (upload is null) return false;
         handle.Progressive = null;
         bool moveAttempted = false;
+        bool moveVerified = false;
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        long ackMs = 0, stageMs = 0, moveMs = 0, finalMs = 0;
         try
         {
             if (upload.Written != upload.Length ||
                 handle.Local.Length != upload.Length)
                 return false;
             upload.Complete();
-            _read.Invalidate(upload.StagePath);
-            var staged = _read.Stat(upload.StagePath);
-            if (staged is null || staged.Size != handle.Local.Length ||
-                !StrongEtag(staged.ETag))
-                throw new IOException("Progressive stage size/ETag unverified");
-            _read.Invalidate(handle.RemotePath);
-            if (_read.Stat(handle.RemotePath) is not null)
-                throw new IOException("Progressive destination already exists");
-            // Existing WebDAV MOVE path sends Overwrite:F and If-Match.
+            ackMs = timer.ElapsedMilliseconds;
+            string? stageEtag = upload.PutResponseEtag;
+            if (!StrongEtag(stageEtag))
+            {
+                // A valid HTTP 2xx PUT with a known Content-Length confirms
+                // the server accepted the full body. Obtain a strong source
+                // revision only if PUT did not already return one.
+                _read.Invalidate(upload.StagePath);
+                var staged = _read.Stat(upload.StagePath);
+                if (staged is null || staged.Size != upload.Length ||
+                    !StrongEtag(staged.ETag))
+                    throw new IOException("Progressive stage size/ETag unverified");
+                stageEtag = staged.ETag;
+            }
+            stageMs = timer.ElapsedMilliseconds - ackMs;
+            // Begin(create:true) already rejected an existing destination,
+            // and the per-directory MOVE probe verified that Overwrite:F
+            // rejects a concurrently-created target. A second remote Stat
+            // right before MOVE adds latency but cannot prevent a race.
             moveAttempted = true;
-            RenameNewDestination(upload.StagePath, handle.RemotePath, staged.ETag);
-            _read.Invalidate(handle.RemotePath);
-            var final = _read.Stat(handle.RemotePath);
+            string? movedEtag = RenameNewDestination(
+                upload.StagePath, handle.RemotePath, stageEtag);
+            moveMs = timer.ElapsedMilliseconds - ackMs - stageMs;
+            // A strong revision returned by the successful MOVE is the
+            // server's own confirmation of the NEW destination. As the
+            // source PUT was complete and MOVE is preflight-verified to
+            // preserve bytes, no extra PROPFIND is necessary in this case.
+            // Servers omitting a strong MOVE ETag keep the original
+            // final-metadata verification path.
+            var final = StrongEtag(movedEtag)
+                ? new DirectWebDavReadOnlyBackend.Entry(
+                    handle.RemotePath,
+                    handle.RemotePath.Split('/').Last(),
+                    false, handle.Local.Length, DateTime.UtcNow, movedEtag)
+                : _read.Stat(handle.RemotePath);
             if (final is null || final.Size != handle.Local.Length ||
                 !StrongEtag(final.ETag))
                 throw new IOException("Progressive final metadata unverified");
+            finalMs = timer.ElapsedMilliseconds - ackMs - stageMs - moveMs;
+            moveVerified = true;
             handle.ExpectedEtag = final.ETag;
+            handle.CommittedEntry = final;
             handle.Created = false;
             handle.Dirty = false;
             handle.UploadMayHaveCommitted = false;
             SaveJournal(handle, "committed");
             Console.WriteLine("DIRECT_PROGRESSIVE_COPY_COMMIT_PASS bytes=" +
                 handle.Local.Length);
+            Console.WriteLine("DIRECT_PROGRESSIVE_FINALIZE_MS ack=" + ackMs +
+                " stage=" + stageMs + " move=" + moveMs +
+                " final=" + finalMs + " total=" + timer.ElapsedMilliseconds);
             return true;
         }
         catch (Exception error) when (error is IOException or
@@ -580,8 +614,14 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         finally
         {
             upload.Dispose();
-            handle.AbandonedStages.Add(upload.StagePath);
-            CleanupAbandonedStages(handle);
+            // On a verified successful MOVE the private stage was consumed.
+            // DELETE on that now-missing path used to add another synchronous
+            // NAS round-trip to Explorer's 99% tail.
+            if (!moveVerified)
+            {
+                handle.AbandonedStages.Add(upload.StagePath);
+                CleanupAbandonedStages(handle);
+            }
         }
     }
 
@@ -962,7 +1002,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         throw new IOException("WebDAV directory MOVE accepted but destination verification pending");
     }
 
-    internal void RenameNewDestination(string from, string to, string? originalEtag)
+    internal string? RenameNewDestination(string from, string to, string? originalEtag)
     {
         RequireVerifiedConditionalWrites();
         // Never use WebDAV MOVE Overwrite:T. Excel normally performs two
@@ -979,6 +1019,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             throw new IOException("Safe WebDAV MOVE failed HTTP " + (int)result.StatusCode);
         _read.Invalidate(from);
         _read.Invalidate(to);
+        return result.Headers.ETag?.ToString();
     }
 
     // Office often renames a temporary file ON TOP OF an existing workbook.

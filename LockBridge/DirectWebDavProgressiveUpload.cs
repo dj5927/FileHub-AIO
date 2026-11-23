@@ -20,12 +20,17 @@ internal sealed class DirectWebDavProgressiveUpload : IDisposable
     private readonly Task _upload;
     private long _written;
     private long _sent;
+    private string? _putResponseEtag;
     private bool _disposed;
 
     internal string StagePath { get; }
     internal long Length { get; }
     internal long Written => Interlocked.Read(ref _written);
     internal long Sent => Interlocked.Read(ref _sent);
+    // Some NAS servers return a strong ETag directly with successful PUT.
+    // Reusing it avoids an otherwise redundant PROPFIND after all bytes
+    // have already been uploaded. Weak/absent ETags still use PROPFIND.
+    internal string? PutResponseEtag => _putResponseEtag;
 
     internal DirectWebDavProgressiveUpload(HttpClient http, Uri stageUri,
         string stagePath, string localPath, long length)
@@ -44,6 +49,7 @@ internal sealed class DirectWebDavProgressiveUpload : IDisposable
             if (!response.IsSuccessStatusCode)
                 throw new IOException("Progressive stage PUT rejected HTTP " +
                     (int)response.StatusCode);
+            _putResponseEtag = response.Headers.ETag?.ToString();
         });
     }
 

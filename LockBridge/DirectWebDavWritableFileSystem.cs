@@ -36,7 +36,14 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
 
     private void RecordCommittedRevision(WriteDescriptor writer)
     {
-        if (_backend.Stat(writer.Entry.Path) is not { } committed) return;
+        // Progressive commit already fetched and verified the final ETag
+        // and length. Do not issue the same NAS PROPFIND again just because
+        // WinFsp Flush/Cleanup requests the updated descriptor metadata.
+        var committed = writer.Session.CommittedEntry;
+        if (committed is null ||
+            !committed.Path.Equals(writer.Entry.Path, StringComparison.OrdinalIgnoreCase))
+            committed = _backend.Stat(writer.Entry.Path);
+        if (committed is null) return;
         writer.Entry = committed;
         if (DirectWebDavWriteStore.StrongEtag(committed.ETag))
             _ownVerifiedEtags[committed.Path] = committed.ETag!;
