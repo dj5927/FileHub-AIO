@@ -29,7 +29,7 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
   scroll.replaceChildren(surface);
   const state={rowPrefix:[],colPrefix:[],maxRow:0,maxCol:0,
     sheet:null,meta:null,zoom:1,selected:selectedAddress,
-    raf:false,lastKey:'',visible:[]};
+    raf:false,lastKey:'',visible:[],pinching:false,pinchAnchor:null};
   function buildPrefix(sheet,meta){
     let range;
     try{range=XLSX.utils.decode_range(sheet['!ref']||'A1');}
@@ -87,6 +87,7 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
   }
   function render(force=false){
     state.raf=false;
+    if(state.pinching)return;
     const rect=visibleRect();
     const key=[getSheetIndex(),rect.r0,rect.r1,rect.c0,rect.c1].join(':');
     if(!force && key===state.lastKey){pinHeaders(rect);return;}
@@ -139,13 +140,17 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
     state.visible=visible;
   }
   function queueRender(force=false){
+    if(state.pinching)return;
     if(force){state.lastKey='';render(true);return;}
     if(!state.raf){
       state.raf=true;
       requestAnimationFrame(()=>render());
     }
   }
-  const onScroll=()=>queueRender();
+  const onScroll=()=>{
+    if(state.pinching)pinHeaders(visibleRect());
+    else queueRender();
+  };
   scroll.addEventListener('scroll',onScroll,{passive:true});
   function load(index,resetScroll=true){
     state.sheet=workbook.Sheets[workbook.SheetNames[index]];
@@ -155,17 +160,37 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
     if(resetScroll){scroll.scrollTop=0;scroll.scrollLeft=0;}
     render(true);
   }
-  function setZoom(zoom){
-    const old=state.zoom;
-    const centerX=scroll.scrollLeft+scroll.clientWidth/2,
-      centerY=scroll.scrollTop+scroll.clientHeight/2;
+  function setZoom(zoom,point){
+    const target=Math.max(.55,Math.min(3,zoom));
+    const focus=point||{x:scroll.clientWidth/2,y:scroll.clientHeight/2};
+    const contentX=(scroll.scrollLeft+focus.x)/state.zoom;
+    const contentY=(scroll.scrollTop+focus.y)/state.zoom;
+    state.zoom=target;
+    surface.style.zoom=String(target);
+    scroll.scrollLeft=Math.max(0,contentX*target-focus.x);
+    scroll.scrollTop=Math.max(0,contentY*target-focus.y);
+    queueRender(true);
+  }
+  function beginPinch(focus){
+    state.pinching=true;
+    state.pinchAnchor={
+      x:(scroll.scrollLeft+focus.x)/state.zoom,
+      y:(scroll.scrollTop+focus.y)/state.zoom
+    };
+  }
+  function updatePinch(zoom,focus){
+    if(!state.pinching)return;
     state.zoom=Math.max(.55,Math.min(3,zoom));
-    // Scale the content, not the toolbars or the Android status bar.
     surface.style.zoom=String(state.zoom);
-    surface.style.width=(HEADER_WIDTH+state.colPrefix[state.maxCol])+'px';
-    surface.style.height=(HEADER_HEIGHT+state.rowPrefix[state.maxRow])+'px';
-    scroll.scrollLeft=Math.max(0,centerX*state.zoom/old-scroll.clientWidth/2);
-    scroll.scrollTop=Math.max(0,centerY*state.zoom/old-scroll.clientHeight/2);
+    // The same content point follows the midpoint of the two fingers.
+    scroll.scrollLeft=Math.max(0,state.pinchAnchor.x*state.zoom-focus.x);
+    scroll.scrollTop=Math.max(0,state.pinchAnchor.y*state.zoom-focus.y);
+    pinHeaders(visibleRect());
+  }
+  function endPinch(){
+    if(!state.pinching)return;
+    state.pinching=false;
+    state.pinchAnchor=null;
     queueRender(true);
   }
   function jump(address){
@@ -184,5 +209,5 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
   }
   load(getSheetIndex());
   return {load,select,jump,refresh:()=>queueRender(true),
-    getZoom:()=>state.zoom,setZoom};
+    getZoom:()=>state.zoom,setZoom,beginPinch,updatePinch,endPinch};
 }

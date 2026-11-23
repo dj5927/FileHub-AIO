@@ -1,0 +1,107 @@
+<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="../../app/src/main/assets/office_hwp/office-host.css">
+<script src="../../app/src/main/assets/office_hwp/jszip.min.js"></script>
+<script src="../../app/src/main/assets/office_hwp/xlsx.full.min.js"></script>
+<style>
+  body{margin:0}#sheet-container{width:420px;height:530px;display:flex;flex-direction:column}
+  #grid-scroll{width:420px;height:490px;flex:1;overflow:auto;touch-action:pan-x pan-y}
+</style></head><body>
+<div id="result">RUNNING</div>
+<div id="sheet-container"><div id="grid-scroll"></div></div>
+<script type="module">
+import {openXlsxArchive} from '../../app/src/main/assets/office_hwp/excel-ooxml.js';
+import {mountExcelGrid} from '../../app/src/main/assets/office_hwp/excel-grid.js';
+import {installSpreadsheetPinch} from '../../app/src/main/assets/office_hwp/office-gestures.js';
+const fail=message=>{throw Error(message);};
+const check=(value,message)=>{if(!value)fail(message);};
+const nextFrame=()=>new Promise(resolve=>setTimeout(resolve,90));
+try{
+  const raw=new Uint8Array(await (await fetch('../android_excel_v115/fixture-v115.xlsx')).arrayBuffer());
+  const wb=XLSX.read(raw,{type:'array',cellStyles:true,cellNF:true});
+  const ctx=await openXlsxArchive(raw,wb.SheetNames);
+  const scroll=document.getElementById('grid-scroll');
+  const grid=mountExcelGrid(scroll,wb,ctx,()=>0,'A1',()=>{},false);
+  installSpreadsheetPinch(scroll,grid,.55,3);
+  grid.jump('C40');
+  await nextFrame();
+  check(scroll.scrollTop>100,'Initial vertical scroll failed');
+  const rect=scroll.getBoundingClientRect();
+  const touchTarget=scroll.querySelector('.excel-cell');
+  check(touchTarget && touchTarget.isConnected,'Touch target not mounted');
+  const anchorX=(scroll.scrollLeft+205)/grid.getZoom();
+  const anchorY=(scroll.scrollTop+180)/grid.getZoom();
+  const createTouch=(id,x,y)=>new Touch({identifier:id,target:touchTarget,
+    clientX:rect.left+x,clientY:rect.top+y,screenX:x,screenY:y,pageX:x,pageY:y});
+  function send(type,pairs){
+    const fingers=pairs.map(([id,x,y])=>createTouch(id,x,y));
+    const changed=type==='touchend'?[]:fingers;
+    const event=new TouchEvent(type,{bubbles:true,cancelable:true,
+      touches:fingers,targetTouches:fingers,changedTouches:changed});
+    touchTarget.dispatchEvent(event);
+    return event.defaultPrevented;
+  }
+  // 120px -> 216px is a 1.8x pinch, not the ~1.02x reported by users.
+  check(send('touchstart',[[1,145,180],[2,265,180]]),'Pinch start not captured');
+  check(send('touchmove',[[1,97,180],[2,313,180]]),'Pinch move not prevented');
+  await nextFrame();
+  check(grid.getZoom()>1.79 && grid.getZoom()<1.81,
+    'Pinch in should reach 180%, got '+grid.getZoom());
+  check(Math.abs((scroll.scrollLeft+205)/grid.getZoom()-anchorX)<2,
+    'Zoom moved the finger-anchored column');
+  check(Math.abs((scroll.scrollTop+180)/grid.getZoom()-anchorY)<2,
+    'Zoom moved the finger-anchored row');
+  check(touchTarget.isConnected,'DOM node replaced mid-gesture');
+  check(send('touchmove',[[1,147,180],[2,303,180]]),
+    'Second pinch move not captured');
+  await nextFrame();
+  check(grid.getZoom()>1.29 && grid.getZoom()<1.31,
+    'Continuous pinch did not return to 130%, got '+grid.getZoom());
+  check(Math.abs((scroll.scrollLeft+225)/grid.getZoom()-anchorX)<2,
+    'Moving two-finger midpoint failed to follow content');
+  check(touchTarget.isConnected,'DOM replacement canceled subsequent moves');
+  send('touchend',[[1,147,180]]);
+  check(touchTarget.isConnected,'DOM replaced while remaining finger down');
+  send('touchend',[]);
+  await nextFrame();
+  check(grid.getZoom()>1.29 && grid.getZoom()<1.31,'Final zoom not retained');
+
+  // A separate outward gesture should be able to zoom below 100%.
+  const another=scroll.querySelector('.excel-cell');
+  check(another,'No visible cell after zoom');
+  const t=(id,x,y)=>new Touch({identifier:id,target:another,
+    clientX:rect.left+x,clientY:rect.top+y,screenX:x,screenY:y,pageX:x,pageY:y});
+  function second(type,pairs){
+    const fingers=pairs.map(([id,x,y])=>t(id,x,y));
+    const event=new TouchEvent(type,{bubbles:true,cancelable:true,
+      touches:fingers,targetTouches:fingers,changedTouches:fingers});
+    another.dispatchEvent(event);
+    return event.defaultPrevented;
+  }
+  second('touchstart',[[4,105,260],[5,305,260]]);
+  second('touchmove',[[4,155,260],[5,255,260]]);
+  await nextFrame();
+  check(grid.getZoom()>.64 && grid.getZoom()<.66,
+    'Pinch out should reach 65%, got '+grid.getZoom());
+  check(another.isConnected,'Pinch-out removed active touch node');
+  second('touchend',[]);
+  await nextFrame();
+
+  // Ordinary one-finger input is not captured or blocked.
+  const single=scroll.querySelector('.excel-cell');
+  const finger=new Touch({identifier:9,target:single,
+    clientX:rect.left+100,clientY:rect.top+100,
+    screenX:100,screenY:100,pageX:100,pageY:100});
+  const one=new TouchEvent('touchstart',{bubbles:true,cancelable:true,
+    touches:[finger],targetTouches:[finger],changedTouches:[finger]});
+  single.dispatchEvent(one);
+  check(!one.defaultPrevented,'Single-finger native scrolling was blocked');
+  check(grid.getZoom()>.64 && grid.getZoom()<.66,'Single finger changed zoom');
+
+  document.getElementById('result').textContent=
+    'PASS: 180% pinch, continuous 130%, 65% pinch-out, DOM stable, single-finger scrolling preserved';
+}catch(error){
+  document.getElementById('result').textContent='FAIL: '+error.message;
+  console.error(error);
+}
+</script></body></html>

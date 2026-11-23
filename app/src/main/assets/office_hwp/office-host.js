@@ -1,6 +1,6 @@
 import { createEditor } from '/sdk/index.js';
 import { openWord, exportWord, openSlides, exportSlides } from '/office-word-ppt.js';
-import { installPinch } from '/office-gestures.js';
+import { installPinch, installSpreadsheetPinch } from '/office-gestures.js';
 import { openXlsxArchive, exportXlsxArchive } from '/excel-ooxml.js';
 import { mountExcelGrid } from '/excel-grid.js';
 
@@ -140,8 +140,7 @@ async function openSpreadsheet(bytes) {
   const scroller=document.getElementById('grid-scroll');
   gridController=mountExcelGrid(scroller,workbook,excelArchive,
     ()=>activeSheet,selectedAddress,selectCell,!!cfg?.readOnly);
-  installPinch(scroller,()=>gridController.getZoom(),
-    zoom=>gridController.setZoom(zoom),.55,3);
+  installSpreadsheetPinch(scroller,gridController,.55,3);
   document.getElementById('sheet-tool-toggle').hidden=true;
   attachSheetEvents();
   selectCell('A1');
