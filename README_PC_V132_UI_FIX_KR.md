@@ -29,3 +29,11 @@
 - 배포본의 --pc-title-footer-policy-test, --pc-updater-policy-test, --google-publisher-oauth-policy-test, --direct-webdav-routing-policy-test, --profile-backup-lab 및 LockBridge --self-test 모두 PASS.
 - 전체 --ui-smoke-test는 이전부터 존재한 프로필 설정창의 'Checkbox clipped: EXCEL...' 레이아웃 검증에서 실패했지만, 새 버전 표시/업데이트 종료 단독 회귀 테스트는 통과함. 이 별도 UI 레이아웃 문제는 이번 작업 범위에서 변경하지 않음.
 - 실제 사용자 PC에서 업데이트 확인 버튼 및 제목 표시 확인이 마지막 현장 검증 단계. 기존 드라이브/계정 정보는 수정하지 않음.
+
+## 최종 공식 배포 결과 (2026-11-23)
+
+- GitHub Actions run 45115236102: success. SHA-256/ZIP 내용/필수 구성요소를 다시 검증하고 PC v1.3.132 공식 릴리즈 생성 완료.
+- 공식 ZIP FileHub-AIO-PC-1.3.132-win-x64.zip, 용량 168,929,804 bytes, SHA-256 1EC46115479F9CF89ADC3104E2B3B594E871E59AB1E586C25F5A3BD3702C44FC. GitHub 릴리즈 API의 asset digest와 로컬 배포본 해시 일치.
+- 릴리즈 https://github.com/dj5927/FileHub-AIO/releases/tag/pc-v1.3.132
+- 임시 배포 전송 터널과 전용 HTTP 서버 종료. 기존 사용자 드라이브 세션과 데이터는 변경하지 않음.
+- 확인 항목: 버전 표시줄·트레이 v1.3.132, 업데이트 확인 후 하단 진행 문구 정리. 실제 PC 설치 후 UI 확인 권장.
