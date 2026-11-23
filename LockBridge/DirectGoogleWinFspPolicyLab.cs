@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using Fsp;
 
 namespace NASMount.LockBridge;
@@ -11,6 +12,38 @@ internal static class DirectGoogleWinFspPolicyLab
 {
     private sealed class MockDriveHandler : HttpMessageHandler
     {
+        internal int SlowUploadDelayMs;
+        private MemoryStream _newUploadParts = new();
+        private sealed class DelayedSink(Stream inner, int delayMs) : Stream
+        {
+            public override bool CanRead => false;
+            public override bool CanSeek => false;
+            public override bool CanWrite => true;
+            public override long Length => throw new NotSupportedException();
+            public override long Position
+            {
+                get => throw new NotSupportedException();
+                set => throw new NotSupportedException();
+            }
+            public override void Flush() => inner.Flush();
+            public override int Read(byte[] b, int offset, int count) =>
+                throw new NotSupportedException();
+            public override long Seek(long offset, SeekOrigin origin) =>
+                throw new NotSupportedException();
+            public override void SetLength(long size) =>
+                throw new NotSupportedException();
+            public override void Write(byte[] b, int offset, int count) =>
+                inner.Write(b, offset, count);
+            public override async ValueTask WriteAsync(
+                ReadOnlyMemory<byte> b, CancellationToken token = default)
+            {
+                await Task.Delay(delayMs, token).ConfigureAwait(false);
+                await inner.WriteAsync(b, token).ConfigureAwait(false);
+            }
+            public override Task WriteAsync(byte[] b, int offset,
+                int count, CancellationToken token) =>
+                WriteAsync(b.AsMemory(offset, count), token).AsTask();
+        }
         internal string FolderName = "";
         internal string SourceName = "hello.txt";
         internal bool SourceTrashed;
@@ -115,6 +148,8 @@ internal static class DirectGoogleWinFspPolicyLab
                 url.AbsolutePath.EndsWith("/upload/drive/v3/files"))
             {
                 Interlocked.Increment(ref UploadInitiations);
+                _newUploadParts.Dispose();
+                _newUploadParts = new MemoryStream();
                 var response = Json("{}", HttpStatusCode.OK);
                 response.Headers.Location = new Uri("http://127.0.0.1:19490/session/new_drive_01");
                 return Task.FromResult(response);
@@ -122,8 +157,29 @@ internal static class DirectGoogleWinFspPolicyLab
             if (request.Method == HttpMethod.Put &&
                 url.AbsolutePath == "/session/new_drive_01")
             {
-                UploadedContent = request.Content!.ReadAsByteArrayAsync(
-                    cancellationToken).GetAwaiter().GetResult();
+                var range = request.Content!.Headers.ContentRange ??
+                    throw new IOException("Google mock missing Content-Range");
+                if (range.From != _newUploadParts.Length)
+                    throw new IOException("Google mock chunk offset mismatch");
+                if (SlowUploadDelayMs > 0)
+                {
+                    using var slow = new DelayedSink(_newUploadParts, SlowUploadDelayMs);
+                    request.Content!.CopyToAsync(slow, null,
+                        cancellationToken).GetAwaiter().GetResult();
+                }
+                else
+                    request.Content!.CopyToAsync(_newUploadParts, null,
+                        cancellationToken).GetAwaiter().GetResult();
+                if (!range.HasLength || range.To + 1 < range.Length)
+                {
+                    var pending = Json("{}", (HttpStatusCode)308);
+                    pending.Headers.TryAddWithoutValidation("Range",
+                        "bytes=0-" + (_newUploadParts.Length - 1));
+                    return Task.FromResult(pending);
+                }
+                if (range.Length != _newUploadParts.Length)
+                    throw new IOException("Google mock final size mismatch");
+                UploadedContent = _newUploadParts.ToArray();
                 Interlocked.Increment(ref UploadCompletions);
                 string md5 = Convert.ToHexString(
                     System.Security.Cryptography.MD5.HashData(UploadedContent))
@@ -214,6 +270,123 @@ internal static class DirectGoogleWinFspPolicyLab
                     """{"id":"folder_01","name":"새이름","mimeType":"application/vnd.google-apps.folder","version":"2"}"""));
             }
             throw new InvalidOperationException("Unknown Google pilot mock request");
+        }
+    }
+
+    private delegate uint CopyProgress(long totalBytes, long transferred,
+        long streamBytes, long streamTransferred, uint streamIndex,
+        uint callbackReason, IntPtr source, IntPtr target, IntPtr data);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll",
+        CharSet = System.Runtime.InteropServices.CharSet.Unicode,
+        SetLastError = true)]
+    private static extern bool CopyFileEx(string source, string target,
+        CopyProgress callback, IntPtr data, ref int cancel, uint flags);
+
+    internal static void RunCopyProgress()
+    {
+        using var fake = new MockDriveHandler { SlowUploadDelayMs = 80 };
+        using var http = new HttpClient(fake);
+        var api = new GoogleDirectApiClient(http,
+            _ => Task.FromResult("OFFLINE_GOOGLE_TOKEN"),
+            new Uri("http://127.0.0.1:19490/drive/v3/"));
+        string isolated = Path.Combine(Path.GetTempPath(),
+            "FileHubGoogleWinFspProgress_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(isolated);
+        try
+        {
+            char letter = Enumerable.Range('T', 7).Select(n => (char)n)
+                .FirstOrDefault(value => !Environment.GetLogicalDrives()
+                    .Any(path => path.StartsWith(value + ":",
+                        StringComparison.OrdinalIgnoreCase)));
+            if (letter == default)
+                throw new IOException("No free drive letter for Google progress");
+            string root = letter + ":\\";
+            using var filesystem = new DirectGoogleWinFsp(api,
+                Path.GetTempPath(), true, isolated);
+            using var host = new FileSystemHost(filesystem);
+            host.FileSystemName = "NTFS";
+            host.Prefix = @"\FileHubGoogleProgress\" +
+                Guid.NewGuid().ToString("N");
+            if (host.Mount(letter + ":", null, true) < 0)
+                throw new IOException("Google progressive WinFsp mount failed");
+            if (!SpinWait.SpinUntil(() =>
+            {
+                filesystem.GetVolumeInfo(out var quota);
+                return quota.FreeSize > 100_000_000UL;
+            }, TimeSpan.FromSeconds(5)))
+                throw new IOException("Google progressive WinFsp quota unavailable");
+
+            const int bytes = 8 * 1024 * 1024 + 123;
+            byte[] source = new byte[bytes];
+            new Random(20261124).NextBytes(source);
+            string local = Path.Combine(isolated, "local-source.zip");
+            File.WriteAllBytes(local, source);
+            string remote = Path.Combine(root, "upload-from-pc.txt");
+            var progressed = new List<(long ByteCount, long Milliseconds)>();
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
+            CopyProgress callback = (all, sent, _, _, _, _, _, _, _) =>
+            {
+                lock (progressed)
+                {
+                    if (progressed.Count == 0 ||
+                        progressed[^1].ByteCount < sent)
+                        progressed.Add((sent, elapsed.ElapsedMilliseconds));
+                }
+                return 0;
+            };
+            int cancel = 0;
+            if (!CopyFileEx(local, remote, callback, IntPtr.Zero,
+                ref cancel, 0))
+            {
+                int win32 = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                Console.Error.WriteLine(
+                    "GOOGLE_PROGRESS_TEST_COPY_FAILED starts=" +
+                    fake.UploadInitiations + " completes=" +
+                    fake.UploadCompletions + " samples=" +
+                    progressed.Count + " stageFiles=" +
+                    Directory.GetFiles(isolated, "*.json").Length +
+                    " rootExists=" + Directory.Exists(root) +
+                    " free=" + new DriveInfo(root).AvailableFreeSpace);
+                throw new IOException("Windows CopyFileEx Google progress failed " +
+                    win32);
+            }
+            elapsed.Stop();
+            if (fake.UploadInitiations != 1 || fake.UploadCompletions != 1 ||
+                fake.UploadedContent is null ||
+                !source.AsSpan().SequenceEqual(fake.UploadedContent))
+            {
+                Console.Error.WriteLine(
+                    "GOOGLE_PROGRESS_LAB_MISMATCH starts=" + fake.UploadInitiations +
+                    " completions=" + fake.UploadCompletions +
+                    " remoteBytes=" + (fake.UploadedContent?.Length ?? 0) +
+                    " expectedBytes=" + source.Length +
+                    " stageCount=" + Directory.GetFiles(isolated, "*.json").Length);
+                foreach (string manifest in Directory.GetFiles(isolated, "*.json"))
+                {
+                    using var doc = JsonDocument.Parse(File.ReadAllText(manifest));
+                    Console.Error.WriteLine("GOOGLE_PROGRESS_LAB_JOURNAL status=" +
+                        doc.RootElement.GetProperty("Status").GetString() +
+                        " size=" + doc.RootElement.GetProperty("Size").GetInt64());
+                }
+                throw new IOException("Google WinFsp progressive output mismatch");
+            }
+            long span = progressed.Count < 2 ? 0 :
+                progressed[^1].Milliseconds - progressed[0].Milliseconds;
+            if (progressed.Count < 8 || span < 300 ||
+                progressed[0].ByteCount >= bytes)
+                throw new IOException("Windows copy progress reached 99% too soon");
+            Console.WriteLine("GOOGLE_DIRECT_WINFSP_NATIVE_COPY_PROGRESS_PASS" +
+                " samples=" + progressed.Count +
+                " spanMs=" + span +
+                " fullMs=" + elapsed.ElapsedMilliseconds);
+            Console.WriteLine("GOOGLE_DIRECT_WINFSP_SHA256_COPY_PASS bytes=" +
+                bytes);
+        }
+        finally
+        {
+            if (Directory.Exists(isolated))
+                Directory.Delete(isolated, true);
         }
     }
 

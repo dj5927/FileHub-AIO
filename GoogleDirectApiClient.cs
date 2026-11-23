@@ -432,6 +432,102 @@ internal sealed class GoogleDirectApiClient
         finally { _requestSlots.Release(); }
     }
 
+    // The file size advertised in WinFsp Create is an ALLOCATION size, not
+    // the real length (Windows rounds it up to 4096 bytes). Start a Google
+    // resumable session WITHOUT X-Upload-Content-Length; all non-final
+    // 1MiB chunks use Content-Range bytes start-end/*. The final request
+    // supplies the actual length learned at WinFsp Cleanup.
+    internal async Task<Uri> BeginProgressiveSessionAsync(string parentId,
+        string name, string generatedId, CancellationToken cancel)
+    {
+        parentId = ValidId(parentId);
+        generatedId = ValidId(generatedId);
+        if (string.IsNullOrWhiteSpace(name) || name.Length > 255 ||
+            name.Contains('/') || name.Contains('\\'))
+            throw new ArgumentException("Invalid Google progressive target name");
+        Uri upload = new(_api, "../../upload/drive/v3/files?" +
+            "uploadType=resumable&supportsAllDrives=true&" +
+            "fields=id,name,mimeType,size,modifiedTime,version,md5Checksum");
+        using var request = new HttpRequestMessage(HttpMethod.Post, upload)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(
+                new Dictionary<string, object>
+                {
+                    ["name"] = name,
+                    ["parents"] = new[] { parentId },
+                    ["mimeType"] = "application/octet-stream",
+                    ["id"] = generatedId
+                }), Encoding.UTF8, "application/json")
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer",
+            await _accessToken(cancel).ConfigureAwait(false));
+        request.Headers.TryAddWithoutValidation("X-Upload-Content-Type",
+            "application/octet-stream");
+        using var result = await SendBoundedAsync(request, cancel)
+            .ConfigureAwait(false);
+        if (!result.IsSuccessStatusCode ||
+            result.Headers.Location is not { } location)
+            throw new IOException("Google progressive session creation HTTP " +
+                (int)result.StatusCode);
+        if (!location.IsAbsoluteUri ||
+            !string.Equals(location.Host, _api.Host,
+                StringComparison.OrdinalIgnoreCase) ||
+            (location.Scheme != Uri.UriSchemeHttps &&
+             !(_api.IsLoopback && location.IsLoopback &&
+               location.Scheme == Uri.UriSchemeHttp)))
+            throw new IOException("Unsafe Google progressive session URI");
+        return location;
+    }
+
+    internal async Task<(long Acknowledged, Item? Completed)> SendProgressiveChunkAsync(
+        Uri session, string generatedId, long offset, byte[] bytes,
+        long? finalLength, CancellationToken cancel)
+    {
+        generatedId = ValidId(generatedId);
+        if (bytes.Length == 0 || offset < 0 ||
+            (!finalLength.HasValue && bytes.Length % (256 * 1024) != 0) ||
+            (finalLength.HasValue && finalLength != offset + bytes.Length))
+            throw new ArgumentException("Invalid progressive chunk boundary");
+        using var put = new HttpRequestMessage(HttpMethod.Put, session)
+        {
+            Content = new ByteArrayContent(bytes)
+        };
+        put.Headers.Authorization = new AuthenticationHeaderValue("Bearer",
+            await _accessToken(cancel).ConfigureAwait(false));
+        put.Content.Headers.ContentType =
+            new MediaTypeHeaderValue("application/octet-stream");
+        put.Content.Headers.ContentRange = finalLength.HasValue
+            ? new ContentRangeHeaderValue(offset, offset + bytes.Length - 1,
+                finalLength.Value)
+            : new ContentRangeHeaderValue(offset, offset + bytes.Length - 1);
+        using var result = await SendBoundedAsync(put, cancel)
+            .ConfigureAwait(false);
+        if (result.IsSuccessStatusCode)
+        {
+            if (!finalLength.HasValue)
+                throw new IOException("Google completed an unfinalized chunk");
+            using var document = await JsonDocument.ParseAsync(
+                await result.Content.ReadAsStreamAsync(cancel),
+                cancellationToken: cancel).ConfigureAwait(false);
+            Item item = ParseItem(document.RootElement);
+            if (item.Id != generatedId || item.Size != finalLength)
+                throw new IOException("Google completed wrong progressive file");
+            return (offset + bytes.Length, item);
+        }
+        if ((int)result.StatusCode != 308 || finalLength.HasValue)
+            throw new IOException("Google progressive chunk HTTP " +
+                (int)result.StatusCode + "; recovery retained");
+        if (!result.Headers.TryGetValues("Range", out var ranges))
+            throw new IOException("Google did not acknowledge progressive bytes");
+        var match = System.Text.RegularExpressions.Regex.Match(
+            ranges.FirstOrDefault() ?? "", @"^bytes=0-(\d+)$");
+        if (!match.Success ||
+            !long.TryParse(match.Groups[1].Value, out long last) ||
+            last + 1 != offset + bytes.Length)
+            throw new IOException("Google acknowledged only part of a chunk");
+        return (last + 1, null);
+    }
+
     // ONLY create a new item; never use this method to overwrite an existing
     // Drive ID. Existing-file updates need an independently proven conflict
     // protocol (Drive metadata version alone is not an atomic write CAS).

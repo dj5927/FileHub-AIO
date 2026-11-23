@@ -84,13 +84,19 @@ internal sealed class DirectWebDavProgressiveUpload : IDisposable
                 int count = (int)Math.Min(buffer.Length,
                     Math.Min(owner.Length - offset, available - offset));
                 read.Position = offset;
-                int n = await read.ReadAsync(buffer.AsMemory(0, count),
-                    cancellationToken).ConfigureAwait(false);
-                if (n != count)
-                    throw new IOException("Progressive stage source truncated");
-                await output.WriteAsync(buffer.AsMemory(0, n), cancellationToken)
+                int received = 0;
+                while (received < count)
+                {
+                    int got = await read.ReadAsync(
+                        buffer.AsMemory(received, count - received),
+                        cancellationToken).ConfigureAwait(false);
+                    if (got == 0)
+                        throw new IOException("Progressive stage source truncated");
+                    received += got;
+                }
+                await output.WriteAsync(buffer.AsMemory(0, count), cancellationToken)
                     .ConfigureAwait(false);
-                offset += n;
+                offset += count;
                 lock (owner._gate)
                 {
                     Interlocked.Exchange(ref owner._sent, offset);

@@ -543,6 +543,8 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
                 // Existing Drive IDs are never overwritten via this path.
                 var stage = new DirectGoogleWriteStage(_api, _stageRoot,
                     parent.Id, target[(target.LastIndexOf('/') + 1)..]);
+                if (allocationSize > 0 && allocationSize <= long.MaxValue)
+                    stage.PlanCopy((long)allocationSize);
                 if (!_newFiles.TryAdd(target, stage))
                 {
                     stage.Discard();
@@ -626,6 +628,8 @@ internal sealed class DirectGoogleWinFsp : FileSystemBase, IDisposable
         {
             if (!setAllocationSize || (ulong)file.Stage.Length > newSize)
                 file.Stage.SetLength((long)newSize);
+            else if (setAllocationSize && newSize >= 2UL * 1024 * 1024)
+                file.Stage.PlanCopy((long)newSize);
             info = Describe(file);
             return Ok;
         }

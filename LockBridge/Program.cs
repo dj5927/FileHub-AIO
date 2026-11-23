@@ -22,6 +22,18 @@ internal static class Program
     {
         try
         {
+            if (args.Length == 1 &&
+                args[0] == "--direct-google-progressive-policy-test")
+            {
+                DirectGoogleProgressivePolicyLab.Run();
+                return 0;
+            }
+            if (args.Length == 1 &&
+                args[0] == "--direct-google-winfsp-progress-test")
+            {
+                DirectGoogleWinFspPolicyLab.RunCopyProgress();
+                return 0;
+            }
             if (args.Length == 1 && args[0] == "--direct-google-winfsp-policy-test")
             {
                 DirectGoogleWinFspPolicyLab.Run();

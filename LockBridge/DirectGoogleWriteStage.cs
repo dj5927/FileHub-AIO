@@ -27,6 +27,11 @@ internal sealed class DirectGoogleWriteStage : IDisposable
     private bool _uploaded;
     private bool _discarded;
     private bool _closed;
+    private long _plannedCopySize;
+    private long _contiguousWritten;
+    private bool _sequential = true;
+    private bool _progressiveUnavailable;
+    private DirectGoogleProgressiveUpload? _progressive;
     private int _cleanupHandles;
     private int _closeHandles;
     internal string LocalDataPath => _dataPath;
@@ -35,6 +40,26 @@ internal sealed class DirectGoogleWriteStage : IDisposable
     internal FileStream Local { get; }
     internal long Length => Local.Length;
     internal bool EditingExisting => _original is not null;
+
+    // Windows CopyFileEx normally gives WinFsp the source size up front.
+    // Do not stream unknown-size files, existing edits, Office temp files,
+    // or documents that can be written repeatedly and out of order.
+    internal void PlanCopy(long size)
+    {
+        lock (_gate)
+        {
+            string extension = Path.GetExtension(_name).ToLowerInvariant();
+            if (_original is not null || _progressiveUnavailable ||
+                _progressive is not null || _contiguousWritten != 0 ||
+                size < 2 * 1024 * 1024 ||
+                _name.StartsWith("~$", StringComparison.Ordinal) ||
+                extension is ".xls" or ".xlsx" or ".xlsm" or ".doc" or
+                    ".docx" or ".ppt" or ".pptx" or ".odt" or ".ods" or
+                    ".hwp" or ".hwpx" or ".tmp")
+                return;
+            _plannedCopySize = size;
+        }
+    }
 
     // Multiple WinFsp handles may write and flush the same new file.
     // Upload only after final Cleanup; release local storage at final Close.
@@ -160,16 +185,81 @@ internal sealed class DirectGoogleWriteStage : IDisposable
 
     internal void Write(ulong offset, byte[] bytes, bool append)
     {
+        DirectGoogleProgressiveUpload? progressive = null;
+        long target = 0;
         lock (_gate)
         {
             if (_uploaded || _closed || _discarded)
                 throw new IOException("Google new file is already committed or closed");
-            Local.Position = append ? Local.Length : checked((long)offset);
+            long position = append ? Local.Length : checked((long)offset);
+            Local.Position = position;
             Local.Write(bytes);
+            // FileStream can retain the final short Write inside its managed
+            // buffer even with FileOptions.WriteThrough. Flush the managed
+            // buffer before letting the independent HTTP reader consume it.
+            if (_progressive is not null ||
+                (_plannedCopySize >= 2 * 1024 * 1024 && !_progressiveUnavailable))
+                Local.Flush(flushToDisk: false);
+            if (bytes.Length != 0 && position == _contiguousWritten &&
+                _sequential)
+                _contiguousWritten += bytes.Length;
+            else if (bytes.Length != 0)
+                _sequential = false;
+            if (_progressive is null && !_progressiveUnavailable &&
+                _original is null && _sequential &&
+                _plannedCopySize >= 2 * 1024 * 1024 && position == 0 &&
+                Local.Length <= _plannedCopySize)
+            {
+                try
+                {
+                    _driveId ??= _api.GenerateUploadIdAsync()
+                        .GetAwaiter().GetResult();
+                    SaveManifest("allocated", "");
+                    _progressive = new DirectGoogleProgressiveUpload(
+                        _api, _parentId, _name, _driveId, _dataPath,
+                        _plannedCopySize);
+                }
+                catch (Exception ex) when (ex is IOException or
+                    HttpRequestException or TaskCanceledException)
+                {
+                    _progressiveUnavailable = true;
+                    Console.Error.WriteLine("DIRECT_GOOGLE_PROGRESSIVE_FALLBACK reason=" +
+                        ex.GetType().Name);
+                }
+            }
+            if (_progressive is { } active)
+            {
+                if (!_sequential || !active.Publish(position, bytes.Length))
+                {
+                    active.Dispose();
+                    _progressive = null;
+                    _progressiveUnavailable = true;
+                }
+                else
+                {
+                    progressive = active;
+                    target = position + bytes.Length;
+                }
+            }
             // The .data FileStream uses WriteThrough. Avoid a second
             // JSON rename+fsync for every small Windows write callback:
             // metadata is durably refreshed at Flush/Cleanup instead.
             // After a crash, recovery scans the actual .data file length.
+        }
+        if (progressive is not null &&
+            !progressive.WaitForSend(target, TimeSpan.FromSeconds(30)))
+        {
+            lock (_gate)
+            {
+                if (ReferenceEquals(_progressive, progressive))
+                {
+                    progressive.Dispose();
+                    _progressive = null;
+                    _progressiveUnavailable = true;
+                    Console.Error.WriteLine(
+                        "DIRECT_GOOGLE_PROGRESSIVE_FALLBACK reason=network_send");
+                }
+            }
         }
     }
 
@@ -179,6 +269,16 @@ internal sealed class DirectGoogleWriteStage : IDisposable
         {
             if (_uploaded || _closed || _discarded)
                 throw new IOException("Google new file cannot change after upload");
+            if (_progressive is not null && _contiguousWritten > size)
+            {
+                _progressive.Dispose();
+                _progressive = null;
+                _progressiveUnavailable = true;
+            }
+            if (_contiguousWritten > 0 && Local.Length != size)
+                _sequential = false;
+            if (_contiguousWritten == 0 && _plannedCopySize == 0)
+                PlanCopy(size);
             Local.SetLength(size);
             SaveManifest("local", "");
         }
@@ -208,6 +308,55 @@ internal sealed class DirectGoogleWriteStage : IDisposable
             {
                 CommitExisting(md5);
                 return;
+            }
+            if (_progressive is { } progressive)
+            {
+                _progressive = null;
+                try
+                {
+                    if (_sequential &&
+                        _contiguousWritten == Local.Length &&
+                        Local.Length >= 2 * 1024 * 1024 &&
+                        Local.Length <= progressive.Capacity)
+                    {
+                        // Preserve the original new-file conflict check.
+                        // Drive permits duplicate names; do not finalize
+                        // a staged upload if another client added this name.
+                        _api.InvalidateFolder(_parentId);
+                        var active = _api.ListChildrenAsync(_parentId)
+                            .GetAwaiter().GetResult();
+                        if (active.Any(item => item.Name.Equals(_name,
+                            StringComparison.OrdinalIgnoreCase) &&
+                            item.Id != _driveId))
+                        {
+                            SaveManifest("conflict-name", md5);
+                            throw new IOException(
+                                "Google copy name conflict; recovery retained");
+                        }
+                        SaveManifest("uploading", md5);
+                        var item = progressive.Complete(Local.Length);
+                        Reconcile(item, md5);
+                        Console.WriteLine("DIRECT_GOOGLE_PROGRESSIVE_COMMIT_PASS bytes=" +
+                            Local.Length);
+                        return;
+                    }
+                }
+                catch (Exception error) when (error is IOException or
+                    HttpRequestException or TaskCanceledException or TimeoutException)
+                {
+                    // The server may have committed despite a lost response.
+                    // Query the one preallocated Drive ID before any retry.
+                    var received = _api.GetFileAsync(_driveId!)
+                        .GetAwaiter().GetResult();
+                    if (received is not null)
+                    {
+                        Reconcile(received, md5);
+                        return;
+                    }
+                    Console.Error.WriteLine("DIRECT_GOOGLE_PROGRESSIVE_RECOVERY reason=" +
+                        error.GetType().Name);
+                }
+                finally { progressive.Dispose(); }
             }
             if (string.IsNullOrEmpty(_driveId))
             {
@@ -318,6 +467,8 @@ internal sealed class DirectGoogleWriteStage : IDisposable
         {
             if (_uploaded)
                 throw new IOException("Cannot discard an already committed Drive file");
+            _progressive?.Dispose();
+            _progressive = null;
             _discarded = true;
             Dispose();
         }
@@ -328,6 +479,8 @@ internal sealed class DirectGoogleWriteStage : IDisposable
         lock (_gate)
         {
             if (_closed) return;
+            _progressive?.Dispose();
+            _progressive = null;
             _closed = true;
             Local.Dispose();
             if (_uploaded || _discarded)
