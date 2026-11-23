@@ -17,3 +17,12 @@
 - 실제 NAS가 PUT와 보호된 MOVE를 수락하기 전에는 완료 처리하지 않음.
 - 새 파일, 기존 파일, 잠금, 동시 수정, Office 저장 및 비정상 종료 복구 회귀 검증 수행.
 - 사용자 실제 NAS의 마지막 대기 시간은 서버 응답 지연에 따라 달라질 수 있으며 현장 확인이 필요.
+
+## 최종 시험 및 공식 배포 기준 (2026-11-23)
+
+- PC v1.3.130 배포 ZIP: FileHub-AIO-PC-1.3.130-win-x64.zip, 168,915,274 bytes. SHA256 5B2DBE19B6DC7C8234C6E4E2359F5D84B96D5724E08054DABF961F922D58797D.
+- PC v1.3.129 기준 느린 WebDAV 시험에서 24MiB 전송 진행률 100% 보고 후 복사 반환까지 약 6.1초. v1.3.130 새 방식은 강한 MOVE ETag 서버 시험에서 약 3.1초. 사용자의 NAS에서는 실제 RTT에 따라 다름.
+- 24MiB/23,600,123바이트 원본·서버 SHA-256 일치. WebDAV 반복 저장, Office 임시 파일 이름 변경, 충돌 방지, 잠금, crash journal 회귀 검증 통과.
+- PC 앱 업데이트, 원격 경로, EXE 실행, Google Chrome 로그인 구성, Google publisher OAuth, PC/Android 백업 정책, LockBridge self-test 통과.
+- 릴리즈 URL: https://github.com/dj5927/FileHub-AIO/releases/tag/pc-v1.3.130
+- 기존 1.3.129 공식 ZIP에서 검증된 Google OAuth/부가 엔진 구성요소 유지, 새 1.3.130 앱 및 WinFsp 엔진으로 교체. Android는 변경 없음.
