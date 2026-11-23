@@ -1,0 +1,60 @@
+name: Publish verified signed FileHub Android v0.1.117 OTA
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[ANDROID_V117_BINARY_HANDOFF_20261123]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download and verify immutable signed APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --http1.1 --fail --location --retry 7 --retry-all-errors --retry-delay 4 --connect-timeout 15 --max-time 850 'https://being-equally-purple-springer.trycloudflare.com/FileHub-AIO-v0.1.117.apk' -o FileHub-AIO-v0.1.117.apk
+          test "$(stat -c '%s' FileHub-AIO-v0.1.117.apk)" -eq 72644632
+          printf '%s\n' 'A705B7816CABA5B55CD0F84F9832C907CBC025466737A1C53F5D5D78DEE44D02  FileHub-AIO-v0.1.117.apk' | sha256sum --check
+          unzip -tqq FileHub-AIO-v0.1.117.apk
+          for name in AndroidManifest.xml classes.dex assets/office_hwp/excel-grid.js assets/office_hwp/excel-ooxml.js assets/office_hwp/office-host.css assets/office_hwp/office-host.js; do
+            unzip -Z1 FileHub-AIO-v0.1.117.apk | grep -Fx "$name"
+          done
+          printf '%s\n' 'A705B7816CABA5B55CD0F84F9832C907CBC025466737A1C53F5D5D78DEE44D02  FileHub-AIO-v0.1.117.apk' > SHA256SUMS
+      - name: Publish latest Android OTA with version metadata
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.1.117 >/dev/null 2>&1; then
+            echo 'v0.1.117 already exists; refusing overwrite'
+            exit 1
+          fi
+          cat > release-notes.txt <<'NOTES'
+          versionCode: 118
+
+          FileHub AIO Android v0.1.117 (publisher-signed)
+          - Improved Microsoft Excel border rendering: thick, double, dashed and dotted strokes, row/column styles, and merged-cell edge borders.
+          - Follow Excel cell alignment settings for shrink-to-fit and wrapped text. Auto-height rows grow while fixed-height rows remain fixed.
+          - Moved Excel original-save action to a compact icon next to filename; removed Excel-only bottom Save bar to reclaim grid space.
+          - Existing v0.1.116 embedded Excel images, pinch zoom, single-finger scrolling, sheet tabs and lossless original OOXML edit export retained.
+          - Android JUnit and release build succeeded; headless Excel style regression passed. Actual user workbook still requires on-device visual verification.
+          - Original publisher signing certificate, versionCode 118, versionName 0.1.117.
+          - SHA256 A705B7816CABA5B55CD0F84F9832C907CBC025466737A1C53F5D5D78DEE44D02
+          NOTES
+          grep -Fx 'versionCode: 118' release-notes.txt
+          gh release create v0.1.117 FileHub-AIO-v0.1.117.apk SHA256SUMS --target "$GITHUB_SHA" --latest --title 'FileHub AIO Android v0.1.117' --notes-file release-notes.txt
+          gh release view v0.1.117 --json tagName,body,url,assets > release.json
+          python3 - <<'PY'
+          import json,re
+          rel=json.load(open('release.json',encoding='utf-8'))
+          assert rel['tagName']=='v0.1.117'
+          assert re.search(r'(?m)^versionCode:\s*118\s*$',rel['body'])
+          apk=next(a for a in rel['assets'] if a['name']=='FileHub-AIO-v0.1.117.apk')
+          assert apk['size']==72644632
+          assert apk.get('digest','').lower()=='sha256:a705b7816caba5b55cd0f84f9832c907cbc025466737a1c53f5d5d78dee44d02'
+          print('ANDROID_V117_OFFICIAL_OTA_RELEASE_SUCCESS')
+          PY
