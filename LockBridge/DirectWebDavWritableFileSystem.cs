@@ -224,6 +224,12 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             DirectWebDavWriteStore.Handle session;
             try { session = _writes.Begin(key, create: true); }
             catch { ReleaseOfficeLease(lease); throw; }
+            if (allocationSize >= 2UL * 1024 * 1024 &&
+                allocationSize <= long.MaxValue)
+                _writes.PlanCopy(session, (long)allocationSize);
+            if (Environment.GetEnvironmentVariable("FILEHUB_DIRECT_DEBUG") == "1")
+                Console.Error.WriteLine("DIRECT_RW_NEW_FILE_ALLOCATION bytes=" +
+                    allocationSize);
             var entry = new DirectWebDavReadOnlyBackend.Entry(key,
                 key.Split('/').Last(), false, 0, DateTime.UtcNow);
             var descriptor = new WriteDescriptor(session, entry);
@@ -414,8 +420,13 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             return AccessDenied;
         try
         {
+            if (Environment.GetEnvironmentVariable("FILEHUB_DIRECT_DEBUG") == "1")
+                Console.Error.WriteLine("DIRECT_RW_SET_FILE_SIZE bytes=" +
+                    newSize + " allocationOnly=" + setAllocationSize);
             if (!setAllocationSize || (ulong)writer.Session.Local.Length > newSize)
                 _writes.SetLength(writer.Session, (long)newSize);
+            else if (setAllocationSize && newSize >= 2UL * 1024 * 1024)
+                _writes.PlanCopy(writer.Session, (long)newSize);
             info = Describe(writer);
             return Success;
         }

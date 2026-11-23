@@ -30,7 +30,8 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         protected override void Dispose(bool disposing) { /* the session owns source */ }
     }
     internal sealed record Journal(string Id, string Path, string? ExpectedEtag,
-        bool Created, DateTime CreatedUtc, long Size, string Status);
+        bool Created, DateTime CreatedUtc, long Size, string Status,
+        long WrittenBytes = -1, bool SequentialWrites = false);
 
     internal sealed class Handle : IDisposable
     {
@@ -45,6 +46,12 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         // follow-up verification failed. Do not retry with a stale ETag.
         internal bool UploadMayHaveCommitted;
         internal bool Closed;
+        internal long ContiguousWritten;
+        internal bool SequentialWrites = true;
+        internal long PlannedCopySize;
+        internal DirectWebDavProgressiveUpload? Progressive;
+        internal bool ProgressiveUnavailable;
+        internal readonly List<string> AbandonedStages = [];
         internal readonly FileStream Local;
         internal readonly object Gate = new();
         internal Handle(DirectWebDavWriteStore owner, string id, string path,
@@ -72,6 +79,78 @@ internal sealed class DirectWebDavWriteStore : IDisposable
     private readonly object _capabilityGate = new();
     private bool _conditionalWritesVerified;
     private bool _exclusiveMkcolVerified;
+    private readonly HashSet<string> _safeStageMoveDirectories =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    // MOVE Overwrite:F cannot be assumed to work uniformly on all WebDAV
+    // servers. Probe ONLY on private, unique objects in the target directory
+    // before allowing a progressive stage to be published by MOVE.
+    private void RequireVerifiedStageMove(string destination)
+    {
+        string parent = destination[
+            ..(destination.LastIndexOf('/') + 1)];
+        lock (_capabilityGate)
+        {
+            if (_safeStageMoveDirectories.Contains(parent)) return;
+            string nonce = Guid.NewGuid().ToString("N");
+            string source = parent + ".nasmount-stage-move-probe-" + nonce;
+            string occupied = parent + ".nasmount-stage-occupied-" + nonce;
+            string fresh = parent + ".nasmount-stage-fresh-" + nonce;
+            byte[] sourceData = Encoding.ASCII.GetBytes("filehub-stage-source");
+            byte[] targetData = Encoding.ASCII.GetBytes("filehub-target-keep");
+            void PutOwned(string path, byte[] data)
+            {
+                using var put = new HttpRequestMessage(HttpMethod.Put, Remote(path));
+                put.Headers.TryAddWithoutValidation("If-None-Match", "*");
+                put.Content = new ByteArrayContent(data);
+                using var reply = _http.Send(put);
+                if (!reply.IsSuccessStatusCode)
+                    throw new IOException("Progressive MOVE capability create HTTP " +
+                        (int)reply.StatusCode);
+            }
+            HttpStatusCode MoveOwned(string from, string to)
+            {
+                using var move = new HttpRequestMessage(new HttpMethod("MOVE"),
+                    Remote(from));
+                move.Headers.TryAddWithoutValidation("Destination", Remote(to).AbsoluteUri);
+                move.Headers.TryAddWithoutValidation("Overwrite", "F");
+                using var reply = _http.Send(move);
+                return reply.StatusCode;
+            }
+            try
+            {
+                PutOwned(source, sourceData);
+                PutOwned(occupied, targetData);
+                var rejected = MoveOwned(source, occupied);
+                if (rejected is not (HttpStatusCode.PreconditionFailed or
+                    HttpStatusCode.Conflict or HttpStatusCode.MethodNotAllowed))
+                    throw new IOException("Server did not reject an occupied MOVE target");
+                if (!_http.GetByteArrayAsync(Remote(occupied)).GetAwaiter()
+                    .GetResult().SequenceEqual(targetData))
+                    throw new IOException("Server overwrote occupied MOVE target");
+                var moved = MoveOwned(source, fresh);
+                if (moved is not (HttpStatusCode.Created or HttpStatusCode.NoContent))
+                    throw new IOException("Server does not support guarded MOVE");
+                if (!_http.GetByteArrayAsync(Remote(fresh)).GetAwaiter()
+                    .GetResult().SequenceEqual(sourceData))
+                    throw new IOException("MOVE destination bytes incorrect");
+                _safeStageMoveDirectories.Add(parent);
+                Console.WriteLine("DIRECT_PROGRESSIVE_GUARDED_MOVE_PROBE_PASS");
+            }
+            finally
+            {
+                foreach (string item in new[] { source, occupied, fresh })
+                {
+                    try
+                    {
+                        using var reply = _http.DeleteAsync(Remote(item))
+                            .GetAwaiter().GetResult();
+                    }
+                    catch (HttpRequestException) { }
+                }
+            }
+        }
+    }
 
     internal DirectWebDavWriteStore(Uri root, DirectWebDavReadOnlyBackend read,
         string journalRoot, HttpClient? authenticated = null)
@@ -233,7 +312,8 @@ internal sealed class DirectWebDavWriteStore : IDisposable
     {
         h.Local.Flush(true);
         var journal = new Journal(h.Id, h.RemotePath, h.ExpectedEtag,
-            h.Created, DateTime.UtcNow, h.Local.Length, status);
+            h.Created, DateTime.UtcNow, h.Local.Length, status,
+            h.ContiguousWritten, h.SequentialWrites);
         string final = ManifestPath(h.Id);
         string temporary = final + ".pending";
         using (var f = new FileStream(temporary, FileMode.Create,
@@ -301,15 +381,82 @@ internal sealed class DirectWebDavWriteStore : IDisposable
     internal void Write(Handle handle, ulong offset, ReadOnlySpan<byte> data,
         bool append = false)
     {
+        DirectWebDavProgressiveUpload? upload = null;
+        long waitFor = 0;
         lock (handle.Gate)
         {
             if (handle.Closed) throw new ObjectDisposedException(nameof(Handle));
             if (offset > long.MaxValue) throw new IOException("File offset overflow");
+            long position = append ? handle.Local.Length : (long)offset;
             handle.Local.Seek(append ? 0 : (long)offset,
                 append ? SeekOrigin.End : SeekOrigin.Begin);
             handle.Local.Write(data);
             handle.Dirty = true;
+            if (handle.Created)
+            {
+                if (handle.SequentialWrites && position == handle.ContiguousWritten)
+                    handle.ContiguousWritten += data.Length;
+                else if (data.Length != 0)
+                    handle.SequentialWrites = false;
+            }
             SaveJournal(handle, "dirty");
+            // A known allocation alone is not enough to enable streaming.
+            // Only a new, sequential, fixed-size non-Office file qualifies.
+            if (handle.Progressive is null &&
+                !handle.ProgressiveUnavailable && handle.Created &&
+                handle.PlannedCopySize >= 2 * 1024 * 1024 &&
+                position == 0 && !append && data.Length > 0 &&
+                !WriteIntent.IsDocument(handle.RemotePath))
+            {
+                try
+                {
+                    RequireVerifiedStageMove(handle.RemotePath);
+                    string parent = handle.RemotePath[
+                        ..(handle.RemotePath.LastIndexOf('/') + 1)];
+                    string stage = parent + ".nasmount-stage-" + handle.Id;
+                    handle.Progressive = new DirectWebDavProgressiveUpload(
+                        _http, Remote(stage), stage, handle.LocalPath,
+                        handle.PlannedCopySize);
+                }
+                catch (Exception error) when (error is IOException or
+                    ArgumentException or HttpRequestException)
+                {
+                    handle.ProgressiveUnavailable = true;
+                    Console.Error.WriteLine("DIRECT_PROGRESSIVE_NOT_AVAILABLE " +
+                        error.GetType().Name);
+                }
+            }
+            if (handle.Progressive is { } active)
+            {
+                if (!active.Publish(position, data.Length))
+                {
+                    handle.AbandonedStages.Add(active.StagePath);
+                    active.Cancel();
+                    handle.Progressive = null;
+                    handle.ProgressiveUnavailable = true;
+                }
+                else
+                {
+                    upload = active;
+                    waitFor = position + data.Length;
+                }
+            }
+        }
+        // Back-pressure must never hold the local journal lock while the
+        // network task reads it.
+        if (upload is not null &&
+            !upload.WaitForSent(waitFor, TimeSpan.FromSeconds(25)))
+        {
+            lock (handle.Gate)
+            {
+                if (ReferenceEquals(upload, handle.Progressive))
+                {
+                    handle.AbandonedStages.Add(upload.StagePath);
+                    upload.Cancel();
+                    handle.Progressive = null;
+                    handle.ProgressiveUnavailable = true;
+                }
+            }
         }
     }
 
@@ -317,9 +464,136 @@ internal sealed class DirectWebDavWriteStore : IDisposable
     {
         lock (handle.Gate)
         {
+            if (handle.Progressive is not null &&
+                handle.Local.Length != size)
+            {
+                handle.AbandonedStages.Add(handle.Progressive.StagePath);
+                handle.Progressive.Cancel();
+                handle.Progressive = null;
+                handle.ProgressiveUnavailable = true;
+            }
+            handle.PlannedCopySize =
+                handle.Created && handle.Local.Length == 0 &&
+                size >= 2 * 1024 * 1024 &&
+                !WriteIntent.IsDocument(handle.RemotePath) &&
+                !handle.ProgressiveUnavailable
+                    ? size : 0;
+            if (handle.Created && handle.ContiguousWritten > 0 &&
+                handle.Local.Length != size)
+                handle.SequentialWrites = false;
             handle.Local.SetLength(size);
             handle.Dirty = true;
             SaveJournal(handle, "dirty");
+        }
+    }
+
+    private void CleanupAbandonedStages(Handle handle)
+    {
+        foreach (string stage in handle.AbandonedStages)
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(
+                    HttpMethod.Delete, Remote(stage));
+                using var result = _http.Send(request,
+                    HttpCompletionOption.ResponseHeadersRead);
+                if (!result.IsSuccessStatusCode &&
+                    result.StatusCode != HttpStatusCode.NotFound)
+                    Console.Error.WriteLine(
+                        "DIRECT_PROGRESSIVE_STAGE_CLEANUP_PENDING status=" +
+                        (int)result.StatusCode);
+            }
+            catch (HttpRequestException)
+            {
+                Console.Error.WriteLine(
+                    "DIRECT_PROGRESSIVE_STAGE_CLEANUP_PENDING transport");
+            }
+        }
+        handle.AbandonedStages.Clear();
+    }
+
+    // After crash recovery, remove the exact private stage for this journal.
+    private void CleanupRecoveredStage(Handle handle)
+    {
+        string parent = handle.RemotePath[
+            ..(handle.RemotePath.LastIndexOf('/') + 1)];
+        string stage = parent + ".nasmount-stage-" + handle.Id;
+        handle.AbandonedStages.Add(stage);
+        CleanupAbandonedStages(handle);
+    }
+
+    private bool TryCommitProgressive(Handle handle)
+    {
+        var upload = handle.Progressive;
+        if (upload is null) return false;
+        handle.Progressive = null;
+        bool moveAttempted = false;
+        try
+        {
+            if (upload.Written != upload.Length ||
+                handle.Local.Length != upload.Length)
+                return false;
+            upload.Complete();
+            _read.Invalidate(upload.StagePath);
+            var staged = _read.Stat(upload.StagePath);
+            if (staged is null || staged.Size != handle.Local.Length ||
+                !StrongEtag(staged.ETag))
+                throw new IOException("Progressive stage size/ETag unverified");
+            _read.Invalidate(handle.RemotePath);
+            if (_read.Stat(handle.RemotePath) is not null)
+                throw new IOException("Progressive destination already exists");
+            // Existing WebDAV MOVE path sends Overwrite:F and If-Match.
+            moveAttempted = true;
+            RenameNewDestination(upload.StagePath, handle.RemotePath, staged.ETag);
+            _read.Invalidate(handle.RemotePath);
+            var final = _read.Stat(handle.RemotePath);
+            if (final is null || final.Size != handle.Local.Length ||
+                !StrongEtag(final.ETag))
+                throw new IOException("Progressive final metadata unverified");
+            handle.ExpectedEtag = final.ETag;
+            handle.Created = false;
+            handle.Dirty = false;
+            handle.UploadMayHaveCommitted = false;
+            SaveJournal(handle, "committed");
+            Console.WriteLine("DIRECT_PROGRESSIVE_COPY_COMMIT_PASS bytes=" +
+                handle.Local.Length);
+            return true;
+        }
+        catch (Exception error) when (error is IOException or
+            HttpRequestException or OperationCanceledException)
+        {
+            if (moveAttempted)
+            {
+                // An uncertain MOVE may still have reached the NAS.
+                // Never follow it with an unverified overwrite.
+                handle.UploadMayHaveCommitted = true;
+                if (AlreadyCommittedRemotely(handle)) return true;
+                SaveJournal(handle, "progressive-move-recovery-required");
+                throw new IOException(
+                    "Progressive rename outcome unverified; recovery retained",
+                    error);
+            }
+            Console.WriteLine("DIRECT_PROGRESSIVE_FALLBACK reason=" +
+                error.GetType().Name);
+            return false;
+        }
+        finally
+        {
+            upload.Dispose();
+            handle.AbandonedStages.Add(upload.StagePath);
+            CleanupAbandonedStages(handle);
+        }
+    }
+
+    internal void PlanCopy(Handle handle, long length)
+    {
+        lock (handle.Gate)
+        {
+            if (handle.Created && handle.Local.Length == 0 &&
+                handle.Progressive is null && !handle.ProgressiveUnavailable &&
+                length >= 2 * 1024 * 1024 &&
+                !WriteIntent.IsDocument(handle.RemotePath))
+                handle.PlannedCopySize = length;
         }
     }
 
@@ -342,6 +616,10 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             string path = handle.RemotePath;
             lock (_locks.GetOrAdd(path, _ => new object()))
             {
+                if (handle.Progressive is not null &&
+                    TryCommitProgressive(handle))
+                    return;
+                CleanupAbandonedStages(handle);
                 if (handle.UploadMayHaveCommitted)
                 {
                     // A previous Flush may have failed after the NAS PUT
@@ -447,6 +725,13 @@ internal sealed class DirectWebDavWriteStore : IDisposable
     {
         if (handle.Closed) return;
         if (commit && handle.Dirty) Commit(handle);
+        if (!commit && handle.Progressive is { } abandoned)
+        {
+            abandoned.Cancel();
+            handle.AbandonedStages.Add(abandoned.StagePath);
+            handle.Progressive = null;
+        }
+        CleanupAbandonedStages(handle);
         string id = handle.Id;
         bool complete = !handle.Dirty;
         handle.Dispose();
@@ -532,6 +817,19 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 retained++;
                 continue;
             }
+            // A preallocated, partly copied NEW file contains zero-filled
+            // unwritten ranges. It is never safe to replay that as a
+            // completed user file after a crash. Preserve its local
+            // recovery copy for explicit inspection instead.
+            if (journal.Created &&
+                (!journal.SequentialWrites ||
+                 journal.WrittenBytes != journal.Size))
+            {
+                Console.Error.WriteLine(
+                    "DIRECT_RECOVERY_INCOMPLETE_COPY_RETAINED");
+                retained++;
+                continue;
+            }
             string? leaseKey = null;
             try
             {
@@ -547,7 +845,11 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 if (file.Length != journal.Size) { retained++; continue; }
                 using var handle = new Handle(this, journal.Id, DataPath(journal.Id),
                     journal.Path, journal.ExpectedEtag, journal.Created, file)
-                    { Dirty = journal.Status != "opened" };
+                    {
+                        Dirty = journal.Status != "opened",
+                        ContiguousWritten = journal.WrittenBytes,
+                        SequentialWrites = journal.SequentialWrites
+                    };
                 bool complete = false;
                 lock (_locks.GetOrAdd(journal.Path, _ => new object()))
                 {
@@ -576,6 +878,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 if (complete)
                 {
                     handle.Dispose();
+                    CleanupRecoveredStage(handle);
                     File.Delete(ManifestPath(journal.Id));
                     File.Delete(DataPath(journal.Id));
                     recovered++;

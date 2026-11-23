@@ -8,11 +8,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, urlunsplit
 import http.client
 import os
+import re
 import threading
+import time
 
 BACKEND = int(os.environ.get("FILEHUB_STRICT_DAV_BACKEND", "18785"))
 FRONT = int(os.environ.get("FILEHUB_STRICT_DAV_FRONT", "18786"))
 DENY_ROOT_WRITES = os.environ.get("FILEHUB_STRICT_DAV_DENY_ROOT_WRITES") == "1"
+STAGE_BYTES_PER_SEC = int(os.environ.get(
+    "FILEHUB_STRICT_DAV_STAGE_BYTES_PER_SEC", "0"))
+DENY_REAL_STAGE_PUT = os.environ.get(
+    "FILEHUB_STRICT_DAV_DENY_REAL_STAGE_PUT") == "1"
 WRITE_LOCK = threading.RLock()
 
 
@@ -63,6 +69,15 @@ class Handler(BaseHTTPRequestHandler):
         write = self.command in ("PUT", "DELETE", "MOVE", "MKCOL", "COPY")
         guard = WRITE_LOCK if write else threading.RLock()
         with guard:
+            if (DENY_REAL_STAGE_PUT and self.command == "PUT" and
+                re.fullmatch(r"\.nasmount-stage-[0-9a-f]{32}",
+                             urlsplit(request_path).path.rsplit("/", 1)[-1])):
+                self.send_response(501)
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+                return
             # Synology's / is a virtual list of shared folders. Some NAS
             # users can write to /Shared/* but not create files directly /.
             if DENY_ROOT_WRITES and self.command in ("PUT", "MKCOL") and \
@@ -94,7 +109,23 @@ class Handler(BaseHTTPRequestHandler):
             if body_len > 100_000_000:
                 self.send_error(413)
                 return
-            payload = self.rfile.read(body_len) if body_len else None
+            if (self.command == "PUT" and ".nasmount-stage-" in request_path
+                    and STAGE_BYTES_PER_SEC > 0):
+                # Lab-only slow NAS simulator: use incremental reads so
+                # the Windows CopyFileEx callback must wait for network I/O
+                # rather than racing to 99% via local file staging.
+                received = bytearray()
+                started = time.monotonic()
+                while len(received) < body_len:
+                    part = self.rfile.read(min(128 * 1024, body_len - len(received)))
+                    if not part:
+                        raise ConnectionError("progressive PUT truncated")
+                    received.extend(part)
+                    expected = len(received) / STAGE_BYTES_PER_SEC
+                    time.sleep(max(0, started + expected - time.monotonic()))
+                payload = bytes(received)
+            else:
+                payload = self.rfile.read(body_len) if body_len else None
             headers = {}
             for key, value in self.headers.items():
                 if key.lower() in (

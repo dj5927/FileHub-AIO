@@ -143,6 +143,96 @@ public static class FileHubDiskQuotaProbe {
  if(!(Test-Path (Join-Path $server 'test-created.txt'))){throw 'Create did not upload to NAS'}
  if([IO.File]::ReadAllText((Join-Path $server 'test-created.txt')) -ne 'first-save'){throw 'Wrong first save'}
  Write-Output 'ONE_LAYER_RW_CREATE_AND_UPLOAD_PASS'
+ # Exercise Explorer's native new-file CopyFile path, not just a tiny
+ # WriteAllText (which cannot reveal a 99%-on-first-paint regression).
+ $largeLocal=Join-Path $root 'source-progressive-24mb.zip'
+ $largeMounted=Join-Path $drive 'progressive-24mb.zip'
+ $largeServer=Join-Path $server 'progressive-24mb.zip'
+ Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+public static class FileHubCopyFileExProgress {
+  public delegate uint Callback(long total, long transferred,
+    long stream, long streamTransferred, uint streamNumber,
+    uint callbackReason, IntPtr source, IntPtr dest, IntPtr data);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+  public static extern bool CopyFileEx(string source, string target,
+    Callback callback, IntPtr data, ref int cancel, uint flags);
+  public static readonly List<long> Bytes = new List<long>();
+  public static readonly List<long> Times = new List<long>();
+  private static readonly Stopwatch Clock = new Stopwatch();
+  private static readonly Callback Reporter = (total, done, stream, streamDone,
+    number, reason, source, dest, data) => {
+    lock(Bytes) {
+      if (Bytes.Count == 0 || done > Bytes[Bytes.Count-1]) {
+        Bytes.Add(done);
+        Times.Add(Clock.ElapsedMilliseconds);
+      }
+    }
+    return 0;
+  };
+  public static bool Copy(string source, string target) {
+    Bytes.Clear(); Times.Clear(); Clock.Restart();
+    int cancel=0;
+    bool ok=CopyFileEx(source,target,Reporter,IntPtr.Zero,ref cancel,0);
+    Clock.Stop();
+    return ok;
+  }
+}
+'@
+ $payload=New-Object byte[] (24*1024*1024)
+ [Random]::new(20261123).NextBytes($payload)
+ [IO.File]::WriteAllBytes($largeLocal,$payload)
+ $copyClock=[Diagnostics.Stopwatch]::StartNew()
+ if(![FileHubCopyFileExProgress]::Copy($largeLocal,$largeMounted)){
+   throw ('CopyFileEx failed '+[Runtime.InteropServices.Marshal]::GetLastWin32Error())
+ }
+ $copyClock.Stop()
+ if(!(Test-Path $largeServer)){throw 'Progressive Explorer copy destination missing'}
+ $sourceHash=(Get-FileHash $largeLocal -Algorithm SHA256).Hash
+ $remoteHash=(Get-FileHash $largeServer -Algorithm SHA256).Hash
+ if($sourceHash -ne $remoteHash){
+   throw 'Progressive Explorer copy SHA256 differs from source'
+ }
+ Write-Output ('ONE_LAYER_RW_PROGRESSIVE_EXPLORER_COPY_PASS bytes='+$payload.Length+
+    ' elapsedMs='+$copyClock.ElapsedMilliseconds+' sha256='+$remoteHash)
+ $sample=@()
+ for($i=0;$i -lt [FileHubCopyFileExProgress]::Bytes.Count;$i++){
+   if($i -eq 0 -or $i -eq [FileHubCopyFileExProgress]::Bytes.Count-1 -or $i%40 -eq 0){
+     $sample+=('{0:N1}%@{1}ms' -f (100.0*[FileHubCopyFileExProgress]::Bytes[$i]/$payload.Length),[FileHubCopyFileExProgress]::Times[$i])
+   }
+ }
+ Write-Output ('ONE_LAYER_RW_NATIVE_COPY_PROGRESS samples='+
+   [FileHubCopyFileExProgress]::Bytes.Count+' '+($sample -join ','))
+ if([int]$env:FILEHUB_STRICT_DAV_STAGE_BYTES_PER_SEC -gt 0){
+   $points=[FileHubCopyFileExProgress]::Times
+   if($points.Count -lt 5 -or
+      ($points[$points.Count-1]-$points[0]) -lt 2000){
+      throw 'Windows copy progress advanced before slow WebDAV upload'
+   }
+   Write-Output 'ONE_LAYER_RW_NATIVE_COPY_PROGRESS_BACKPRESSURE_PASS'
+ }
+ # Explorer also copies non-aligned file sizes. If a server cannot accept
+ # the originally suggested allocation as a final Content-Length, safe
+ # journal/PUT fallback must still preserve every byte.
+ $oddLocal=Join-Path $root 'source-progressive-odd.zip'
+ $oddDest=Join-Path $drive 'progressive-odd.zip'
+ $oddServer=Join-Path $server 'progressive-odd.zip'
+ $oddData=New-Object byte[] 23600123
+ [Random]::new(20261124).NextBytes($oddData)
+ [IO.File]::WriteAllBytes($oddLocal,$oddData)
+ if(![FileHubCopyFileExProgress]::Copy($oddLocal,$oddDest)){
+   throw ('Odd CopyFileEx failed '+
+     [Runtime.InteropServices.Marshal]::GetLastWin32Error())
+ }
+ if((Get-FileHash $oddLocal -Algorithm SHA256).Hash -ne
+    (Get-FileHash $oddServer -Algorithm SHA256).Hash){
+    throw 'Odd-length progressive copy content mismatch'
+ }
+ Write-Output ('ONE_LAYER_RW_ODD_SIZE_COPY_PASS bytes='+$oddData.Length+
+    ' progressSamples='+[FileHubCopyFileExProgress]::Bytes.Count)
  foreach($round in 2..3){
    [IO.File]::WriteAllText($path,"save-$round")
    Start-Sleep -Seconds 2
