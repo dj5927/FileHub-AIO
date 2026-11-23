@@ -27,3 +27,13 @@
 - 릴리즈 태그: pc-v1.3.129
 - ZIP SHA-256: D589FDBD0B9E3D5F59F3EBC7631F489EE4BEA593D0CCEF29205E6F01AE47BF73
 - ZIP 용량: 168,913,736 bytes. 패키징 시 기존 검증된 v1.3.128의 Google OAuth와 부가 엔진을 유지하고, v1.3.129 앱/WinFsp 엔진으로 교체함.
+
+## 최종 배포 및 인수인계 기록 (2026-11-23)
+
+- 공식 GitHub PC 릴리즈: https://github.com/dj5927/FileHub-AIO/releases/tag/pc-v1.3.129
+- ZIP 이름: FileHub-AIO-PC-1.3.129-win-x64.zip
+- ZIP 크기: 168,913,736 bytes, SHA-256: D589FDBD0B9E3D5F59F3EBC7631F489EE4BEA593D0CCEF29205E6F01AE47BF73. GitHub 릴리즈 API digest 및 로컬 원본 해시 일치.
+- GitHub Actions run 45102327231 성공: 11개 청크 다운로드 및 재결합, 전체 SHA-256, ZIP 무결성/필수 파일, 공식 PC 릴리즈 생성 확인.
+- 개발 및 시험: 24MiB와 23,600,123 bytes 파일 전송 후 SHA-256 일치, 4MiB/s 제한 Windows CopyFileEx 25개 진행 샘플(초기 0%), 서버가 진행형 PUT를 거부할 때 기존 조건부 PUT로 폴백하고 서버 바이트 동일 확인. WebDAV 기존 파일 저장, Office 임시파일 교체, 충돌/복구/잠금 회귀 시험 성공.
+- APK/Android는 변경하지 않음. 실제 사용자 NAS에서는 서버 지원 여부와 Explorer 복사 창 0~100% 표시를 최종 현장 확인해야 함.
+- 전달용 임시 HTTPS 터널 및 로컬 읽기 전용 배포 서버 모두 종료. Windows 기존 앱 프로세스 및 실제 NAS 연결은 종료하지 않음.
