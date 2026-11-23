@@ -57,6 +57,9 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         // durable JSON rewrite and full fsync for every Explorer copy block.
         internal bool JournalDirtyRecorded;
         internal long JournalCheckpointBytes;
+        // An ordinary new-file write is staged locally and can be published
+        // by the bounded asynchronous uploader after Explorer closes it.
+        internal bool WriteBehind;
         internal long PlannedCopySize;
         internal DirectWebDavProgressiveUpload? Progressive;
         internal bool ProgressiveUnavailable;
@@ -325,26 +328,32 @@ internal sealed class DirectWebDavWriteStore : IDisposable
 
     private void SaveJournal(Handle h, string status)
     {
-        h.Local.Flush(true);
+        // Bulk-copy acknowledgement is an OS write-cache operation, not a
+        // remote commit. Avoid an unconditional fsync per 1 KB file. The
+        // background uploader flushes the stage durably before its PUT.
+        bool bufferedStage = h.WriteBehind &&
+            (status is "new-uncommitted" or "queued");
+        h.Local.Flush(!bufferedStage);
         var journal = new Journal(h.Id, h.RemotePath, h.ExpectedEtag,
             h.Created, DateTime.UtcNow, h.Local.Length, status,
             h.ContiguousWritten, h.SequentialWrites);
         string final = ManifestPath(h.Id);
         string temporary = final + ".pending";
         using (var f = new FileStream(temporary, FileMode.Create,
-            FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+            FileAccess.Write, FileShare.None, 4096,
+            bufferedStage ? FileOptions.None : FileOptions.WriteThrough))
         {
             JsonSerializer.Serialize(f, journal);
-            f.Flush(true);
+            f.Flush(!bufferedStage);
         }
         File.Move(temporary, final, true);
     }
 
-    internal Handle Begin(string path, bool create)
+    internal Handle Begin(string path, bool create, bool fastCopy = false)
     {
         RequireVerifiedConditionalWrites();
         string name = DirectWebDavReadOnlyBackend.Normalize(path);
-        var current = _read.Stat(name);
+        var current = create ? _read.KnownEntry(name) : _read.Stat(name);
         if (create && current is not null)
             throw new IOException("File already exists: " + name);
         if (!create && current is null)
@@ -357,7 +366,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         string id = Guid.NewGuid().ToString("N");
         string local = DataPath(id);
         var stream = new FileStream(local, FileMode.CreateNew,
-            FileAccess.ReadWrite, FileShare.Read,
+            FileAccess.ReadWrite, FileShare.Read | FileShare.Delete,
             65536, FileOptions.RandomAccess);
         try
         {
@@ -378,7 +387,12 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             }
             var handle = new Handle(this, id, local, name,
                 current?.ETag, create, stream);
-            SaveJournal(handle, create ? "new-uncommitted" : "opened");
+            handle.WriteBehind = fastCopy && create;
+            // For fast-copy handles the initial local file is incomplete;
+            // a crash here must not replay partial data. Create its
+            // resumable journal only when the copy is fully staged.
+            if (!handle.WriteBehind)
+                SaveJournal(handle, create ? "new-uncommitted" : "opened");
             return handle;
         }
         catch
@@ -417,8 +431,9 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             // The recovery manifest tracks only fully synced checkpoints.
             // If a copy is interrupted between checkpoints, recovery safely
             // retains the partial staging file instead of replaying it.
-            if (!handle.JournalDirtyRecorded ||
-                handle.ContiguousWritten - handle.JournalCheckpointBytes >= 1024 * 1024)
+            if (!handle.WriteBehind &&
+                (!handle.JournalDirtyRecorded ||
+                handle.ContiguousWritten - handle.JournalCheckpointBytes >= 1024 * 1024))
             {
                 SaveJournal(handle, "dirty");
                 handle.JournalDirtyRecorded = true;
@@ -426,7 +441,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             }
             // A known allocation alone is not enough to enable streaming.
             // Only a new, sequential, fixed-size non-Office file qualifies.
-            if (handle.Progressive is null &&
+            if (!handle.WriteBehind && handle.Progressive is null &&
                 !handle.ProgressiveUnavailable &&
                 Volatile.Read(ref _progressiveUnsupported) == 0 &&
                 handle.Created &&
@@ -512,9 +527,39 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 handle.SequentialWrites = false;
             handle.Local.SetLength(size);
             handle.Dirty = true;
-            SaveJournal(handle, "dirty");
+            if (!handle.WriteBehind)
+            {
+                SaveJournal(handle, "dirty");
+                handle.JournalDirtyRecorded = true;
+                handle.JournalCheckpointBytes = handle.ContiguousWritten;
+            }
+        }
+    }
+
+    // Copying into the OS cache is NOT a NAS commit. A queued file is
+    // written to local staging; the uploader fsyncs it before the PUT.
+    // A sudden machine power loss before that background flush can lose it.
+    internal void QueueNewFile(Handle handle)
+    {
+        lock (handle.Gate)
+        {
+            if (handle.Closed || !handle.Created)
+                throw new IOException("Not eligible for asynchronous copy");
+            if (!handle.SequentialWrites ||
+                handle.ContiguousWritten != handle.Local.Length)
+                throw new IOException("Incomplete local copy cannot be queued");
+            SaveJournal(handle, "queued");
             handle.JournalDirtyRecorded = true;
             handle.JournalCheckpointBytes = handle.ContiguousWritten;
+        }
+    }
+
+    internal void FlushStaging(Handle handle)
+    {
+        lock (handle.Gate)
+        {
+            if (handle.Closed) throw new ObjectDisposedException(nameof(Handle));
+            handle.Local.Flush(false);
         }
     }
 
@@ -768,10 +813,26 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                         (int)result.StatusCode + "; local recovery copy retained");
                 }
                 DirectWebDavReadOnlyBackend.Entry? committed = null;
-                // Some WebDAV servers expose the old PROPFIND revision for
-                // a short interval after a successful PUT. Do not report
-                // Excel's Flush as failed on the first stale metadata read.
-                for (int attempt = 0; attempt < 5; attempt++)
+                string? acceptedEtag = result.Headers.ETag?.ToString();
+                if (newFile)
+                {
+                    // Normal file copies require exactly one successful
+                    // conditional PUT. The server's HTTP success is the
+                    // acknowledgement; no HEAD, PROPFIND, or re-GET after
+                    // every newly copied file, regardless of extension.
+                    // ETags are saved when supplied, never fabricated.
+                    committed = new DirectWebDavReadOnlyBackend.Entry(
+                        path, path.Split('/').Last(), false, handle.Local.Length,
+                        DateTime.UtcNow, acceptedEtag);
+                    if (StrongEtag(acceptedEtag))
+                        _read.RecordCommittedNewFile(committed);
+                    else
+                        _read.Invalidate(path);
+                    Console.WriteLine("DIRECT_WEBDAV_PUT_ACCEPTED new=true" +
+                        " strongEtag=" + StrongEtag(acceptedEtag));
+                }
+                // Existing-file overwrites still use the server revision.
+                for (int attempt = 0; committed is null && attempt < 5; attempt++)
                 {
                     _read.Invalidate(path);
                     committed = _read.Stat(path);
@@ -781,7 +842,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     if (attempt < 4) Thread.Sleep(150 * (attempt + 1));
                 }
                 if (committed is null || committed.Size != handle.Local.Length ||
-                    !StrongEtag(committed.ETag))
+                    (!newFile && !StrongEtag(committed.ETag)))
                 {
                     SaveJournal(handle, "verification-needed");
                     Console.Error.WriteLine("DIRECT_WEBDAV_WRITE_VERIFY_METADATA_FAILED" +
@@ -792,14 +853,9 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 }
                 long metadataMs = commitTimer.ElapsedMilliseconds -
                     journalMs - putMs;
-                // For a brand new, non-Office media file, an accepted
-                // conditional PUT followed by a strong server ETag and exact
-                // remote length is sufficient to finish a normal Explorer
-                // copy. A redundant full GET for each 1 MB picture adds a
-                // serialized round trip to every file in a 20+ file batch.
-                // Keep full SHA-256 readback for overwrites and documents.
-                if (handle.Local.Length <= 16 * 1024 * 1024 &&
-                    (!newFile || WriteIntent.IsDocument(path)))
+                // Never re-download a newly copied file just to verify it.
+                // Existing-file edit consistency is a separate workflow.
+                if (handle.Local.Length <= 16 * 1024 * 1024 && !newFile)
                 {
                     using var check = _http.GetAsync(Remote(path),
                         HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
@@ -815,6 +871,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     }
                 }
                 handle.ExpectedEtag = committed.ETag;
+                handle.CommittedEntry = committed;
                 handle.Created = false;
                 handle.Dirty = false;
                 handle.UploadMayHaveCommitted = false;

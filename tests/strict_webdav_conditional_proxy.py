@@ -19,13 +19,30 @@ STAGE_BYTES_PER_SEC = int(os.environ.get(
     "FILEHUB_STRICT_DAV_STAGE_BYTES_PER_SEC", "0"))
 FINALIZE_LATENCY_MS = int(os.environ.get(
     "FILEHUB_STRICT_DAV_FINALIZE_LATENCY_MS", "0"))
+RESPONSE_LATENCY_MS = int(os.environ.get(
+    "FILEHUB_STRICT_DAV_RESPONSE_LATENCY_MS", "0"))
 EMIT_MOVE_ETAG = os.environ.get(
     "FILEHUB_STRICT_DAV_EMIT_MOVE_ETAG") == "1"
 DENY_REAL_STAGE_PUT = os.environ.get(
     "FILEHUB_STRICT_DAV_DENY_REAL_STAGE_PUT") == "1"
 REJECT_DELETE_IF_MATCH = os.environ.get(
     "FILEHUB_STRICT_DAV_REJECT_DELETE_IF_MATCH") == "1"
+STRIP_PUT_ETAG = os.environ.get(
+    "FILEHUB_STRICT_DAV_STRIP_PUT_ETAG") == "1"
 WRITE_LOCK = threading.RLock()
+PER_PATH_WRITE_LOCKS = os.environ.get(
+    "FILEHUB_STRICT_DAV_PER_PATH_LOCKS") == "1"
+PATH_LOCKS = {}
+PATH_LOCKS_GATE = threading.Lock()
+
+
+def write_guard(path):
+    if not PER_PATH_WRITE_LOCKS:
+        return WRITE_LOCK
+    with PATH_LOCKS_GATE:
+        if path not in PATH_LOCKS:
+            PATH_LOCKS[path] = threading.RLock()
+        return PATH_LOCKS[path]
 
 
 def normalized(path):
@@ -73,7 +90,7 @@ class Handler(BaseHTTPRequestHandler):
     def forward(self):
         request_path = normalized(self.path)
         write = self.command in ("PUT", "DELETE", "MOVE", "MKCOL", "COPY")
-        guard = WRITE_LOCK if write else threading.RLock()
+        guard = write_guard(request_path) if write else threading.RLock()
         with guard:
             # Reproduce Synology's refusal of valid conditional DELETE after
             # a recent upload. Explicit Explorer deletion must work without
@@ -159,6 +176,8 @@ class Handler(BaseHTTPRequestHandler):
                 conn.request(self.command, request_path, payload, headers)
                 response = conn.getresponse()
                 result = response.read()
+                if RESPONSE_LATENCY_MS > 0:
+                    time.sleep(RESPONSE_LATENCY_MS / 1000.0)
                 if FINALIZE_LATENCY_MS > 0 and (
                     (self.command == "PROPFIND" and (
                         "progressive-" in request_path or
@@ -193,8 +212,13 @@ class Handler(BaseHTTPRequestHandler):
                 for key, value in response.getheaders():
                     if key.lower() in ("content-length", "connection", "transfer-encoding"):
                         continue
+                    if (self.command == "PUT" and STRIP_PUT_ETAG and
+                            key.lower() == "etag"):
+                        continue
                     self.send_header(key, value)
-                self.send_header("Content-Length", str(len(result)))
+                self.send_header("Content-Length", (
+                    response.getheader("Content-Length", "0")
+                    if self.command == "HEAD" else str(len(result))))
                 self.end_headers()
                 if self.command != "HEAD":
                     self.wfile.write(result)

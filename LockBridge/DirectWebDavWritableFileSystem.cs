@@ -32,9 +32,31 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
     // Explorer may retain read-only metadata handles for icon caching.
     // Only writers, unfinished uploads and held leases block safe unmount.
     internal bool CanShutdown => ActiveWriteHandles == 0 &&
-        (_leases?.CanShutdown ?? true) && !_writes.HasUncommittedRecovery;
+        OutstandingUploads == 0 && (_leases?.CanShutdown ?? true) &&
+        !_writes.HasUncommittedRecovery;
     private readonly ConcurrentDictionary<string, DirectWebDavReadOnlyBackend.Entry> _overlay =
         new(StringComparer.OrdinalIgnoreCase);
+    // A fast Explorer copy is a durable local-cache acknowledgement, not
+    // confirmation of upload. The bounded worker pool tracks NAS completion.
+    private readonly SemaphoreSlim _uploadSlots = new(64, 64);
+    private readonly ConcurrentDictionary<string, PendingCopy> _pendingCopies =
+        new(StringComparer.OrdinalIgnoreCase);
+    private int _outstandingUploads;
+    internal int OutstandingUploads => Volatile.Read(ref _outstandingUploads);
+    private sealed class PendingCopy(WriteDescriptor writer)
+    {
+        internal readonly WriteDescriptor Writer = writer;
+        internal readonly TaskCompletionSource<bool> Completion =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal int DeleteRequested;
+        internal int Started;
+    }
+    private sealed class PendingReadDescriptor(
+        DirectWebDavReadOnlyBackend.Entry entry, FileStream stream)
+    {
+        internal readonly DirectWebDavReadOnlyBackend.Entry Entry = entry;
+        internal readonly FileStream Stream = stream;
+    }
     private readonly ConcurrentDictionary<string, string> _ownVerifiedEtags =
         new(StringComparer.OrdinalIgnoreCase);
     protected override bool PauseExternalChangeNotification =>
@@ -72,6 +94,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         internal DirectWebDavReadOnlyBackend.Entry Entry;
         internal bool Deleted;
         internal bool Closed;
+        internal bool Queued;
         internal string? LeaseKey;
 
         internal WriteDescriptor(DirectWebDavWriteStore.Handle session,
@@ -86,6 +109,95 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         DirectWebDavReadOnlyBackend.Entry entry)
     {
         internal DirectWebDavReadOnlyBackend.Entry Entry = entry;
+    }
+
+    private bool QueueCopy(WriteDescriptor writer)
+    {
+        if (!writer.Session.WriteBehind || writer.Queued) return false;
+        _writes.QueueNewFile(writer.Session);
+        var job = new PendingCopy(writer);
+        if (!_pendingCopies.TryAdd(writer.Entry.Path, job))
+            throw new IOException("A copy of this name is already queued");
+        writer.Queued = true;
+        int pending = Interlocked.Increment(ref _outstandingUploads);
+        Console.WriteLine("DIRECT_WEBDAV_WRITE_BEHIND_LOCAL_QUEUED bytes=" +
+            writer.Session.Local.Length + " pending=" + pending +
+            " remoteCommitted=false");
+        _ = Task.Run(() => ProcessPendingCopy(job));
+        return true;
+    }
+
+    private async Task ProcessPendingCopy(PendingCopy job)
+    {
+        var writer = job.Writer;
+        string key = writer.Entry.Path;
+        bool slot = false;
+        bool successful = false;
+        try
+        {
+            await _uploadSlots.WaitAsync().ConfigureAwait(false);
+            slot = true;
+            Interlocked.Exchange(ref job.Started, 1);
+            if (Volatile.Read(ref job.DeleteRequested) != 0)
+            {
+                _writes.Discard(writer.Session);
+                successful = true;
+            }
+            else
+            {
+                for (int attempt = 1; attempt <= 3; attempt++)
+                {
+                    try
+                    {
+                        _writes.Commit(writer.Session);
+                        if (Volatile.Read(ref job.DeleteRequested) != 0)
+                            _writes.Delete(key, writer.Session.ExpectedEtag,
+                                explicitUserDelete: true);
+                        _writes.Close(writer.Session, commit: false);
+                        successful = true;
+                        break;
+                    }
+                    catch (Exception ex) when (ex is IOException or
+                        HttpRequestException or InvalidOperationException)
+                    {
+                        if (attempt == 3)
+                        {
+                            Console.Error.WriteLine(
+                                "DIRECT_WEBDAV_WRITE_BEHIND_FAILED id=" +
+                                writer.Session.Id + " pendingRecovery=true type=" +
+                                ex.GetType().Name + " attempts=" + attempt);
+                            break;
+                        }
+                        await Task.Delay(attempt * 500).ConfigureAwait(false);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("DIRECT_WEBDAV_WRITE_BEHIND_FAILED id=" +
+                writer.Session.Id + " pendingRecovery=true type=" +
+                ex.GetType().Name);
+        }
+        finally
+        {
+            if (!successful)
+                try { writer.Session.Dispose(); } catch (IOException) { }
+            if (successful)
+            {
+                _pendingCopies.TryRemove(key, out _);
+                _overlay.TryRemove(key, out _);
+            }
+            job.Completion.TrySetResult(successful);
+            if (slot) _uploadSlots.Release();
+            int pending = Interlocked.Decrement(ref _outstandingUploads);
+            Interlocked.Decrement(ref _activeWriteHandles);
+            ReleaseOfficeLease(writer.LeaseKey);
+            writer.LeaseKey = null;
+            Console.WriteLine("DIRECT_WEBDAV_WRITE_BEHIND_STATUS pending=" +
+                pending + " remoteCommitted=" + successful +
+                " recoveryRetained=" + !successful);
+        }
     }
 
     internal DirectWebDavWritableFileSystem(DirectWebDavReadOnlyBackend backend,
@@ -291,7 +403,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             }
             string? lease = AcquireOfficeLease(key);
             DirectWebDavWriteStore.Handle session;
-            try { session = _writes.Begin(key, create: true); }
+            try { session = _writes.Begin(key, create: true, fastCopy: true); }
             catch { ReleaseOfficeLease(lease); throw; }
             if (allocationSize >= 2UL * 1024 * 1024 &&
                 allocationSize <= long.MaxValue)
@@ -329,6 +441,31 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             Console.Error.WriteLine("DIRECT_RW_OPEN name=" + fileName +
                 " access=0x" + grantedAccess.ToString("X") +
                 " options=0x" + createOptions.ToString("X"));
+        string pendingKey = DirectWebDavReadOnlyBackend.Normalize(fileName);
+        if (_pendingCopies.TryGetValue(pendingKey, out var awaiting))
+        {
+            var entry = awaiting.Writer.Entry with {
+                Size = awaiting.Writer.Session.Local.Length
+            };
+            const uint dataWrite = 0x2u | 0x4u | 0x40000000u;
+            fileNode = entry;
+            normalizedName = null!;
+            info = DescribeEntry(entry);
+            if ((grantedAccess & dataWrite) != 0)
+            {
+                fileDesc = null!;
+                return unchecked((int)0xC0000043); // sharing violation
+            }
+            if ((grantedAccess & (0x100u | 0x10000u | 0x10u)) != 0)
+                fileDesc = new AttributeDescriptor(entry);
+            else
+                fileDesc = new PendingReadDescriptor(entry,
+                    new FileStream(awaiting.Writer.Session.LocalPath,
+                        FileMode.Open, FileAccess.Read,
+                        FileShare.ReadWrite | FileShare.Delete));
+            RegisterOpenHandle();
+            return Success;
+        }
         // Explorer F2/Directory.Move opens an EXISTING directory with
         // DELETE (0x10000) and SYNCHRONIZE (0x100000), but createOptions
         // does not necessarily have FILE_DIRECTORY_FILE (0x1) set.
@@ -398,6 +535,26 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
     public override int Read(object fileNode, object fileDesc, IntPtr buffer,
         ulong offset, uint length, out uint transferred)
     {
+        if (fileDesc is PendingReadDescriptor pending)
+        {
+            transferred = 0;
+            if (offset >= (ulong)pending.Stream.Length) return EndOfFile;
+            if (length > 4 * 1024 * 1024) return IoError;
+            try
+            {
+                var bytes = new byte[length];
+                int count;
+                lock (pending.Stream)
+                {
+                    pending.Stream.Seek((long)offset, SeekOrigin.Begin);
+                    count = pending.Stream.Read(bytes, 0, bytes.Length);
+                }
+                if (count != 0) Marshal.Copy(bytes, 0, buffer, count);
+                transferred = (uint)count;
+                return Success;
+            }
+            catch (IOException ex) { return Failure(ex, "ReadPending"); }
+        }
         if (fileDesc is not WriteDescriptor writer)
             return base.Read(fileNode, fileDesc, buffer, offset, length, out transferred);
         transferred = 0;
@@ -466,6 +623,12 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         if (fileDesc is not WriteDescriptor writer) return Success;
         try
         {
+            if (writer.Session.WriteBehind && writer.Session.Created)
+            {
+                _writes.FlushStaging(writer.Session);
+                info = Describe(writer);
+                return Success;
+            }
             _writes.Commit(writer.Session);
             _overlay.TryRemove(writer.Entry.Path, out _);
             // After our own successful conditional PUT, refresh the
@@ -479,6 +642,11 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
 
     public override int GetFileInfo(object fileNode, object fileDesc, out FileInfo info)
     {
+        if (fileDesc is PendingReadDescriptor queued)
+        {
+            info = DescribeEntry(queued.Entry);
+            return Success;
+        }
         if (fileDesc is AttributeDescriptor attribute)
         {
             info = DescribeEntry(attribute.Entry);
@@ -584,6 +752,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             _ => DirectWebDavReadOnlyBackend.Normalize(fileName)
         };
         if (key == "/") return AccessDenied;
+        if (_pendingCopies.ContainsKey(key)) return Success;
         try
         {
             var entry = _backend.StatFresh(key);
@@ -612,6 +781,12 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             _ => DirectWebDavReadOnlyBackend.Normalize(fileName)
         };
         string to = DirectWebDavReadOnlyBackend.Normalize(newFileName);
+        if (_pendingCopies.TryGetValue(from, out var queuedRename))
+        {
+            if (!queuedRename.Completion.Task.Wait(TimeSpan.FromMinutes(3)) ||
+                !queuedRename.Completion.Task.Result)
+                return IoError;
+        }
         string? sourceLease = null;
         string? destinationLease = null;
         try
@@ -679,6 +854,13 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             {
                 try
                 {
+                    if (dirty.Session.WriteBehind && dirty.Session.Created &&
+                        QueueCopy(dirty))
+                    {
+                        if (Environment.GetEnvironmentVariable("FILEHUB_DIRECT_DEBUG") == "1")
+                            Console.Error.WriteLine("DIRECT_RW_CLEANUP_QUEUED path=" + fileName);
+                        return;
+                    }
                     _writes.Commit(dirty.Session);
                     RecordCommittedRevision(dirty);
                     _overlay.TryRemove(dirty.Entry.Path, out _);
@@ -700,6 +882,13 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         };
         try
         {
+            if (_pendingCopies.TryGetValue(key, out var queuedDelete))
+            {
+                Interlocked.Exchange(ref queuedDelete.DeleteRequested, 1);
+                if (!queuedDelete.Completion.Task.Wait(TimeSpan.FromMinutes(3)) ||
+                    !queuedDelete.Completion.Task.Result)
+                    throw new IOException("Queued upload could not be canceled or deleted");
+            }
             if (fileDesc is WriteDescriptor writer && writer.Session.Created)
             {
                 writer.Deleted = true;
@@ -728,6 +917,12 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
     {
         if (Environment.GetEnvironmentVariable("FILEHUB_DIRECT_DEBUG") == "1")
             Console.Error.WriteLine("DIRECT_RW_CLOSE type=" + fileDesc?.GetType().Name);
+        if (fileDesc is PendingReadDescriptor pendingRead)
+        {
+            pendingRead.Stream.Dispose();
+            base.Close(fileNode, pendingRead.Entry);
+            return;
+        }
         if (fileDesc is AttributeDescriptor attribute)
         {
             base.Close(fileNode, attribute.Entry);
@@ -737,6 +932,11 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         {
             base.Close(fileNode, fileDesc);
             return;
+        }
+        if (writer.Queued)
+        {
+            writer.Closed = true;
+            return; // uploader owns session and releases the active lease
         }
         if (writer.Closed) return;
         writer.Closed = true;

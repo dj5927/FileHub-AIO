@@ -242,6 +242,30 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
         return Stat(path);
     }
 
+    // A verified, conditional new-file PUT does not need a separate
+    // PROPFIND just to repeat the file revision which the NAS included in
+    // the PUT response. Reuse the known entry and invalidate the parent list.
+    internal void RecordCommittedNewFile(Entry committed)
+    {
+        string path = Normalize(committed.Path);
+        _missing.TryRemove(path, out _);
+        _metadata[path] = new TimedEntry(committed, DateTime.UtcNow + MetadataTtl);
+        string parent = Normalize(Path.GetDirectoryName(path.Replace('/', '\\')) ?? "/");
+        _directories.TryRemove(parent, out _);
+    }
+
+    // WinFsp's Create-if-absent is ultimately guarded by the server's
+    // already-verified If-None-Match:* PUT precondition. An additional
+    // network PROPFIND for every new photo cannot prevent a race; reject
+    // a known existing file cheaply and let the conditional PUT decide
+    // any concurrent creation that occurs between those calls.
+    internal Entry? KnownEntry(string path)
+    {
+        string p = Normalize(path);
+        return _metadata.TryGetValue(p, out var cached) &&
+               cached.ExpiresUtc > DateTime.UtcNow ? cached.Value : null;
+    }
+
     internal Entry[] List(string folder)
     {
         string p = Normalize(folder);
