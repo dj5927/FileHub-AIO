@@ -1,0 +1,48 @@
+name: Publish verified signed FileHub Android v0.1.115
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[ANDROID_BINARY_HANDOFF_20261123_V115]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download and verify publisher-signed APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --http1.1 --fail --location --retry 7 --retry-all-errors --retry-delay 4 --connect-timeout 15 --max-time 850 'https://floral-willow-remainder-frequent.trycloudflare.com/FileHub-AIO-v0.1.115.apk' -o FileHub-AIO-v0.1.115.apk
+          test "$(stat -c '%s' FileHub-AIO-v0.1.115.apk)" -eq 72639184
+          echo '4B98D025E2BA28B267AC1BDC8B3DB6DF2C1D0E34B59EE644761F9AF44EDA47A9  FileHub-AIO-v0.1.115.apk' | sha256sum -c -
+          unzip -tqq FileHub-AIO-v0.1.115.apk
+          unzip -Z1 FileHub-AIO-v0.1.115.apk | grep -Fx AndroidManifest.xml
+          unzip -Z1 FileHub-AIO-v0.1.115.apk | grep -Fx classes.dex
+          unzip -Z1 FileHub-AIO-v0.1.115.apk | grep -Fx assets/office_hwp/excel-grid.js
+          unzip -Z1 FileHub-AIO-v0.1.115.apk | grep -Fx assets/office_hwp/excel-ooxml.js
+          printf '%s\n' '4B98D025E2BA28B267AC1BDC8B3DB6DF2C1D0E34B59EE644761F9AF44EDA47A9  FileHub-AIO-v0.1.115.apk' > SHA256SUMS
+          echo 'ANDROID_V115_ARCHIVE_VERIFIED'
+      - name: Publish official signed Android OTA release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.1.115 >/dev/null 2>&1; then
+            echo 'Android v0.1.115 release already exists - refuse overwrite'
+            exit 1
+          fi
+          gh release create v0.1.115 FileHub-AIO-v0.1.115.apk SHA256SUMS --target "$GITHUB_SHA" --latest --title 'FileHub AIO Android v0.1.115' --notes 'Publisher-signed Android v0.1.115 (versionCode 116).
+          - Removed obsolete experimental server native WebDAV LOCK option; Excel ~$ owner-file locking remains automatic on edit only.
+          - Excel document ETag fallback via depth-zero PROPFIND; missing safe strong original ETag opens read-only instead of failing document preparation. Owner ETag can be absent: unique marker content is verified and safely removed on close with limited retry.
+          - Compact file title and a small read-only lock icon replace duplicate sticky messages.
+          - Continuous full-sheet virtual scrolling with one finger; two-finger pinch zoom; bottom worksheet tabs.
+          - OOXML solid fills, fonts, borders, alignments, merged ranges, row heights and column widths rendered when present. Edited XLSX cells are patched into the original OOXML ZIP to preserve unrelated styles and sheets.
+          - Android tests: 587 total, 586 passed, 1 skipped, 0 failed. Chromium worksheet render and lossless-save regression passed.
+          - Signed by the same certificate as official Android v0.1.114. APK SHA-256 4B98D025E2BA28B267AC1BDC8B3DB6DF2C1D0E34B59EE644761F9AF44EDA47A9.
+          - Real NAS, RaiDrive and Android cross-device checks remain user field verification. Advanced conditional formatting and chart display may still differ from Microsoft Excel.'
+          gh release view v0.1.115 --json tagName,url,assets
+          echo 'ANDROID_V115_OFFICIAL_RELEASE_SUCCESS'
