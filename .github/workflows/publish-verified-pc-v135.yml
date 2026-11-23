@@ -1,0 +1,65 @@
+name: Publish verified FileHub PC v1.3.135 WebDAV copy/delete fix
+on:
+  push:
+    branches: [pc/windows]
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[PC_V135_BINARY_HANDOFF_20261123]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Download and reassemble publisher-built archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in {00..10}; do
+            curl --http1.1 --fail --location --retry 6 --retry-all-errors --retry-delay 3 --connect-timeout 15 --max-time 330 "https://champagne-moreover-gale-melbourne.trycloudflare.com/pc-v135-part${i}" -o "pc-v135-part${i}"
+            test -s "pc-v135-part${i}"
+            echo "PC135_PART_${i}_READY"
+          done
+          cat pc-v135-part{00..10} > FileHub-AIO-PC-1.3.135-win-x64.zip
+          test "$(stat -c '%s' FileHub-AIO-PC-1.3.135-win-x64.zip)" -eq 169187506
+          echo '66ECEBA4E8518F1633BDD6E9227973AEC90648F3BEEA0F56764FD764ED4F4B6E  FileHub-AIO-PC-1.3.135-win-x64.zip' | sha256sum -c -
+          unzip -tqq FileHub-AIO-PC-1.3.135-win-x64.zip
+          for file in FileHubAIO.exe tools/NASMountLockBridge.exe tools/rclone.exe tools/google-oauth-desktop.json README_PC_V135_KR.txt; do
+            unzip -Z1 FileHub-AIO-PC-1.3.135-win-x64.zip | grep -Fx "$file"
+          done
+          printf '%s\n' '66ECEBA4E8518F1633BDD6E9227973AEC90648F3BEEA0F56764FD764ED4F4B6E  FileHub-AIO-PC-1.3.135-win-x64.zip' > SHA256SUMS
+          echo 'PC135_VERIFIED_ARCHIVE_SUCCESS'
+      - name: Create Windows-only OTA release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view pc-v1.3.135 >/dev/null 2>&1; then
+            echo 'Refusing to overwrite existing PC v1.3.135 release'
+            exit 1
+          fi
+          cat > notes.txt <<'NOTES'
+          FileHub AIO PC v1.3.135 (Windows x64)
+          - Reduced small-file WebDAV WinFsp copy stalls by batching durable staging checkpoints and avoiding redundant full-file GET after a verified new non-Office upload.
+          - Maintains conditional upload, strong ETag and exact size checks, safe overwrite and Office workbook full-byte readback.
+          - Fixed recursive directory deletion by handling WinFsp directory SetBasicInfo required by PowerShell and Explorer.
+          - Safely deletes empty WebDAV collections even when the NAS omits folder ETags; checks that the folder is empty and never permits root DELETE.
+          - Invalidates parent and folder metadata following remote DELETE.
+          - Loopback Windows WinFsp lab: 23 x 1MiB files uploaded in 1.723s, recursive delete completed in 0.923s, no folder reappeared after 2s; 5 additional deletion rounds passed.
+          - Real NAS performance must be checked; this release affects the direct WebDAV adapter only. No Google, SMB, SFTP, FTP or Android modifications.
+          - Windows application and bridge published successfully; independent Windows local WebDAV write-store integration and updater policy checks passed.
+          - Preexisting full UI smoke exit-code 1 reproduced in v1.3.134 as well; not claimed as passing.
+          - SHA256: 66ECEBA4E8518F1633BDD6E9227973AEC90648F3BEEA0F56764FD764ED4F4B6E
+          NOTES
+          gh release create pc-v1.3.135 FileHub-AIO-PC-1.3.135-win-x64.zip SHA256SUMS --target "$GITHUB_SHA" --latest=false --title 'FileHub AIO PC v1.3.135' --notes-file notes.txt
+          gh release view pc-v1.3.135 --json tagName,url,assets > release.json
+          python3 - <<'PY'
+          import json
+          r=json.load(open('release.json',encoding='utf-8'))
+          assert r['tagName']=='pc-v1.3.135'
+          archive=next(a for a in r['assets'] if a['name']=='FileHub-AIO-PC-1.3.135-win-x64.zip')
+          assert archive['size']==169187506
+          assert archive.get('digest','').lower()=='sha256:66eceba4e8518f1633bdd6e9227973aec90648f3beea0f56764fd764ed4f4b6e'
+          print('PC135_OFFICIAL_RELEASE_SUCCESS')
+          PY
