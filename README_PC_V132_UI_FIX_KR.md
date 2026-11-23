@@ -20,3 +20,12 @@
 - --pc-title-footer-policy-test: PC_TITLE_VERSION_AND_UPDATE_FOOTER_POLICY_PASS version=1.3.132.
 - 실제 계정 연결·드라이브 데이터·Windows 네트워크 드라이브 등록은 변경하지 않음.
 - Google Drive/WebDAV 복사 진행률 변경(v1.3.131)과 MYBOX·TeraBox 기능은 유지.
+
+## 배포 인수인계 (2026-11-23)
+
+- 설치 대상 Windows PC 태그: pc-v1.3.132. GitHub 릴리즈 https://github.com/dj5927/FileHub-AIO/releases/tag/pc-v1.3.132
+- FileHub-AIO-PC-1.3.132-win-x64.zip 용량 168,929,804 bytes / SHA-256 1EC46115479F9CF89ADC3104E2B3B594E871E59AB1E586C25F5A3BD3702C44FC.
+- 원본은 검증된 공식 v1.3.131 ZIP을 기준으로 새 v1.3.132 FileHubAIO.exe와 LockBridge 엔진을 교체하고 Google OAuth, MYBOX, TeraBox 등 부가 구성요소는 유지함.
+- 배포본의 --pc-title-footer-policy-test, --pc-updater-policy-test, --google-publisher-oauth-policy-test, --direct-webdav-routing-policy-test, --profile-backup-lab 및 LockBridge --self-test 모두 PASS.
+- 전체 --ui-smoke-test는 이전부터 존재한 프로필 설정창의 'Checkbox clipped: EXCEL...' 레이아웃 검증에서 실패했지만, 새 버전 표시/업데이트 종료 단독 회귀 테스트는 통과함. 이 별도 UI 레이아웃 문제는 이번 작업 범위에서 변경하지 않음.
+- 실제 사용자 PC에서 업데이트 확인 버튼 및 제목 표시 확인이 마지막 현장 검증 단계. 기존 드라이브/계정 정보는 수정하지 않음.
