@@ -35,6 +35,10 @@ therefore must NOT be copied into Android.
    for accepted HTTP 201/204 responses.
 6. Existing WebDAV upload with staging PUT -> server-side MOVE, Android
    progress 99%-until-success, and cancellation semantics remain intact.
+7. Final upload MOVE and rename MOVE now also reject HTTP 207 Multi-Status;
+   a partial server result must not become a false Android 100% success.
+8. Server-side COPY and collection DELETE have a dedicated 180-second
+   response timeout; ordinary WebDAV file requests retain their timeouts.
 
 ## Verification
 
@@ -42,10 +46,13 @@ therefore must NOT be copied into Android.
 - FileTransferEngineWebDavTest: PASS (local MockWebServer)
 - TransferProgressFormatTest: PASS
 - Entire Android debug unit-test suite on the isolated branch after
-  directory COPY addition: **593 tests, 0 failures, 0 errors, 1 skipped**,
-  in 123 test suites, Gradle BUILD SUCCESSFUL.
-- A disposable local WebDAV server accepted file COPY and recursive
-  directory DELETE. Real Synology and Android device speed remain untested.
+  directory COPY, 207 MOVE and server-operation timeout changes:
+  **595 tests, 0 failures, 0 errors, 1 skipped**, 123 suites,
+  Gradle BUILD SUCCESSFUL.
+- A disposable local WebDAV server accepted both file and nested-folder
+  COPY (HTTP 201), followed by recursive collection DELETE (HTTP 204).
+  Nested file existence was confirmed before DELETE and absence verified
+  afterwards. Real Synology and Android-device speed remain untested.
 
 ## Release coordination
 

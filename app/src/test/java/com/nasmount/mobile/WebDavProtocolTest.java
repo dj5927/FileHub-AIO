@@ -197,6 +197,45 @@ public final class WebDavProtocolTest {
         }
     }
 
+    @Test public void finalMoveMultiStatusNeverReportsUploadedFileComplete()
+            throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setResponseCode(201)); // PUT
+            server.enqueue(new MockResponse().setResponseCode(207)
+                    .setBody("<d:multistatus xmlns:d='DAV:'/>")); // partial MOVE
+            server.enqueue(new MockResponse().setResponseCode(204)); // cleanup
+            java.io.IOException failure = assertThrows(
+                    java.io.IOException.class, () -> RemoteProvider.upload(
+                            local(server.getPort()), "/", "incomplete.txt",
+                            new ByteArrayInputStream("data".getBytes(StandardCharsets.UTF_8))));
+            assertTrue(failure.getMessage().contains("MOVE HTTP 207"));
+            RecordedRequest put = server.takeRequest(2, TimeUnit.SECONDS);
+            RecordedRequest move = server.takeRequest(2, TimeUnit.SECONDS);
+            RecordedRequest cleanup = server.takeRequest(2, TimeUnit.SECONDS);
+            assertEquals("PUT", put.getMethod());
+            assertEquals("MOVE", move.getMethod());
+            assertEquals("DELETE", cleanup.getMethod());
+            assertEquals(put.getPath(), cleanup.getPath());
+            assertEquals(3, server.getRequestCount());
+        }
+    }
+
+    @Test public void renameMultiStatusNeverReportsSuccess() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setResponseCode(207)
+                    .setBody("<d:multistatus xmlns:d='DAV:'/>"));
+            java.io.IOException error = assertThrows(java.io.IOException.class,
+                    () -> RemoteProvider.rename(local(server.getPort()),
+                            "/old.txt", "/new.txt", false));
+            assertTrue(error.getMessage().contains("207"));
+            assertEquals("MOVE",
+                    server.takeRequest(2, TimeUnit.SECONDS).getMethod());
+            assertEquals(1, server.getRequestCount());
+        }
+    }
+
     @Test public void streamingSeekUsesHttpRangeAndDoesNotDownloadWholeFile()
             throws Exception {
         try (MockWebServer server = new MockWebServer()) {

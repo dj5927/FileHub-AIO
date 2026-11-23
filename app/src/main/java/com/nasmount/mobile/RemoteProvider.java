@@ -50,6 +50,15 @@ final class RemoteProvider {
                 .build();
     }
 
+    // Server-side COPY of a large folder and recursive collection DELETE
+    // can legitimately take longer than a normal small-file 35s read.
+    // Extend only these long-running server operations, not every request.
+    private static OkHttpClient webDavServerOperationClient(Models.RemoteProfile p) {
+        return webClient(p).newBuilder()
+                .readTimeout(180, TimeUnit.SECONDS)
+                .build();
+    }
+
     static final class UntrustedHostKey extends IOException {
         final String fingerprint;
         UntrustedHostKey(String fingerprint) {
@@ -858,7 +867,7 @@ final class RemoteProvider {
                     Request move = moveBuilder.method("MOVE",
                             RequestBody.create(new byte[0], null)).build();
                     try (Response resp = webClient(p).newCall(move).execute()) {
-                        if (!resp.isSuccessful())
+                        if (!resp.isSuccessful() || resp.code() == 207)
                             throw new IOException("WebDAV MOVE HTTP " + resp.code());
                     }
                 } catch (Exception error) {
@@ -951,7 +960,7 @@ final class RemoteProvider {
                         .method("MOVE", RequestBody.create(new byte[0], null))
                         .build();
                 try (Response response = webClient(p).newCall(move).execute()) {
-                    if (!response.isSuccessful())
+                    if (!response.isSuccessful() || response.code() == 207)
                         throw new IOException("WebDAV 이름 변경 실패 (HTTP " +
                                 response.code() + ")");
                 } return;
@@ -981,7 +990,8 @@ final class RemoteProvider {
                 .method("COPY", RequestBody.create(new byte[0], null));
         if (directory) request.header("Depth", "infinity");
         Request copy = request.build();
-        try (Response response = webClient(p).newCall(copy).execute()) {
+        try (Response response = webDavServerOperationClient(p)
+                .newCall(copy).execute()) {
             if (response.code() == 201 || response.code() == 204)
                 return true;
             if (response.code() == 405 || response.code() == 501)
@@ -1027,7 +1037,7 @@ final class RemoteProvider {
                     else sftp.rm(actual);
                 } return;
             case "WebDAV":
-                try (Response resp = webClient(p).newCall(
+                try (Response resp = webDavServerOperationClient(p).newCall(
                         webRequest(p, path, directory).delete().build()).execute()) {
                     // 207 may contain per-resource errors: never mark the
                     // entire collection as deleted on a partial response.
