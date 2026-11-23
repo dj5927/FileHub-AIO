@@ -18,8 +18,18 @@ jobs:
           java-version: '17'
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
-      - name: Install Android 37 platform
-        run: sdkmanager "platforms;android-37" "build-tools;36.0.0"
+      - name: Install Android 37 platform with current Android CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          android sdk list --all "platforms/*" | tail -45
+          android sdk install platforms/android-37.0 build-tools/36.0.0
+          test -s "$ANDROID_HOME/platforms/android-37.0/android.jar"
+          # API 37 platforms may install under android-37.0 while AGP asks
+          # for android-37. Keep the symlink only on this disposable runner.
+          if [ ! -e "$ANDROID_HOME/platforms/android-37" ]; then
+            ln -s android-37.0 "$ANDROID_HOME/platforms/android-37"
+          fi
       - name: Validate Office editor JavaScript
         run: node --check app/src/main/assets/office_hwp/office-host.js
       - name: Unit tests and installable debug APK
@@ -39,3 +49,4 @@ jobs:
             app/build/test-results/testDebugUnitTest/
             app/build/reports/tests/testDebugUnitTest/
           if-no-files-found: warn
+
