@@ -100,3 +100,9 @@ User reports after Android 0.1.114:
 - Existing Android publisher certificate unchanged; app version 0.1.115 / code 116; Gradle 587 tests (586 passed, 1 skipped, 0 failure), OOXML browser rendering/export tests passed.
 - Temporary signed APK HTTP host, HTTPS tunnel and browser test server stopped after official release publication.
 - Real NAS and device usability still requires end-user confirmation; exact pixel equivalence with proprietary Excel is not asserted.
+
+## OTA parser compatibility repair (2026-11-23)
+
+- Root cause: Android OtaReleasePolicy.parse requires a standalone `versionCode: 116` line in the release body, while v0.1.115 originally shipped release notes with only `(versionCode 116)` inline. This caused the manual update check to report it could not read update information even though the signed APK existed.
+- Fix: Repair v0.1.115 GitHub release notes in place, preserving the already verified signed APK and its checksum; existing installed clients can re-check OTA without upgrading or reinstalling.
+- Triggered via a one-time checksum-guarded GitHub Actions workflow; no Android package change.
