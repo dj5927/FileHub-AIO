@@ -65,3 +65,13 @@
 - Crash journal/ETag conflict and legacy two-FileHub client lock policy tests passed; published application updater, title-version, Google publisher OAuth, WebDAV routing, encrypted backup and bridge self-test passed.
 - Official Windows-only release: https://github.com/dj5927/FileHub-AIO/releases/tag/pc-v1.3.133
 - User NAS + real RaiDrive GUI cross-client final field verification still required; Microsoft owner-file locking is cooperative and not guaranteed atomic without a common server-side protocol.
+
+## Official release confirmed and transfer cleanup (2026-11-23)
+
+- GitHub Actions run 45128541668 succeeded: downloaded all 11 verified ZIP segments, checked full SHA-256, unzip integrity, required Windows executable and OAuth assets, and published the Windows-only release.
+- Official ZIP FileHub-AIO-PC-1.3.133-win-x64.zip: 168,932,839 bytes, SHA-256 F67D257DE161ED24CCECAA8F4E1F55F717881D6D8F80709A60585E3C8D531E72. GitHub asset digest matches independently built local package.
+- Official URL https://github.com/dj5927/FileHub-AIO/releases/tag/pc-v1.3.133
+- New mixed-client owner-file test PASS: independently created WebDAV Excel owner blocks write and permits read, FileHub owner bytes immediately appear on server, no new legacy .nasmount.lock, Korean owner-name variants, manual stale-owner deletion.
+- Microsoft Excel COM WinFsp regression PASS: SaveAs and three saves; existing Korean-path workbook reopen and five saves; external second client owner check while Excel open. Conditional ETag, crash replay, legacy cooperative locks, 24MiB/odd-size copy, Office temp replacement, desktop app update/OAuth/backup checks PASS.
+- Temporary release HTTP server and HTTPS tunnel were stopped after verification. Existing user NAS sessions and unrelated Excel processes unchanged.
+- Final field verification: cross-opening same workbook with RaiDrive and FileHub on real NAS is still required; Excel's owner-file convention is cooperative, not atomic.
