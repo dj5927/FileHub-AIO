@@ -75,3 +75,12 @@ horizontal and vertical scrolling was otherwise acceptable.
 - Headless Chromium browser regressions: pinch 100% -> 180% -> 130% -> 65%, stable DOM, native one-finger touch, source OOXML fill/width/merge, two PNG drawing anchors with scrolling, Korean overflow into only empty cells, default geometry, and byte-identical embedded media after edited-cell save all passed.
 - GitHub release notes MUST contain standalone `versionCode: 117` line; SHA256-guarded publishing workflow checks this before reporting success. Previous staged OTA workflow excludes v0.1.116.
 - Actual Android Samsung touch and user workbook rendering not tested on physical device; device confirmation still necessary. No live NAS files changed.
+
+## Official OTA publication verified (2026-11-23)
+
+- GitHub Actions `45167174349`: success. Both immutable APK verification and official v0.1.116 release publishing steps completed successfully.
+- `releases/latest` returned v0.1.116 with standalone `versionCode: 117`, fixing the prior OTA metadata compatibility issue.
+- Published signed APK: 72,642,748 bytes, SHA-256 `5438C7E979A7360728433E28C046FAAC452677B0D277503958B96874ABDE4BCC`. Exact match against locally built/signed APK and public GitHub asset digest.
+- URL: https://github.com/dj5927/FileHub-AIO/releases/download/v0.1.116/FileHub-AIO-v0.1.116.apk
+- Browser regressions: styled OOXML rendering, animated multitouch zoom with anchored pan, embedded PNG drawings/positions, Korean text spill/wrap, standard row/column heights, original XLSX drawing/media preservation all passed. JVM 587 tests, 0 failures, 1 skipped.
+- Old v0.1.115 Android installations can use regular OTA; no uninstall required due to matching signing certificate. Real Samsung physical multi-touch and user NAS workbook remain untested and should be verified after installation.
