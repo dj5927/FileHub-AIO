@@ -87,7 +87,7 @@ final class SecureStore {
             item.sftpCharset = object.optString("sftpCharset", "UTF-8");
             item.readOnly = object.optBoolean("readOnly", false);
             item.useLockBridge = object.optBoolean("useLockBridge", false);
-            item.useNativeWebDavLocks = object.optBoolean("useNativeWebDavLocks", false);
+            item.useNativeWebDavLocks = false; // legacy imported setting ignored
             item.officeReadTuning = object.optBoolean("officeReadTuning", false);
             item.autoConnect = object.optBoolean("autoConnect", false);
             item.windowsLetter = object.optString("windowsLetter", "");
@@ -181,7 +181,6 @@ final class SecureStore {
             object.put("sftpCharset", item.sftpCharset);
             object.put("readOnly", item.readOnly);
             object.put("useLockBridge", item.useLockBridge);
-            object.put("useNativeWebDavLocks", item.useNativeWebDavLocks);
             object.put("officeReadTuning", item.officeReadTuning);
             object.put("autoConnect", item.autoConnect);
             object.put("windowsLetter", item.windowsLetter);

@@ -11,7 +11,6 @@
   <section id="hwp-shell" hidden><div id="hwp-container"></div></section>
   <section id="spreadsheet-shell" hidden>
     <div id="sheet-toolbar">
-      <select id="sheet-select" aria-label="시트 선택"></select>
       <label for="cell-position">셀 위치</label>
       <input id="cell-position" value="A1" aria-label="편집할 셀 주소">
       <button id="cell-jump">이동</button>
@@ -21,12 +20,8 @@
       <label for="formula-input">셀 내용 / 수식</label>
       <input id="formula-input" autocomplete="off" spellcheck="false">
     </div>
-    <div id="grid-scroll"><table id="cells"></table></div>
-    <div id="pagination">
-      <button id="row-prev">↑ 이전 행</button><span id="window-info">A1</span>
-      <button id="row-next">다음 행 ↓</button>
-      <button id="col-prev">← 이전 열</button><button id="col-next">다음 열 →</button>
-    </div>
+    <div id="grid-scroll" aria-label="한 손가락으로 상하좌우 이동, 두 손가락으로 확대 축소"></div>
+    <div id="sheet-tabs" role="tablist" aria-label="엑셀 시트"></div>
     <p id="sheet-note">시트·셀 값 편집을 지원합니다. 수식은 다시 계산하지 않으며 복잡한 서식, 매크로, 차트는 원본과 달라질 수 있으므로 중요한 문서는 백업하세요.</p>
   </section>
   <section id="word-shell" hidden>

@@ -27,7 +27,8 @@ final class WebDavExcelLease {
     private final String document;
     private final String owner;
     private final String alternate;
-    private final String ownerEtag;
+    private String ownerEtag;
+    private final byte[] ownMarker;
     private String documentEtag;
     private final boolean readOnly;
     private final String reason;
@@ -35,7 +36,8 @@ final class WebDavExcelLease {
 
     private WebDavExcelLease(Models.RemoteProfile p, String document,
                              String owner, String alternate, String ownerEtag,
-                             String documentEtag, boolean readOnly, String reason) {
+                             String documentEtag, boolean readOnly, String reason,
+                             byte[] ownMarker) {
         this.profile = p;
         this.document = document;
         this.owner = owner;
@@ -44,6 +46,7 @@ final class WebDavExcelLease {
         this.documentEtag = documentEtag;
         this.readOnly = readOnly;
         this.reason = reason;
+        this.ownMarker = ownMarker;
     }
 
     static boolean applies(Models.RemoteProfile p, String name) {
@@ -68,7 +71,10 @@ final class WebDavExcelLease {
 
     /** Excel-style 165-byte binary owner metadata; no credentials or PII. */
     static byte[] ownerBytes() {
-        final String user = "FileHub Android";
+        return ownerBytes("FileHub Android");
+    }
+
+    private static byte[] ownerBytes(String user) {
         byte[] name = user.getBytes(StandardCharsets.US_ASCII);
         byte[] result = new byte[165];
         result[0] = 0;
@@ -108,27 +114,34 @@ final class WebDavExcelLease {
         if (occupied || p.readOnly || original.etag == null)
             return new WebDavExcelLease(p, normalized, primary, alternative,
                     null, original.etag, true,
-                    occupied ? BUSY : "NAS가 쓰기 권한 또는 안전한 ETag를 제공하지 않아 읽기 전용입니다.");
+                    occupied ? BUSY : "NAS에서 안전한 쓰기 버전을 확인할 수 없어 읽기 전용으로 표시합니다.",
+                    null);
 
+        // A distinct session marker lets us confirm OUR own binary file by
+        // content even if the NAS omits owner-file ETag headers.
+        byte[] ownBytes = ownerBytes("FileHub Android " +
+                java.util.UUID.randomUUID().toString().substring(0, 8));
         Request create = RemoteProvider.webRequest(p, primary, false)
                 .header("If-None-Match", "*")
-                .put(RequestBody.create(ownerBytes(),
+                .put(RequestBody.create(ownBytes,
                         MediaType.parse("application/octet-stream"))).build();
         try (Response resp = RemoteProvider.webClient(p).newCall(create).execute()) {
             if (resp.code() == 409 || resp.code() == 412 ||
                     resp.code() == 423)
                 return new WebDavExcelLease(p, normalized, primary, alternative,
-                        null, original.etag, true, BUSY);
+                        null, original.etag, true, BUSY, null);
             if (!resp.isSuccessful())
-                throw new IOException("Excel 잠금 파일 생성 실패 (HTTP " + resp.code() + ")");
+                return new WebDavExcelLease(p, normalized, primary, alternative,
+                        null, original.etag, true,
+                        "NAS에서 Excel 잠금 파일 생성을 허용하지 않아 읽기 전용입니다.", null);
         }
         // The owner is now visible on NAS. Refuse edit if the server cannot
         // give us a strong ETag for safe conditional owner cleanup.
-        RemoteProvider.WebDavRemoteVersion written = head(p, primary);
-        String ownedEtag = WebDavWriteGuard.checkedEtag(written.etag);
         WebDavExcelLease lease = new WebDavExcelLease(p, normalized, primary,
-                alternative, ownedEtag, original.etag, false, null);
+                alternative, null, original.etag, false, null, ownBytes);
         try {
+            RemoteProvider.WebDavRemoteVersion written = head(p, primary);
+            lease.ownerEtag = written.etag;
             lease.verifyBeforeSave();
             return lease;
         } catch (Exception failure) {
@@ -141,12 +154,28 @@ final class WebDavExcelLease {
     String reason() { return reason; }
     synchronized String originalEtag() { return documentEtag; }
 
+    /** Validate the exact session's remote marker, even if HEAD has no ETag. */
+    private boolean ownsCurrentMarker() throws Exception {
+        RemoteProvider.WebDavRemoteVersion marker = head(profile, owner);
+        if (!marker.exists) return false;
+        Request read = RemoteProvider.webRequest(profile, owner, false).get().build();
+        try (Response response = RemoteProvider.webClient(profile).newCall(read).execute()) {
+            if (!response.isSuccessful() || response.body() == null ||
+                    response.body().contentLength() > 1024) return false;
+            byte[] content = response.body().bytes();
+            if (!java.util.Arrays.equals(ownMarker, content)) return false;
+            // The unique session bytes, not a NAS-specific ETag calculation,
+            // prove ownership. Always use the latest strong ETag for DELETE.
+            ownerEtag = marker.etag;
+            return true;
+        }
+    }
+
     /** Called after staging too, and before EVERY NAS upload. */
     synchronized void verifyBeforeSave() throws Exception {
         if (readOnly || released)
             throw new IOException(reason != null ? reason : "Excel 편집 잠금이 종료되었습니다.");
-        RemoteProvider.WebDavRemoteVersion marker = head(profile, owner);
-        if (!marker.exists || !ownerEtag.equals(marker.etag))
+        if (!ownsCurrentMarker())
             throw new IOException("Excel 잠금 소유권이 변경되었습니다. 원본을 덮어쓰지 않았습니다.");
         if (alternate != null && head(profile, alternate).exists)
             throw new IOException("다른 기기의 Excel 잠금 파일이 발견되었습니다.");
@@ -167,24 +196,35 @@ final class WebDavExcelLease {
     /** Do not delete another client's owner or a modified owner. */
     synchronized void release() {
         if (released) return;
-        released = true;
-        if (readOnly || ownerEtag == null) return;
-        try {
-            RemoteProvider.WebDavRemoteVersion current = head(profile, owner);
-            if (!current.exists || !ownerEtag.equals(current.etag)) return;
-            Request remove = RemoteProvider.webRequest(profile, owner, false)
-                    .header("If-Match", ownerEtag)
-                    .delete().build();
-            try (Response response = RemoteProvider.webClient(profile)
-                    .newCall(remove).execute()) {
-                if (!response.isSuccessful() && response.code() != 404)
-                    android.util.Log.w("FileHubAIO",
-                            "Excel owner retained; conditional deletion failed");
-            }
-        } catch (Exception error) {
-            // The owner remains on NAS after a failed cleanup. Do not force
-            // delete it or assume that no other editor still owns the file.
-            android.util.Log.w("FileHubAIO", "Excel owner cleanup not confirmed");
+        if (readOnly || ownMarker == null) {
+            released = true;
+            return;
         }
+        for (int attempt = 0; attempt < 3; attempt++) {
+            try {
+                if (!ownsCurrentMarker()) {
+                    // Not ours anymore, or already removed. Never delete it.
+                    released = true;
+                    return;
+                }
+                Request.Builder remove = RemoteProvider.webRequest(profile, owner, false);
+                if (ownerEtag != null) remove.header("If-Match", ownerEtag);
+                try (Response response = RemoteProvider.webClient(profile)
+                        .newCall(remove.delete().build()).execute()) {
+                    if (response.isSuccessful() || response.code() == 404) {
+                        released = true;
+                        return;
+                    }
+                }
+            } catch (Exception ignored) {
+                // One transient NAS failure must not leave a stale owner.
+            }
+            if (attempt < 2) try { Thread.sleep(125L * (attempt + 1)); }
+            catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        android.util.Log.w("FileHubAIO", "Excel owner cleanup not confirmed; manual cleanup may be required");
     }
 }

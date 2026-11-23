@@ -5656,12 +5656,6 @@ public class MainActivity extends Activity {
         readOnly.setTextSize(14);
         readOnly.setChecked(original != null && original.readOnly);
         form.addView(readOnly, Ui.lp(this, -1, 43));
-        CheckBox nativeDavLocks = new CheckBox(this);
-        nativeDavLocks.setText("WebDAV 서버 파일잠금 사용 (지원 시)");
-        nativeDavLocks.setTextSize(14);
-        nativeDavLocks.setChecked(original == null ||
-                original.useNativeWebDavLocks);
-        form.addView(nativeDavLocks, Ui.lp(this, -1, 43));
         ftpTls.setOnItemSelectedListener(
                 new android.widget.AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(android.widget.AdapterView<?> parent,
@@ -5701,7 +5695,6 @@ public class MainActivity extends Activity {
                 sftpCharsetTitle.setVisibility(selected == 2 ? View.VISIBLE : View.GONE);
                 sftpCharset.setVisibility(selected == 2 ? View.VISIBLE : View.GONE);
                 ftpPasv.setVisibility(selected == 1 ? View.VISIBLE : View.GONE);
-                nativeDavLocks.setVisibility(selected == 3 ? View.VISIBLE : View.GONE);
                 boolean ordinary = selected < 4;
                 host.setVisibility(ordinary ? View.VISIBLE : View.GONE);
                 port.setVisibility(ordinary ? View.VISIBLE : View.GONE);
@@ -5817,7 +5810,9 @@ public class MainActivity extends Activity {
                     }
                     p.ftpPreferPasv = ftpPasv.isChecked();
                     p.readOnly = readOnly.isChecked();
-                    p.useNativeWebDavLocks = selected == 3 && nativeDavLocks.isChecked();
+                    // Removed experimental RFC4918 server-lock profile option.
+                    // Excel owner-file handling is automatic for WebDAV.
+                    p.useNativeWebDavLocks = false;
                     store.putRemote(p);
                     dialog.dismiss();
                     showRemoteList();

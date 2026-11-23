@@ -92,7 +92,6 @@ final class SettingsBackup {
         o.put("sftpCharset",p.sftpCharset);
         o.put("readOnly",p.readOnly);
         o.put("useLockBridge",p.useLockBridge);
-        o.put("useNativeWebDavLocks",p.useNativeWebDavLocks);
         o.put("officeReadTuning",p.officeReadTuning);
         o.put("autoConnect",p.autoConnect);
         o.put("windowsLetter",p.windowsLetter);
@@ -131,7 +130,7 @@ final class SettingsBackup {
         p.sftpCharset=o.optString("sftpCharset","UTF-8");
         p.readOnly=o.optBoolean("readOnly",false);
         p.useLockBridge=o.optBoolean("useLockBridge",false);
-        p.useNativeWebDavLocks=o.optBoolean("useNativeWebDavLocks",false);
+        p.useNativeWebDavLocks=false;
         p.officeReadTuning=o.optBoolean("officeReadTuning",false);
         p.autoConnect=o.optBoolean("autoConnect",false);
         p.windowsLetter=o.optString("windowsLetter","");

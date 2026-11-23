@@ -359,7 +359,44 @@ final class RemoteProvider {
         }
     }
 
-    /** 404 = absent, existing files require a strong ETag or native lock. */
+    /**
+     * Some NAS modules omit ETag on HEAD but expose DAV:getetag via
+     * PROPFIND. Never invent an ETag from dates or sizes.
+     */
+    private static String webdavPropfindEtag(Models.RemoteProfile p, String path)
+            throws Exception {
+        String body = "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+                "<d:propfind xmlns:d=\"DAV:\"><d:prop><d:getetag/>" +
+                "</d:prop></d:propfind>";
+        Request request = webRequest(p, path, false).header("Depth", "0")
+                .method("PROPFIND", RequestBody.create(body,
+                        MediaType.parse("application/xml; charset=utf-8"))).build();
+        try (Response response = webClient(p).newCall(request).execute()) {
+            if (response.code() != 207 || response.body() == null) return null;
+            byte[] buffer = response.body().bytes();
+            if (buffer.length > 32768) return null;
+            javax.xml.parsers.DocumentBuilderFactory factory =
+                    javax.xml.parsers.DocumentBuilderFactory.newInstance();
+            factory.setNamespaceAware(true);
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            org.w3c.dom.Document xml = factory.newDocumentBuilder()
+                    .parse(new ByteArrayInputStream(buffer));
+            org.w3c.dom.NodeList tags = xml.getElementsByTagNameNS("DAV:", "getetag");
+            for (int i = 0; i < tags.getLength(); i++) {
+                String value = tags.item(i).getTextContent().trim();
+                try { return WebDavWriteGuard.checkedEtag(value); }
+                catch (IOException weakOrMissing) { /* continue to next propstat */ }
+            }
+        } catch (javax.xml.parsers.ParserConfigurationException |
+                 org.xml.sax.SAXException malformed) {
+            android.util.Log.w("FileHubAIO", "Malformed WebDAV PROPFIND ETag response");
+        }
+        return null;
+    }
+
+    /** 404 = absent. Missing strong ETag is allowed only in read-only probes. */
     static WebDavRemoteVersion webdavDestinationState(
             Models.RemoteProfile p, String path, boolean allowLockInsteadOfEtag)
             throws Exception {
@@ -369,63 +406,13 @@ final class RemoteProvider {
             if (!response.isSuccessful())
                 throw new IOException("WebDAV 변경 충돌 확인 실패 (HTTP " +
                         response.code() + ")");
-            try {
-                return new WebDavRemoteVersion(true,
-                        WebDavWriteGuard.checkedEtag(response.header("ETag")));
-            } catch (IOException missingTag) {
-                if (!allowLockInsteadOfEtag) throw missingTag;
-                return new WebDavRemoteVersion(true, null);
-            }
-        }
-    }
-
-    /**
-     * Exclusive server-side DAV lock for a single upload/replace operation.
-     * Unsupported LOCK (405/501) falls back to ETag compare-and-swap.
-     * A conflicting 423 lock must never be silently ignored.
-     */
-    private static String acquireWebdavWriteLock(Models.RemoteProfile p, String path)
-            throws Exception {
-        String xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
-                "<d:lockinfo xmlns:d=\"DAV:\">" +
-                "<d:lockscope><d:exclusive/></d:lockscope>" +
-                "<d:locktype><d:write/></d:locktype>" +
-                "<d:owner><d:href>FileHub AIO Android</d:href></d:owner>" +
-                "</d:lockinfo>";
-        Request lock = webRequest(p, path, false)
-                .header("Depth", "0")
-                .header("Timeout", "Second-3600")
-                .method("LOCK", RequestBody.create(
-                        xml, MediaType.parse("application/xml; charset=utf-8")))
-                .build();
-        try (Response resp = webClient(p).newCall(lock).execute()) {
-            if (resp.code() == 405 || resp.code() == 501) return null;
-            if (resp.code() == 423)
-                throw new IOException("WebDAV 파일이 다른 사용자에게 잠겨 있습니다.");
-            if (resp.code() != 200 && resp.code() != 201)
-                throw new IOException("WebDAV 서버 파일잠금 실패 (HTTP " +
-                        resp.code() + ")");
-            return WebDavWriteGuard.checkedLockToken(resp.header("Lock-Token"));
-        }
-    }
-
-    private static void releaseWebdavWriteLock(
-            Models.RemoteProfile p, String path, String token) {
-        try {
-            Request unlock = webRequest(p, path, false)
-                    .header("Lock-Token", token)
-                    .method("UNLOCK", null).build();
-            try (Response response = webClient(p).newCall(unlock).execute()) {
-                // A successful MOVE can remove the old destination's lock
-                // as a side effect. 404/409 means it no longer exists.
-                if (!response.isSuccessful() &&
-                        response.code() != 404 && response.code() != 409)
-                    android.util.Log.w("FileHubAIO",
-                            "WebDAV UNLOCK server returned HTTP " + response.code());
-            }
-        } catch (Exception e) {
-            // Do not expose server URL, credentials or lock token in logs.
-            android.util.Log.w("FileHubAIO", "WebDAV UNLOCK request failed");
+            String strong = null;
+            try { strong = WebDavWriteGuard.checkedEtag(response.header("ETag")); }
+            catch (IOException noHeader) { /* PROPFIND may still supply it */ }
+            if (strong == null) strong = webdavPropfindEtag(p, path);
+            if (strong == null && !allowLockInsteadOfEtag)
+                throw new IOException("NAS가 강한 ETag를 제공하지 않아 안전한 덮어쓰기가 불가능합니다.");
+            return new WebDavRemoteVersion(true, strong);
         }
     }
 
@@ -832,20 +819,13 @@ final class RemoteProvider {
                 // upload succeeded. Overwrite=F avoids deleting an existing
                 // destination without user consent.
                 WebDavRemoteVersion before = overwrite ?
-                        webdavDestinationState(p, finalPath,
-                                p.useNativeWebDavLocks) :
+                        webdavDestinationState(p, finalPath, false) :
                         new WebDavRemoteVersion(false, null);
                 if (expectedWebDavEtag != null) {
                     if (!overwrite || !before.exists)
                         throw new IOException("Excel 원본이 삭제되거나 변경되었습니다.");
                     WebDavWriteGuard.sameVersion(expectedWebDavEtag, before.etag);
                 }
-                String lockToken = overwrite && before.exists &&
-                        p.useNativeWebDavLocks ?
-                        acquireWebdavWriteLock(p, finalPath) : null;
-                if (before.exists && before.etag == null && lockToken == null)
-                    throw new IOException("서버가 WebDAV ETag와 파일잠금을 모두 지원하지 " +
-                            "않아 기존 파일을 안전하게 덮어쓸 수 없습니다.");
                 try {
                 RequestBody body = new RequestBody() {
                     @Override public MediaType contentType() {
@@ -863,8 +843,7 @@ final class RemoteProvider {
                             resp.code());
                 }
                     WebDavRemoteVersion latest = overwrite ?
-                            webdavDestinationState(p, finalPath,
-                                    lockToken != null) :
+                            webdavDestinationState(p, finalPath, false) :
                             new WebDavRemoteVersion(false, null);
                     if (overwrite && before.exists != latest.exists)
                         throw new IOException("다른 기기에서 파일을 변경했습니다. 덮어쓰지 않았습니다.");
@@ -873,11 +852,7 @@ final class RemoteProvider {
                     Request.Builder moveBuilder = webRequest(p, tempPath, false)
                             .header("Destination", webUrl(p, finalPath, false).toString())
                             .header("Overwrite", before.exists ? "T" : "F");
-                    if (lockToken != null)
-                        moveBuilder.header("If", WebDavWriteGuard.taggedIfLocked(
-                                webUrl(p, finalPath, false).toString(),
-                                before.etag, lockToken));
-                    else if (before.etag != null)
+                    if (before.etag != null)
                         moveBuilder.header("If", WebDavWriteGuard.taggedIf(
                                 webUrl(p, finalPath, false).toString(), before.etag));
                     Request move = moveBuilder.method("MOVE",
@@ -891,9 +866,6 @@ final class RemoteProvider {
                             .delete().build()).execute()) {}
                     catch (Exception ignored) {}
                     throw error;
-                } finally {
-                    if (lockToken != null)
-                        releaseWebdavWriteLock(p, finalPath, lockToken);
                 }
                 return;
             default: throw new IOException("지원하지 않는 저장소");

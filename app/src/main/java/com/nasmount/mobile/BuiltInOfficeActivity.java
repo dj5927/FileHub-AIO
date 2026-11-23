@@ -53,6 +53,7 @@ public final class BuiltInOfficeActivity extends Activity {
     private File workDirectory, sourceFile;
     private WebView web;
     private TextView status;
+    private TextView documentTitle;
     private volatile boolean busy, loaded, saved;
     private OfficeJsBridge bridge;
 
@@ -88,14 +89,17 @@ public final class BuiltInOfficeActivity extends Activity {
         ViewCompat.requestApplyInsets(root);
 
         TextView title = Ui.text(this, "‹  " + name, 16, Ui.TEXT, true);
+        documentTitle = title;
+        title.setTextSize(14);
         title.setSingleLine(true);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         title.setPadding(Ui.dp(this, 12), 0, 0, 0);
         title.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        root.addView(title, Ui.lp(this, -1, 38));
+        root.addView(title, Ui.lp(this, -1, 32));
         title.setOnClickListener(view -> askClose());
         status = Ui.text(this, "내장 문서 엔진 준비 중...", 12, Ui.MUTED, false);
         status.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), 0);
-        root.addView(status, Ui.lp(this, -1, 22));
+        root.addView(status, Ui.lp(this, -1, 24));
 
         web = new WebView(this);
         root.addView(web, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -185,9 +189,10 @@ public final class BuiltInOfficeActivity extends Activity {
                 runOnUiThread(() -> {
                     if (!isDestroyed() && !isFinishing()) {
                         if (excelLease != null && excelLease.readOnly()) {
-                            status.setVisibility(android.view.View.VISIBLE);
-                            status.setText(excelLease.reason());
-                        } else status.setVisibility(android.view.View.GONE);
+                            documentTitle.setText("‹ " + name + "  🔒");
+                            documentTitle.setContentDescription(name + ", 읽기 전용");
+                        }
+                        status.setVisibility(android.view.View.GONE);
                         web.loadUrl(ASSET_ORIGIN + "/office-host.html");
                     }
                 });

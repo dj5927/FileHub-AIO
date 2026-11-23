@@ -1,0 +1,61 @@
+<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<link rel="stylesheet" href="../../app/src/main/assets/office_hwp/office-host.css"/>
+<script src="../../app/src/main/assets/office_hwp/jszip.min.js"></script>
+<script src="../../app/src/main/assets/office_hwp/xlsx.full.min.js"></script>
+</head><body>
+<div id="result">RUNNING</div>
+<section id="spreadsheet-shell" style="height:80vh;display:flex;flex-direction:column">
+  <div id="grid-scroll" style="height:520px;min-height:520px;overflow:auto"></div>
+  <div id="sheet-tabs" role="tablist"><button class="excel-tab" aria-selected="true">26년 11월</button><button class="excel-tab">신규 가격표</button></div>
+</section>
+<script type="module">
+import {openXlsxArchive,exportXlsxArchive} from '../../app/src/main/assets/office_hwp/excel-ooxml.js';
+import {mountExcelGrid} from '../../app/src/main/assets/office_hwp/excel-grid.js';
+const assert=(good,message)=>{if(!good)throw Error(message);};
+try{
+  const bytes=new Uint8Array(await (await fetch('./fixture-v115.xlsx')).arrayBuffer());
+  const workbook=XLSX.read(bytes,{type:'array',cellStyles:true,cellNF:true});
+  const context=await openXlsxArchive(bytes,workbook.SheetNames);
+  assert(context?.sheetMeta.length===2,'Missing worksheets');
+  assert(context.sheetMeta[0].rowHeights.get(3)>50,'Custom row height lost');
+  assert(context.sheetMeta[0].colWidths.get(1)>170,'Custom column width lost');
+  assert(context.sheetMeta[0].merges.includes('B1:C1'),'Merged cells lost');
+  const style=context.styles[context.sheetMeta[0].cells.get('B4')];
+  assert(style.backgroundColor==='#FFFF00','Yellow source fill missing');
+  assert(style.color==='#FF0000','Red source font missing');
+  assert(style.fontWeight==='700','Source bold missing');
+  assert(style.textAlign==='center','Source alignment missing');
+  let selected='',sheet=0;
+  const scroll=document.getElementById('grid-scroll');
+  const grid=mountExcelGrid(scroll,workbook,context,()=>sheet,'A1',
+    address=>selected=address,false);
+  const cell=document.querySelector('[data-address="B4"]');
+  assert(cell,'Visible B4 cell missing');
+  assert(getComputedStyle(cell).backgroundColor==='rgb(255, 255, 0)',
+    'Computed yellow grid background lost');
+  grid.setZoom(1.5);
+  assert(grid.getZoom()===1.5,'Pinch scale update failed');
+  grid.jump('B301');
+  assert(scroll.scrollTop>1500,'Continuous row scroll failed');
+  grid.load(1);
+  assert(document.querySelector('[data-address="A1"]'),
+    'Second sheet rendering missing');
+  const changes=new Map([['0:B4',{kind:'string',value:'보존된 서식'}]]);
+  const changed=await exportXlsxArchive(context,changes);
+  const zip=await JSZip.loadAsync(changed);
+  const initial=await JSZip.loadAsync(bytes);
+  assert(await zip.file('xl/styles.xml').async('string')===
+    await initial.file('xl/styles.xml').async('string'),
+    'Saving changed source styles.xml');
+  const sourceSheet=context.paths[0];
+  const after=await zip.file(sourceSheet).async('string');
+  assert(after.includes('보존된 서식'),'Edited string missing after ZIP save');
+  assert(after.includes('mergeCell'),'Merged area lost after save');
+  assert(zip.file('xl/worksheets/sheet2.xml'),'Second sheet lost');
+  document.getElementById('result').textContent='PASS: original fill/font/row/column/merges, virtualization, zoom, tabs, lossless save';
+}catch(err){
+  document.getElementById('result').textContent='FAIL: '+err.message;
+  console.error(err);
+}
+</script></body></html>

@@ -1,6 +1,8 @@
 import { createEditor } from '/sdk/index.js';
 import { openWord, exportWord, openSlides, exportSlides } from '/office-word-ppt.js';
 import { installPinch } from '/office-gestures.js';
+import { openXlsxArchive, exportXlsxArchive } from '/excel-ooxml.js';
+import { mountExcelGrid } from '/excel-grid.js';
 
 const bridge = window.NasOfficeBridge;
 const statusEl = document.getElementById('status');
@@ -10,6 +12,7 @@ let rowStart = 0, colStart = 0, selectedAddress = 'A1', dirty = false, busy = fa
 let pendingNotify = false;
 let sheetZoom = 1;
 let toastTimer;
+let gridController, excelArchive, excelChanged = new Map(), pendingExcelExport;
 const WINDOW_ROWS = 55, WINDOW_COLS = 12;
 
 function status(text, error = false) {
@@ -17,7 +20,7 @@ function status(text, error = false) {
   statusEl.classList.toggle('error', error);
   statusEl.classList.add('show');
   clearTimeout(toastTimer);
-  if(!error) toastTimer=setTimeout(()=>statusEl.classList.remove('show'),2300);
+  toastTimer=setTimeout(()=>statusEl.classList.remove('show'),error?3600:2000);
 }
 function setBusy(value) {
   busy = value;
@@ -32,9 +35,7 @@ function selectCell(address) {
   document.getElementById('cell-position').value = selectedAddress;
   document.getElementById('formula-input').value = !cell ? '' :
     cell.f ? '=' + cell.f : cell.v === undefined || cell.v === null ? '' : String(cell.v);
-  document.querySelectorAll('td.selected').forEach(el => el.classList.remove('selected'));
-  const chosen = document.querySelector('td[data-address="' + selectedAddress + '"]');
-  if (chosen) chosen.classList.add('selected');
+  gridController?.select(selectedAddress);
 }
 function applyCellEdit() {
   if(cfg?.readOnly) {
@@ -68,103 +69,84 @@ function applyCellEdit() {
   range.e.r = Math.max(range.e.r, loc.r); range.e.c = Math.max(range.e.c, loc.c);
   sheet['!ref'] = XLSX.utils.encode_range(range);
   dirty = true;
+  if(cfg?.mode==='sheet') {
+    const kind=value===''?'blank':value.startsWith('=')?'formula':
+      /^[-+]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)$/.test(value)?'number':'string';
+    excelChanged.set(activeSheet+':'+address,{kind,value});
+  }
   selectCell(address);
   renderSheet();
   status('셀 변경사항이 있습니다. NAS 원본에 저장하려면 아래 저장 버튼을 누르세요.');
 }
 function renderSheet() {
-  const sheet = getSheet();
-  const table = document.getElementById('cells');
-  table.replaceChildren();
-  const head = document.createElement('tr');
-  const corner = document.createElement('th'); corner.className='row-header';
-  corner.textContent = '#'; head.appendChild(corner);
-  for (let col=colStart; col<colStart+WINDOW_COLS; col++) {
-    const th = document.createElement('th');
-    th.textContent = XLSX.utils.encode_col(col); head.appendChild(th);
-  }
-  table.appendChild(head);
-  for (let row=rowStart; row<rowStart+WINDOW_ROWS; row++) {
-    const tr = document.createElement('tr');
-    const marker = document.createElement('th');
-    marker.className='row-header'; marker.textContent=String(row+1); tr.appendChild(marker);
-    for (let col=colStart; col<colStart+WINDOW_COLS; col++) {
-      const address=toCell(row,col), cell=sheet[address], td=document.createElement('td');
-      td.className='cell' + (cell?.f?' formula':'') +
-        (address===selectedAddress?' selected':'');
-      td.dataset.address=address;
-      td.textContent = !cell ? '' : cell.w ?? (cell.v ?? (cell.f ? '='+cell.f : ''));
-      td.title = address;
-      td.addEventListener('click',()=>selectCell(address));
-      td.addEventListener('dblclick',()=>{
-        selectCell(address);document.getElementById('formula-input').focus();
-      });
-      tr.appendChild(td);
-    }
-    table.appendChild(tr);
-  }
-  document.getElementById('window-info').textContent =
-    toCell(rowStart,colStart)+' ~ '+toCell(rowStart+WINDOW_ROWS-1,colStart+WINDOW_COLS-1);
+  gridController?.refresh();
 }
 function jumpToAddress() {
   const address=document.getElementById('cell-position').value.trim().toUpperCase();
-  if (!/^[A-Z]{1,3}[1-9][0-9]{0,6}$/.test(address)) {
-    status('올바른 셀 주소를 입력해 주세요.',true);return;
-  }
-  let pos;
-  try { pos=XLSX.utils.decode_cell(address); }
-  catch { status('셀 주소 범위를 벗어났습니다.',true);return; }
-  if (pos.r>1048575 || pos.c>16383) { status('엑셀 최대 범위를 벗어났습니다.',true);return; }
-  rowStart = pos.r; colStart = pos.c; selectedAddress=address;
-  renderSheet();selectCell(address);
+  if(!/^[A-Z]{1,3}[1-9]\d{0,6}$/.test(address))return;
+  try {
+    const pos=XLSX.utils.decode_cell(address);
+    if(pos.r>1048575 || pos.c>16383)return;
+    gridController?.jump(address);
+    selectCell(address);
+  } catch(error) { status('셀 주소를 확인해 주세요.',true); }
 }
 function attachSheetEvents() {
-  document.getElementById('cell-save').onclick=applyCellEdit;
-  document.getElementById('cell-jump').onclick=jumpToAddress;
-  document.getElementById('formula-input').addEventListener('keydown',e=>{
-    if(e.key==='Enter'){e.preventDefault();applyCellEdit();}
-  });
-  document.getElementById('sheet-select').onchange=e=>{
-    activeSheet=Number(e.target.value);
-    rowStart=0;colStart=0;selectedAddress='A1';renderSheet();selectCell('A1');
+  const formula=document.getElementById('formula-input');
+  formula.onkeydown=e=>{
+    if(e.key==='Enter'&&!cfg?.readOnly) {
+      e.preventDefault();
+      applyCellEdit();
+      formula.blur();
+    }
   };
-  document.getElementById('row-prev').onclick=()=>{
-    rowStart=Math.max(0,rowStart-WINDOW_ROWS);renderSheet();
-  };
-  document.getElementById('row-next').onclick=()=>{
-    rowStart=inBounds(rowStart+WINDOW_ROWS);renderSheet();
-  };
-  document.getElementById('col-prev').onclick=()=>{
-    colStart=Math.max(0,colStart-WINDOW_COLS);renderSheet();
-  };
-  document.getElementById('col-next').onclick=()=>{
-    colStart=Math.min(16383,colStart+WINDOW_COLS);renderSheet();
+  formula.onchange=()=>{
+    if(!cfg?.readOnly && formula.value!==undefined)applyCellEdit();
   };
 }
+function renderSheetTabs() {
+  const tabs=document.getElementById('sheet-tabs');
+  tabs.replaceChildren();
+  workbook.SheetNames.forEach((name,index)=>{
+    const tab=document.createElement('button');
+    tab.className='excel-tab';
+    tab.type='button';
+    tab.setAttribute('role','tab');
+    tab.setAttribute('aria-selected',String(index===activeSheet));
+    tab.textContent=name;
+    tab.onclick=()=>{
+      if(index===activeSheet)return;
+      activeSheet=index;
+      gridController?.load(index);
+      selectedAddress='A1';
+      selectCell(selectedAddress);
+      for(const child of tabs.children)
+        child.setAttribute('aria-selected',String(child===tab));
+      tab.scrollIntoView({block:'nearest',inline:'nearest'});
+    };
+    tabs.appendChild(tab);
+  });
+}
 async function openSpreadsheet(bytes) {
-  if (!window.XLSX) throw Error('내장 엑셀 파서를 불러오지 못했습니다.');
+  if(!window.XLSX)throw Error('엑셀 문서 분석기를 불러오지 못했습니다.');
   workbook=XLSX.read(bytes,{type:'array',cellStyles:true,cellFormula:true,
     cellDates:true,cellNF:true,bookVBA:true});
-  if (!workbook.SheetNames?.length) throw Error('시트가 없는 문서입니다.');
-  const selector=document.getElementById('sheet-select');
-  for(let i=0;i<workbook.SheetNames.length;i++){
-    const option=document.createElement('option');
-    option.value=String(i);option.textContent=workbook.SheetNames[i];
-    selector.appendChild(option);
-  }
-  document.getElementById('spreadsheet-shell').hidden=false;
-  const grid=document.getElementById('grid-scroll');
-  installPinch(grid,()=>sheetZoom,scale=>{
-    sheetZoom=scale;
-    document.getElementById('cells').style.zoom=String(scale);
-  },0.6,3);
-  document.getElementById('sheet-tool-toggle').hidden=false;
-  document.getElementById('sheet-tool-toggle').onclick=()=>{
-    const expanded=document.getElementById('spreadsheet-shell').classList.toggle('expanded');
-    document.getElementById('sheet-tool-toggle').textContent=expanded?'접기':'⋯';
-  };
-  attachSheetEvents();renderSheet();selectCell('A1');
-  status('내장 스프레드시트 편집기 준비 완료 · '+workbook.SheetNames.length+'개 시트');
+  if(!workbook.SheetNames?.length)throw Error('시트가 없는 문서입니다.');
+  excelChanged.clear();
+  excelArchive=await openXlsxArchive(bytes,workbook.SheetNames);
+  const shell=document.getElementById('spreadsheet-shell');
+  shell.hidden=false;
+  renderSheetTabs();
+  const scroller=document.getElementById('grid-scroll');
+  gridController=mountExcelGrid(scroller,workbook,excelArchive,
+    ()=>activeSheet,selectedAddress,selectCell,!!cfg?.readOnly);
+  installPinch(scroller,()=>gridController.getZoom(),
+    zoom=>gridController.setZoom(zoom),.55,3);
+  document.getElementById('sheet-tool-toggle').hidden=true;
+  attachSheetEvents();
+  selectCell('A1');
+  if(cfg?.readOnly)document.getElementById('bottom-actions').hidden=true;
+  status('시트 '+workbook.SheetNames.length+'개 로딩 완료');
 }
 async function openHwp(bytes) {
   document.getElementById('hwp-shell').hidden=false;
@@ -267,7 +249,12 @@ async function saveDocument() {
       }
       const ext=cfg.name.toLowerCase();
       const type=ext.endsWith('.xls')?'biff8':ext.endsWith('.ods')?'ods':'xlsx';
-      bytes=XLSX.write(workbook,{bookType:type,type:'array',compression:true,cellStyles:true});
+      // XLSX Community writer drops unsupported styles, drawings and layout.
+      // Patch edited cell XML into the source OOXML archive instead.
+      bytes=type==='xlsx'&&excelArchive ?
+        await exportXlsxArchive(excelArchive,excelChanged) :
+        XLSX.write(workbook,{bookType:type,type:'array',compression:true,cellStyles:true});
+      pendingExcelExport=bytes;
     } else throw Error('지원하지 않는 문서 형식입니다.');
     if (!(bytes instanceof Uint8Array)) bytes=new Uint8Array(bytes);
     await persist(bytes);
@@ -279,11 +266,21 @@ async function saveDocument() {
 window.OfficeNativeSaveResult=async function(success,message){
   if(success){
     dirty=false;
+    if(pendingExcelExport && cfg?.mode==='sheet'){
+      try {
+        excelArchive=await openXlsxArchive(pendingExcelExport,workbook.SheetNames);
+        excelChanged.clear();
+      } catch(e){ console.warn('Workbook cache refresh',e); }
+    }
+    pendingExcelExport=null;
     status('원본 파일에 저장했습니다.');
     if(pendingNotify&&hwpEditor) {
       try { await hwpEditor.notifySaved(); } catch(e) { console.warn('notifySaved',e); }
     }
-  } else status('NAS 저장 실패: '+message,true);
+  } else {
+    pendingExcelExport=null; // edited cells remain for retry
+    status('NAS 저장 실패: '+message,true);
+  }
   pendingNotify=false;setBusy(false);
 };
 saveButton.onclick=saveDocument;
@@ -312,7 +309,8 @@ async function start() {
         const field=document.getElementById(id);
         if(field) field.readOnly=true;
       }
-      status('다른 기기에서 편집 중인 Excel 문서입니다. 읽기 전용입니다.',true);
+      // Native title already displays a small lock icon.
+      statusEl.classList.remove('show','error');
     }
   } catch(error) {
     status('문서를 열 수 없습니다: '+(error?.message || error),true);

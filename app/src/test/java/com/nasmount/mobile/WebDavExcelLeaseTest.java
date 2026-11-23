@@ -1,195 +1,228 @@
 package com.nasmount.mobile;
 
+import okhttp3.mockwebserver.Dispatcher;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
 import org.junit.Test;
-import java.io.ByteArrayInputStream;
+
 import java.io.IOException;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.TimeUnit;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.Assert.*;
 
-/** Cross-device Excel owner protocol, without NAS accounts or credentials. */
+/** Realistic WebDAV HEAD + PROPFIND + owner GET/PUT/DELETE simulation. */
 public class WebDavExcelLeaseTest {
-    private static Models.RemoteProfile profile(MockWebServer server) {
-        Models.RemoteProfile p = new Models.RemoteProfile();
-        p.protocol = "WebDAV";
-        p.host = "127.0.0.1";
-        p.port = server.getPort();
-        p.root = "/dav";
-        p.ssl = false;
+    private static final String FILE="/11\uC6D4\uB9E4\uCD9C.xlsx";
+    private static final String PRIMARY="/~$11\uC6D4\uB9E4\uCD9C.xlsx";
+    private static final String ALT="/~$\uC6D4\uB9E4\uCD9C.xlsx";
+
+    private static class NAS extends Dispatcher {
+        final Map<String,byte[]> owners=new ConcurrentHashMap<>();
+        final AtomicInteger putCount=new AtomicInteger(),deleteCount=new AtomicInteger();
+        String documentEtag="\"doc-1\"";
+        boolean exposeDocumentHeadEtag=true;
+        boolean exposeDocumentPropfindEtag=true;
+        boolean exposeOwnerEtag=true;
+
+        private MockResponse notFound(){return new MockResponse().setResponseCode(404);}
+        private MockResponse head(String eTag) {
+            MockResponse answer=new MockResponse().setResponseCode(200);
+            if(eTag!=null)answer.addHeader("ETag",eTag);
+            return answer;
+        }
+        private MockResponse propfind(String eTag) {
+            String value=eTag==null?
+                    "<d:status>HTTP/1.1 404 Not Found</d:status>":
+                    "<d:propstat><d:prop><d:getetag>"+eTag+
+                    "</d:getetag></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>";
+            return new MockResponse().setResponseCode(207)
+                    .addHeader("Content-Type","application/xml")
+                    .setBody("<?xml version=\"1.0\"?><d:multistatus xmlns:d=\"DAV:\">" +
+                            "<d:response>"+value+"</d:response></d:multistatus>");
+        }
+        @Override public MockResponse dispatch(RecordedRequest request) {
+            String path;
+            try {
+                path=URLDecoder.decode(request.getRequestUrl().encodedPath()
+                        .replaceFirst("^/dav",""),"UTF-8");
+            } catch(Exception invalid){return new MockResponse().setResponseCode(400);}
+            String method=request.getMethod();
+            if(path.equals(FILE)){
+                if(method.equals("HEAD"))
+                    return head(exposeDocumentHeadEtag?documentEtag:null);
+                if(method.equals("PROPFIND"))
+                    return propfind(exposeDocumentPropfindEtag?documentEtag:null);
+                return new MockResponse().setResponseCode(405);
+            }
+            if(path.startsWith("/~$")){
+                byte[] bytes=owners.get(path);
+                String ownerTag=exposeOwnerEtag?"\"owner-version\"":null;
+                switch(method){
+                    case "HEAD": return bytes==null?notFound():head(ownerTag);
+                    case "PROPFIND": return bytes==null?notFound():propfind(ownerTag);
+                    case "GET": return bytes==null?notFound():
+                            new MockResponse().setResponseCode(200)
+                                    .setBody(new okio.Buffer().write(bytes));
+                    case "PUT":
+                        if(bytes!=null)return new MockResponse().setResponseCode(412);
+                        if(!"*".equals(request.getHeader("If-None-Match")))
+                            return new MockResponse().setResponseCode(428);
+                        owners.put(path,request.getBody().readByteArray());
+                        putCount.incrementAndGet();
+                        return new MockResponse().setResponseCode(201);
+                    case "DELETE":
+                        if(bytes==null)return notFound();
+                        String expected=request.getHeader("If-Match");
+                        if(expected!=null && !expected.equals(ownerTag))
+                            return new MockResponse().setResponseCode(412);
+                        owners.remove(path);
+                        deleteCount.incrementAndGet();
+                        return new MockResponse().setResponseCode(204);
+                }
+            }
+            return notFound();
+        }
+    }
+
+    private static Models.RemoteProfile profile(MockWebServer server){
+        Models.RemoteProfile p=new Models.RemoteProfile();
+        p.protocol="WebDAV";p.host="127.0.0.1";p.port=server.getPort();
+        p.root="/dav";p.ssl=false;
         return p;
     }
-
-    private static MockResponse head(String etag) {
-        MockResponse response = new MockResponse().setResponseCode(200);
-        return etag == null ? response : response.addHeader("ETag", etag);
-    }
-    private static MockResponse missing() {
-        return new MockResponse().setResponseCode(404);
-    }
-    private static void initialAvailable(MockWebServer server) {
-        server.enqueue(head("\"doc-1\""));   // workbook
-        server.enqueue(missing());           // ~$ full name
-        server.enqueue(missing());           // ~$ replacement name
-        server.enqueue(new MockResponse().setResponseCode(201)); // conditional PUT
-        server.enqueue(head("\"owner-1\"")); // newly created owner
-        server.enqueue(head("\"owner-1\"")); // verify owner
-        server.enqueue(missing());           // alternate owner absent
-        server.enqueue(head("\"doc-1\""));   // unchanged original
-    }
-    private static RecordedRequest take(MockWebServer server) throws Exception {
-        RecordedRequest request = server.takeRequest(2, TimeUnit.SECONDS);
-        assertNotNull("Expected WebDAV request", request);
-        return request;
+    private static MockWebServer server(NAS nas) throws IOException {
+        MockWebServer server=new MockWebServer();
+        server.setDispatcher(nas);server.start();
+        return server;
     }
 
-    @Test public void ownerNamingSupportsKoreanAndBothExcelConventions() {
-        assertArrayEquals(new String[] {"/~$11월매출.xlsx", "/~$월매출.xlsx"},
-                WebDavExcelLease.candidateOwners("/11월매출.xlsx"));
-        assertArrayEquals(new String[] {"/2026/~$report.xlsx",
-                        "/2026/~$port.xlsx"},
-                WebDavExcelLease.candidateOwners("/2026/report.xlsx"));
-        byte[] bytes = WebDavExcelLease.ownerBytes();
-        assertEquals(165, bytes.length);
+    @Test public void koreanOwnerNameFormsAndBinaryLayout() {
+        assertArrayEquals(new String[]{PRIMARY,ALT},
+                WebDavExcelLease.candidateOwners(FILE));
+        assertArrayEquals(new String[]{"/~$book.xlsx","/~$ok.xlsx"},
+                WebDavExcelLease.candidateOwners("/book.xlsx"));
+        byte[] bytes=WebDavExcelLease.ownerBytes();
+        assertEquals(165,bytes.length);
         assertEquals("FileHub Android",
-                new String(bytes, 2, 15, StandardCharsets.US_ASCII));
-        assertEquals(15, bytes[1]);
-        assertEquals(15, bytes[59]);
+                new String(bytes,2,15,StandardCharsets.US_ASCII));
     }
 
-    @Test public void otherPcOwnerMakesAndroidReadOnlyWithoutNewOwner()
-            throws Exception {
-        try (MockWebServer server = new MockWebServer()) {
-            server.start();
-            server.enqueue(head("\"doc-1\""));
-            server.enqueue(head("\"rai-owner\""));
-            WebDavExcelLease opened = WebDavExcelLease.acquire(profile(server),
-                    "/11월매출.xlsx");
-            assertTrue(opened.readOnly());
-            assertTrue(opened.reason().contains("읽기 전용"));
-            assertThrows(IOException.class, opened::verifyBeforeSave);
-            opened.release();
-            assertEquals("HEAD", take(server).getMethod());
-            assertEquals("HEAD", take(server).getMethod());
-            assertEquals(2, server.getRequestCount());
+    @Test public void ownerFromWindowsOrRaiDriveForcesReadOnly() throws Exception {
+        NAS nas=new NAS();
+        nas.owners.put(PRIMARY,new byte[]{9,8,7});
+        try(MockWebServer server=server(nas)){
+            WebDavExcelLease lease=WebDavExcelLease.acquire(profile(server),FILE);
+            assertTrue(lease.readOnly());
+            assertThrows(IOException.class,lease::verifyBeforeSave);
+            lease.release();
+            assertArrayEquals(new byte[]{9,8,7},nas.owners.get(PRIMARY));
+            assertEquals(0,nas.putCount.get());
         }
     }
 
-    @Test public void alternateExcelOwnerAlsoBlocksEdit() throws Exception {
-        try (MockWebServer server = new MockWebServer()) {
-            server.start();
-            server.enqueue(head("\"doc-1\""));
-            server.enqueue(missing());
-            server.enqueue(head("\"other\""));
-            WebDavExcelLease opened = WebDavExcelLease.acquire(profile(server),
-                    "/11월매출.xlsx");
-            assertTrue(opened.readOnly());
-            opened.release();
-            assertEquals(3, server.getRequestCount());
+    @Test public void alternateOwnerFromExcelForcesReadOnly() throws Exception {
+        NAS nas=new NAS();
+        nas.owners.put(ALT,new byte[]{1,2,3});
+        try(MockWebServer server=server(nas)){
+            WebDavExcelLease lease=WebDavExcelLease.acquire(profile(server),FILE);
+            assertTrue(lease.readOnly());lease.release();
+            assertEquals(0,nas.putCount.get());
         }
     }
 
-    @Test public void exclusiveOwnerIsVisibleSavedAndDeletedConditionally()
-            throws Exception {
-        try (MockWebServer server = new MockWebServer()) {
-            server.start();
-            initialAvailable(server);
-            server.enqueue(head("\"owner-1\"")); // second save verification
-            server.enqueue(missing());
-            server.enqueue(head("\"doc-1\""));
-            server.enqueue(head("\"doc-2\""));   // after first completed save
-            server.enqueue(head("\"owner-1\"")); // cleanup
-            server.enqueue(new MockResponse().setResponseCode(204));
-
-            WebDavExcelLease edit = WebDavExcelLease.acquire(profile(server),
-                    "/11월매출.xlsx");
-            assertFalse(edit.readOnly());
-            assertEquals("\"doc-1\"", edit.originalEtag());
-            edit.verifyBeforeSave();
-            edit.saved();
-            assertEquals("\"doc-2\"", edit.originalEtag());
-            edit.release();
-            edit.release(); // idempotent
-
-            assertEquals("HEAD", take(server).getMethod());
-            assertEquals("HEAD", take(server).getMethod());
-            assertEquals("HEAD", take(server).getMethod());
-            RecordedRequest creation = take(server);
-            assertEquals("PUT", creation.getMethod());
-            assertEquals("*", creation.getHeader("If-None-Match"));
-            assertTrue(creation.getPath().contains("~$11"));
-            assertArrayEquals(WebDavExcelLease.ownerBytes(),
-                    creation.getBody().readByteArray());
-            for (int i = 0; i < 9; i++)
-                assertEquals("HEAD", take(server).getMethod());
-            RecordedRequest deletion = take(server);
-            assertEquals("DELETE", deletion.getMethod());
-            assertEquals("\"owner-1\"", deletion.getHeader("If-Match"));
-            assertEquals(14, server.getRequestCount());
+    @Test public void noDocumentEtagOpensReadOnlyWithoutCreatingOwner() throws Exception {
+        NAS nas=new NAS();
+        nas.exposeDocumentHeadEtag=false;
+        nas.exposeDocumentPropfindEtag=false;
+        try(MockWebServer server=server(nas)){
+            WebDavExcelLease lease=WebDavExcelLease.acquire(profile(server),FILE);
+            assertTrue(lease.readOnly());
+            lease.release();
+            assertEquals(0,nas.putCount.get());
+            assertFalse(nas.owners.containsKey(PRIMARY));
         }
     }
 
-    @Test public void modifiedOwnerIsNeverDeleted() throws Exception {
-        try (MockWebServer server = new MockWebServer()) {
-            server.start();
-            initialAvailable(server);
-            server.enqueue(head("\"somebody-else\""));
-            WebDavExcelLease edit = WebDavExcelLease.acquire(profile(server),
-                    "/11월매출.xlsx");
-            edit.release();
-            assertEquals(9, server.getRequestCount());
-            for (int i = 0; i < 9; i++)
-                assertEquals(i == 3 ? "PUT" : "HEAD", take(server).getMethod());
+    @Test public void propfindRecoversMissingHeadEtag() throws Exception {
+        NAS nas=new NAS();
+        nas.exposeDocumentHeadEtag=false;
+        try(MockWebServer server=server(nas)){
+            WebDavExcelLease lease=WebDavExcelLease.acquire(profile(server),FILE);
+            assertFalse(lease.readOnly());
+            assertEquals("\"doc-1\"",lease.originalEtag());
+            lease.release();
+            assertEquals(1,nas.deleteCount.get());
         }
     }
 
-    @Test public void changedWorkbookIsNeverOverwrittenFromStagedCopy()
-            throws Exception {
-        try (MockWebServer server = new MockWebServer()) {
-            server.start();
-            initialAvailable(server);
-            server.enqueue(head("\"owner-1\""));
-            server.enqueue(missing());
-            server.enqueue(head("\"doc-CHANGED\""));
-            server.enqueue(head("\"owner-1\""));
-            server.enqueue(new MockResponse().setResponseCode(204));
-            WebDavExcelLease edit = WebDavExcelLease.acquire(profile(server),
-                    "/11월매출.xlsx");
-            assertThrows(IOException.class, edit::verifyBeforeSave);
-            edit.release();
-            assertEquals(13, server.getRequestCount());
+    @Test public void ownerWithoutHeadEtagStillClosesWithoutOrphan() throws Exception {
+        NAS nas=new NAS();
+        nas.exposeOwnerEtag=false;
+        try(MockWebServer server=server(nas)){
+            WebDavExcelLease lease=WebDavExcelLease.acquire(profile(server),FILE);
+            assertFalse(lease.readOnly());
+            assertEquals(165,nas.owners.get(PRIMARY).length);
+            lease.verifyBeforeSave();
+            lease.release();
+            assertFalse(nas.owners.containsKey(PRIMARY));
+            assertEquals(1,nas.deleteCount.get());
         }
     }
 
-    @Test public void missingEtagNeverStartsWritableEditor() throws Exception {
-        try (MockWebServer server = new MockWebServer()) {
-            server.start();
-            server.enqueue(head(null)); // older NAS cannot supply ETag
-            server.enqueue(missing());
-            server.enqueue(missing());
-            WebDavExcelLease edit = WebDavExcelLease.acquire(profile(server),
-                    "/11월매출.xlsx");
-            assertTrue(edit.readOnly());
-            edit.release();
-            assertEquals(3, server.getRequestCount()); // no PUT or DELETE
+    @Test public void twoAndroidEditorsRespectOwnerAndRelease() throws Exception {
+        NAS nas=new NAS();
+        try(MockWebServer server=server(nas)){
+            Models.RemoteProfile p=profile(server);
+            WebDavExcelLease first=WebDavExcelLease.acquire(p,FILE);
+            WebDavExcelLease second=WebDavExcelLease.acquire(p,FILE);
+            assertFalse(first.readOnly());
+            assertTrue(second.readOnly());
+            first.release();second.release();
+            WebDavExcelLease next=WebDavExcelLease.acquire(p,FILE);
+            assertFalse(next.readOnly());next.release();
+            assertEquals(2,nas.putCount.get());
+            assertEquals(2,nas.deleteCount.get());
         }
     }
 
-    @Test public void staleExpectedEtagFailsBeforeUploadingAnyBytes()
-            throws Exception {
-        try (MockWebServer server = new MockWebServer()) {
-            server.start();
-            server.enqueue(head("\"doc-CHANGED\""));
-            byte[] replacement = "safe".getBytes(StandardCharsets.UTF_8);
-            assertThrows(IOException.class, () -> RemoteProvider.upload(
-                    profile(server), "/", "11월매출.xlsx",
-                    new ByteArrayInputStream(replacement), replacement.length,
-                    true, "\"doc-1\""));
-            RecordedRequest req = take(server);
-            assertEquals("HEAD", req.getMethod());
-            assertEquals(1, server.getRequestCount()); // no temp PUT or MOVE
+    @Test public void changedWorkbookBlocksSaveButCleansOwnMarker() throws Exception {
+        NAS nas=new NAS();
+        try(MockWebServer server=server(nas)){
+            WebDavExcelLease lease=WebDavExcelLease.acquire(profile(server),FILE);
+            assertFalse(lease.readOnly());
+            nas.documentEtag="\"doc-external-change\"";
+            assertThrows(IOException.class,lease::verifyBeforeSave);
+            lease.release();
+            assertFalse(nas.owners.containsKey(PRIMARY));
+        }
+    }
+
+    @Test public void changedOwnerContentIsNeverDeleted() throws Exception {
+        NAS nas=new NAS();
+        try(MockWebServer server=server(nas)){
+            WebDavExcelLease lease=WebDavExcelLease.acquire(profile(server),FILE);
+            nas.owners.put(PRIMARY,new byte[]{4,5,6});
+            assertThrows(IOException.class,lease::verifyBeforeSave);
+            lease.release();
+            assertArrayEquals(new byte[]{4,5,6},nas.owners.get(PRIMARY));
+            assertEquals(0,nas.deleteCount.get());
+        }
+    }
+
+    @Test public void confirmedSaveRefreshesOriginalVersion() throws Exception {
+        NAS nas=new NAS();
+        try(MockWebServer server=server(nas)){
+            WebDavExcelLease lease=WebDavExcelLease.acquire(profile(server),FILE);
+            nas.documentEtag="\"doc2\"";
+            lease.saved();
+            assertEquals("\"doc2\"",lease.originalEtag());
+            lease.verifyBeforeSave();
+            lease.release();
+            assertEquals(1,nas.deleteCount.get());
         }
     }
 }

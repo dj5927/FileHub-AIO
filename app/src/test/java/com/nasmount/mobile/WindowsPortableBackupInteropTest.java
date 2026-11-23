@@ -34,7 +34,7 @@ public class WindowsPortableBackupInteropTest {
         assertEquals("/demo", restored.root);
         assertEquals("not-a-real-credential", restored.password);
         assertTrue(restored.useLockBridge);
-        assertTrue(restored.useNativeWebDavLocks);
+        assertFalse(restored.useNativeWebDavLocks); // obsolete option is ignored
         assertFalse(restored.readOnly);
     }
 
