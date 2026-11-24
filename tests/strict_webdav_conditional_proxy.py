@@ -32,9 +32,15 @@ STRIP_PUT_ETAG = os.environ.get(
     "FILEHUB_STRICT_DAV_STRIP_PUT_ETAG") == "1"
 STRIP_OWNER_ETAGS = os.environ.get(
     "FILEHUB_STRICT_DAV_STRIP_OWNER_ETAGS") == "1"
+STRIP_OFFICE_TEMP_ETAGS = os.environ.get("FILEHUB_STRICT_DAV_STRIP_OFFICE_TEMP_ETAGS") == "1"
 
 def is_owner(path):
     return unquote(urlsplit(path).path).rsplit("/", 1)[-1].startswith("~$")
+
+def strip_etag(path):
+    name = unquote(urlsplit(path).path).rsplit("/", 1)[-1]
+    return (STRIP_OWNER_ETAGS and is_owner(path)) or (STRIP_OFFICE_TEMP_ETAGS and (
+        name.lower().endswith(".tmp") or re.fullmatch(r"[0-9a-fA-F]{8}", name)))
 REJECT_NAMED_NEWFILE_PUT = os.environ.get(
     "FILEHUB_STRICT_DAV_REJECT_NAMED_NEWFILE_PUT", "")
 WRITE_LOCK = threading.RLock()
@@ -184,10 +190,10 @@ class Handler(BaseHTTPRequestHandler):
                 conn.request(self.command, request_path, payload, headers)
                 response = conn.getresponse()
                 result = response.read()
-                if STRIP_OWNER_ETAGS and self.command == "PROPFIND" and response.status == 207:
+                if (STRIP_OWNER_ETAGS or STRIP_OFFICE_TEMP_ETAGS) and self.command == "PROPFIND" and response.status == 207:
                     document = ET.fromstring(result)
                     for item in document.findall("{DAV:}response"):
-                        if is_owner(item.findtext("{DAV:}href", "")):
+                        if strip_etag(item.findtext("{DAV:}href", "")):
                             for prop in item.findall(".//{DAV:}prop"):
                                 for tag in prop.findall("{DAV:}getetag"):
                                     prop.remove(tag)
@@ -231,7 +237,7 @@ class Handler(BaseHTTPRequestHandler):
                     if (self.command == "PUT" and STRIP_PUT_ETAG and
                             key.lower() == "etag"):
                         continue
-                    if (STRIP_OWNER_ETAGS and is_owner(request_path) and
+                    if (strip_etag(request_path) and
                             key.lower() == "etag"):
                         continue
                     self.send_header(key, value)

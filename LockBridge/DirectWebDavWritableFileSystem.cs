@@ -128,7 +128,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
     private bool QueueCopy(WriteDescriptor writer)
     {
         if (!writer.Session.WriteBehind || writer.Queued) return false;
-        _writes.QueueNewFile(writer.Session);
+        if (!_writes.QueueNewFile(writer.Session)) return false;
         var job = new PendingCopy(writer);
         if (!_pendingCopies.TryAdd(writer.Entry.Path, job))
             throw new IOException("A copy of this name is already queued");
@@ -898,7 +898,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
                 _writes.Commit(writer.Session);
                 RecordCommittedRevision(writer);
             }
-            var original = _backend.Stat(from);
+            var original = _backend.StatFresh(from);
             if (original is null) return NotFound;
             if (original.IsDirectory)
                 _writes.RenameDirectory(from, to, original.ETag, replaceIfExists);
@@ -949,13 +949,15 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
                 try
                 {
                     if (dirty.Session.WriteBehind && dirty.Session.Created &&
-                        !ExcelOwnerInterop.IsOwnerFile(dirty.Entry.Path) &&
                         QueueCopy(dirty))
                     {
                         if (Environment.GetEnvironmentVariable("FILEHUB_DIRECT_DEBUG") == "1")
                             Console.Error.WriteLine("DIRECT_RW_CLEANUP_QUEUED path=" + fileName);
                         return;
                     }
+                    // Random writes/truncation are legal file operations,
+                    // not a failed sequential copy. Commit in this callback
+                    // instead of leaving the temp file for delayed Close.
                     _writes.Commit(dirty.Session);
                     RecordCommittedRevision(dirty);
                     _overlay.TryRemove(dirty.Entry.Path, out _);

@@ -43,6 +43,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         // Only an exclusively created owner file, or a reopened owner
         // verified as belonging to this mount, may use the no-ETag path.
         internal byte[]? PublishedOfficeOwner;
+        internal bool RenameOnlyTemporary;
         // A successful progressive MOVE has already refreshed this metadata.
         // Reusing it avoids another slow network PROPFIND from WinFsp Flush.
         internal DirectWebDavReadOnlyBackend.Entry? CommittedEntry;
@@ -94,6 +95,8 @@ internal sealed class DirectWebDavWriteStore : IDisposable
     internal string JournalDirectory => _journalRoot;
     private readonly DirectWebDavReadOnlyBackend _read;
     private readonly ConcurrentDictionary<string, object> _locks =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte[]> _publishedOfficeTemps =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly object _capabilityGate = new();
     private bool _conditionalWritesVerified;
@@ -376,7 +379,10 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     "Excel owner changed since this mount published it");
             current = ownMarker.Entry;
         }
-        if (!create && ownMarker is null && !StrongEtag(current!.ETag))
+        byte[]? tempHash = null;
+        bool renameOnly = !create && ownMarker is null && !StrongEtag(current!.ETag) &&
+            IsOfficeSaveTemporary(name) && _publishedOfficeTemps.TryGetValue(name, out tempHash);
+        if (!create && ownMarker is null && !StrongEtag(current!.ETag) && !renameOnly)
             throw new IOException("Cannot safely edit without strong server ETag");
 
         string id = Guid.NewGuid().ToString("N");
@@ -394,7 +400,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             else if (!create)
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, Remote(name));
-                request.Headers.TryAddWithoutValidation("If-Match", current!.ETag);
+                request.Headers.TryAddWithoutValidation("If-Match", renameOnly ? "*" : current!.ETag);
                 using var response = _http.Send(request,
                     HttpCompletionOption.ResponseHeadersRead);
                 if (!response.IsSuccessStatusCode)
@@ -405,11 +411,16 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 if (stream.Length != current!.Size)
                     throw new IOException("Remote changed during initial edit download");
                 stream.Seek(0, SeekOrigin.Begin);
+                if (renameOnly && !CryptographicOperations.FixedTimeEquals(
+                    SHA256.HashData(stream), tempHash!))
+                    throw new IOException("Office temporary source changed since upload");
+                stream.Seek(0, SeekOrigin.Begin);
             }
             var handle = new Handle(this, id, local, name,
                 current?.ETag, create, stream);
             handle.PublishedOfficeOwner = ownMarker?.Bytes;
-            handle.WriteBehind = fastCopy && create && !ExcelOwnerInterop.IsOwnerFile(name);
+            handle.RenameOnlyTemporary = renameOnly;
+            handle.WriteBehind = fastCopy && create && !RequiresSynchronousSave(name);
             // For fast-copy handles the initial local file is incomplete;
             // a crash here must not replay partial data. Create its
             // resumable journal only when the copy is fully staged.
@@ -429,6 +440,21 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         etag is { Length: > 1 } && etag.StartsWith('"') &&
         etag.EndsWith('"');
 
+    // Office saves a NEW workbook by writing/truncating a random eight-hex
+    // filename, then moving it to the document name. Other Office apps use
+    // .tmp and ~$ names. These are not ordinary sequential Explorer copies.
+    internal static bool IsOfficeSaveTemporary(string path)
+    {
+        string name = Path.GetFileName(path);
+        return name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase) ||
+            (name.Length == 8 && name.All(Uri.IsHexDigit));
+    }
+
+    internal static bool RequiresSynchronousSave(string path) =>
+        WriteIntent.IsDocument(path) || ExcelOwnerInterop.IsOwnerFile(path) ||
+        Path.GetFileName(path).StartsWith("~$", StringComparison.Ordinal) ||
+        IsOfficeSaveTemporary(path);
+
     internal void Write(Handle handle, ulong offset, ReadOnlySpan<byte> data,
         bool append = false)
     {
@@ -437,6 +463,8 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         lock (handle.Gate)
         {
             if (handle.Closed) throw new ObjectDisposedException(nameof(Handle));
+            if (handle.RenameOnlyTemporary && !StrongEtag(handle.ExpectedEtag))
+                throw new IOException("Unversioned Office temporary handle permits rename, not overwrite");
             if (offset > long.MaxValue) throw new IOException("File offset overflow");
             long position = append ? handle.Local.Length : (long)offset;
             handle.Local.Seek(append ? 0 : (long)offset,
@@ -530,6 +558,11 @@ internal sealed class DirectWebDavWriteStore : IDisposable
     {
         lock (handle.Gate)
         {
+            if (handle.RenameOnlyTemporary && !StrongEtag(handle.ExpectedEtag))
+            {
+                if (handle.Local.Length == size) return;
+                throw new IOException("Unversioned Office temporary handle permits rename, not truncate");
+            }
             if (handle.Progressive is not null &&
                 handle.Local.Length != size)
             {
@@ -561,18 +594,19 @@ internal sealed class DirectWebDavWriteStore : IDisposable
     // Copying into the OS cache is NOT a NAS commit. A queued file is
     // written to local staging; the uploader fsyncs it before the PUT.
     // A sudden machine power loss before that background flush can lose it.
-    internal void QueueNewFile(Handle handle)
+    internal bool QueueNewFile(Handle handle)
     {
         lock (handle.Gate)
         {
-            if (handle.Closed || !handle.Created)
-                throw new IOException("Not eligible for asynchronous copy");
-            if (!handle.SequentialWrites ||
+            if (handle.Closed || !handle.Created || !handle.WriteBehind ||
+                RequiresSynchronousSave(handle.RemotePath) ||
+                !handle.SequentialWrites ||
                 handle.ContiguousWritten != handle.Local.Length)
-                throw new IOException("Incomplete local copy cannot be queued");
+                return false;
             SaveJournal(handle, "queued");
             handle.JournalDirtyRecorded = true;
             handle.JournalCheckpointBytes = handle.ContiguousWritten;
+            return true;
         }
     }
 
@@ -996,6 +1030,12 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 handle.Dirty = false;
                 handle.UploadMayHaveCommitted = false;
                 SaveJournal(handle, "committed");
+                if (IsOfficeSaveTemporary(path))
+                {
+                    handle.Local.Seek(0, SeekOrigin.Begin);
+                    _publishedOfficeTemps[path] = SHA256.HashData(handle.Local);
+                    handle.Local.Seek(0, SeekOrigin.Begin);
+                }
                 Console.WriteLine("DIRECT_WEBDAV_COPY_TIMING_MS new=" + newFile +
                     " bytes=" + handle.Local.Length +
                     " journal=" + journalMs +
@@ -1290,17 +1330,39 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         // Never use WebDAV MOVE Overwrite:T. Excel normally performs two
         // new-destination renames; replacing an existing original requires
         // a separately verified lock+conditional-commit transaction.
-        if (!StrongEtag(originalEtag))
+        // A newly written Office temporary file may have no ETag even in
+        // fresh PROPFIND. MOVE Overwrite:F is an atomic create-if-absent;
+        // never relax the revision guard for arbitrary sources or replacing
+        // an existing destination. The random temp must still exist.
+        bool newOfficeDocument = !StrongEtag(originalEtag) &&
+            IsOfficeSaveTemporary(from) && WriteIntent.IsDocument(to) &&
+            _publishedOfficeTemps.ContainsKey(from);
+        if (!StrongEtag(originalEtag) && !newOfficeDocument)
             throw new IOException("Unsafe rename without strong source ETag");
+        if (newOfficeDocument)
+        {
+            RequireVerifiedStageMove(to);
+            if (!_publishedOfficeTemps.TryGetValue(from, out var expected))
+                throw new IOException("Office temporary source is no longer owned");
+            using var source = new HttpRequestMessage(HttpMethod.Get, Remote(from));
+            source.Headers.TryAddWithoutValidation("If-Match", "*");
+            using var content = _http.Send(source, HttpCompletionOption.ResponseHeadersRead);
+            if (!content.IsSuccessStatusCode || !CryptographicOperations.FixedTimeEquals(
+                SHA256.HashData(content.Content.ReadAsStream()), expected))
+                throw new IOException("Office temporary source changed before rename");
+        }
         using var request = new HttpRequestMessage(new HttpMethod("MOVE"), Remote(from));
         request.Headers.TryAddWithoutValidation("Destination", Remote(to).AbsoluteUri);
         request.Headers.TryAddWithoutValidation("Overwrite", "F");
-        request.Headers.TryAddWithoutValidation("If-Match", originalEtag);
+        request.Headers.TryAddWithoutValidation("If-Match", newOfficeDocument ? "*" : originalEtag);
         using var result = _http.Send(request);
         if (result.StatusCode is not (HttpStatusCode.Created or HttpStatusCode.NoContent))
             throw new IOException("Safe WebDAV MOVE failed HTTP " + (int)result.StatusCode);
         _read.Invalidate(from);
         _read.Invalidate(to);
+        _publishedOfficeTemps.TryRemove(from, out _);
+        if (newOfficeDocument)
+            Console.WriteLine("DIRECT_WEBDAV_NEW_DOCUMENT_MOVE_WITHOUT_ETAG_ACCEPTED");
         return result.Headers.ETag?.ToString();
     }
 
@@ -1313,9 +1375,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         string? sourceEtag, bool replaceIfExists)
     {
         RequireVerifiedConditionalWrites();
-        if (!StrongEtag(sourceEtag))
-            throw new IOException("Unsafe rename without strong source ETag");
-        var destination = _read.Stat(to);
+        var destination = _read.StatFresh(to);
         if (destination is null)
         {
             RenameNewDestination(from, to, sourceEtag);
@@ -1323,6 +1383,8 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         }
         if (!replaceIfExists)
             throw new IOException("Destination already exists");
+        if (!StrongEtag(sourceEtag))
+            throw new IOException("Unsafe replacement without strong source ETag");
         if (destination.IsDirectory || !StrongEtag(destination.ETag))
             throw new IOException("Cannot safely replace destination without strong ETag");
 
@@ -1409,6 +1471,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             !(explicitUserDelete && result.StatusCode == HttpStatusCode.NotFound))
             throw new IOException("WebDAV DELETE rejected HTTP " + (int)result.StatusCode);
         _read.Invalidate(path);
+        _publishedOfficeTemps.TryRemove(path, out _);
         if (directory)
         {
             // No stale directory listing can remain after a successful
