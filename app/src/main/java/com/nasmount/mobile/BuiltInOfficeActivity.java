@@ -253,7 +253,7 @@ public final class BuiltInOfficeActivity extends Activity {
         }
         String pathName = route.startsWith("/") ? route.substring(1) : route;
         if (pathName.equals("wasm/rhwp_bg.wasm"))
-            pathName = "assets/rhwp_bg-CsZhyUHZ.wasm";
+            pathName = "assets/rhwp_bg-CjDYAjgF.wasm";
         if (pathName.isEmpty() || pathName.contains(":")) return unavailable();
         String mime = pathName.endsWith(".html") ? "text/html" :
                 pathName.endsWith(".js") ? "application/javascript" :
@@ -262,6 +262,8 @@ public final class BuiltInOfficeActivity extends Activity {
                 pathName.endsWith(".svg") ? "image/svg+xml" :
                 pathName.endsWith(".json") ? "application/json" :
                 pathName.endsWith(".ico") ? "image/x-icon" :
+                pathName.endsWith(".png") ? "image/png" :
+                pathName.endsWith(".woff2") ? "font/woff2" :
                 "application/octet-stream";
         try {
             return new WebResourceResponse(mime,
