@@ -1,4 +1,4 @@
-name: Publish verified FileHub PC v1.3.143 Office MOVE 412 and compact menus
+name: Publish verified FileHub PC v1.3.143 Excel SaveAs and aligned icons
 on:
   push:
     branches: [pc/windows]
@@ -14,11 +14,36 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for i in {00..10}; do
-            curl --http1.1 --fail --location --retry 7 --retry-all-errors --retry-delay 3 --connect-timeout 15 --max-time 330 "https://museum-grass-watching-tutorials.trycloudflare.com/pc-v143-part${i}" -o "pc-v143-part${i}"
-            test -s "pc-v143-part${i}"
-            echo "PC143_PART_${i}_READY"
-          done
+          python3 - <<'PY'
+          import concurrent.futures, pathlib, time, urllib.request
+          base = "https://museum-grass-watching-tutorials.trycloudflare.com/"
+          def part(index):
+              name = f"pc-v143-part{index:02}"
+              total = 16777216 if index < 10 else 1466642
+              with pathlib.Path(name).open("wb") as out:
+                  for start in range(0, total, 1048576):
+                      end = min(total - 1, start + 1048575)
+                      for attempt in range(10):
+                          try:
+                              req = urllib.request.Request(base+name, headers={
+                                  "Range":f"bytes={start}-{end}",
+                                  "Accept-Encoding":"identity"})
+                              with urllib.request.urlopen(req, timeout=30) as r:
+                                  data = r.read()
+                                  if r.status != 206 or r.headers.get("Content-Range") != f"bytes {start}-{end}/{total}" or len(data) != end-start+1:
+                                      raise IOError("wrong range or length")
+                              out.write(data)
+                              break
+                          except Exception as e:
+                              if attempt == 9:
+                                  raise
+                              print(name, start, "retry", attempt+1, type(e).__name__, flush=True)
+                              time.sleep(min(3, attempt+1))
+              assert pathlib.Path(name).stat().st_size == total
+              print(f"PC143_PART_{index:02}_READY", flush=True)
+          with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+              list(pool.map(part, range(11)))
+          PY
           cat pc-v143-part{00..10} > FileHub-AIO-PC-1.3.143-win-x64.zip
           test "$(stat -c '%s' FileHub-AIO-PC-1.3.143-win-x64.zip)" -eq 169238802
           echo '841E4EB2881270EFC524C9635E6DB30E2963285DA7E49FEC94CF29A4607F30AB  FileHub-AIO-PC-1.3.143-win-x64.zip' | sha256sum -c -
