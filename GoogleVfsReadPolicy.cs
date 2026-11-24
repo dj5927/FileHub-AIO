@@ -19,8 +19,6 @@ internal static class GoogleVfsReadPolicy
         args.Add("8Mi");
         args.Add("--vfs-read-chunk-size-limit");
         args.Add("64Mi");
-        args.Add("--vfs-cache-max-age");
-        args.Add("6h");
     }
 
     internal static void SelfTest()
@@ -32,8 +30,7 @@ internal static class GoogleVfsReadPolicy
             "--buffer-size", "4Mi",
             "--vfs-read-ahead", "4Mi",
             "--vfs-read-chunk-size", "8Mi",
-            "--vfs-read-chunk-size-limit", "64Mi",
-            "--vfs-cache-max-age", "6h"
+            "--vfs-read-chunk-size-limit", "64Mi"
         }))
             throw new InvalidOperationException("Google VFS read policy mismatch");
         foreach (string name in new[]

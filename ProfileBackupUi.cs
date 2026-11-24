@@ -131,6 +131,11 @@ internal sealed partial class MainForm
             string originalConfigBackup;
             try
             {
+                // Cache location is machine-local. Never import another
+                // computer's disk path or orphan this computer's write cache.
+                snapshot.Config.CacheParentDirectory = cfg.CacheParentDirectory;
+                snapshot.Config.CacheRetentionMinutes = cfg.CacheRetentionMinutes;
+                snapshot.Config.CacheMaxGiB = cfg.CacheMaxGiB;
                 originalConfigBackup = ProfileBackup.Restore(snapshot,
                     AppStore.IsAutoStartEnabled(), preservedCloud);
                 cfg.Profiles.Clear();

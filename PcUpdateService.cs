@@ -175,6 +175,7 @@ internal static class PcUpdateService
         {
             try { if (File.Exists(partial)) File.Delete(partial); } catch { }
             try { if (Directory.Exists(stage)) Directory.Delete(stage, true); } catch { }
+            try { if (File.Exists(zipPath)) File.Delete(zipPath); } catch { }
             throw;
         }
     }

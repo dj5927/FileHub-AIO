@@ -28,10 +28,18 @@ internal static class OrphanRcloneRecovery
             found.Groups[2].Value.Equals(p.Letter,
                 StringComparison.OrdinalIgnoreCase) &&
             command.Contains("--cache-dir", StringComparison.OrdinalIgnoreCase) &&
-            command.Contains(Path.Combine(AppStore.DirectoryPath, "cache",
-                    p.Id.ToString("N")), StringComparison.OrdinalIgnoreCase) &&
+            (command.Contains(Path.Combine(LocalCachePolicy.DefaultRoot,
+                    p.Id.ToString("N")), StringComparison.OrdinalIgnoreCase) ||
+             MatchesConfiguredCache(command, p)) &&
             command.Contains("--rc-addr 127.0.0.1:",
                 StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool MatchesConfiguredCache(string command, NasProfile p)
+    {
+        try { return command.Contains(LocalCachePolicy.ProfileRoot(p.Id,
+            LocalCachePolicy.Current()), StringComparison.OrdinalIgnoreCase); }
+        catch { return false; }
     }
 
     private static string? OwnedMountedLetter(string command, NasProfile p)

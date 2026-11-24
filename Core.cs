@@ -60,6 +60,9 @@ public sealed class AppConfig
 {
     public bool StartWithWindows { get; set; }
     public bool GoogleStartupDiagnostics { get; set; }
+    public string CacheParentDirectory { get; set; } = "";
+    public int CacheRetentionMinutes { get; set; } = 30;
+    public int CacheMaxGiB { get; set; } = 5;
     public List<NasProfile> Profiles { get; set; } = [];
 }
 
@@ -69,6 +72,7 @@ internal static class AppStore
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "NASMount");
     public static string ConfigPath => Path.Combine(DirectoryPath, "config.json");
     private static readonly object LogSync = new();
+    private static DateTime nextLogPruneUtc = DateTime.MinValue;
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
 
     public static AppConfig Load()
@@ -144,11 +148,51 @@ internal static class AppStore
             {
                 string folder = Path.Combine(DirectoryPath, "logs");
                 Directory.CreateDirectory(folder);
-                File.AppendAllText(Path.Combine(folder, DateTime.Now.ToString("yyyy-MM-dd") + ".log"),
-                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " " + entry + Environment.NewLine);
+                var now = DateTime.UtcNow;
+                if (now >= nextLogPruneUtc)
+                {
+                    PruneLogs();
+                    nextLogPruneUtc = now.AddMinutes(1);
+                }
+                // Separate process/minute files prevent bridge/GUI append
+                // contention and keep retention short even during idle time.
+                string path = Path.Combine(folder,
+                    now.ToString("yyyyMMdd-HHmm", System.Globalization.CultureInfo.InvariantCulture) +
+                    "-" + Environment.ProcessId + ".log");
+                if (!File.Exists(path) || new FileInfo(path).Length < 2 * 1024 * 1024)
+                    File.AppendAllText(path, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") +
+                        " " + entry + Environment.NewLine);
             }
         }
         catch { /* Do not crash due to an unwritable log folder. */ }
+    }
+
+    internal static void PruneLogDirectory(string folder, DateTime utcNow)
+    {
+        if (!Directory.Exists(folder) ||
+            (File.GetAttributes(folder) & FileAttributes.ReparsePoint) != 0) return;
+        foreach (string path in Directory.EnumerateFiles(folder, "*.log"))
+        {
+            try
+            {
+                if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) continue;
+                string name = Path.GetFileName(path);
+                bool legacy = System.Text.RegularExpressions.Regex.IsMatch(name,
+                    @"^\d{4}-\d{2}-\d{2}\.log$");
+                bool rolling = System.Text.RegularExpressions.Regex.IsMatch(name,
+                    @"^\d{8}-\d{4}-\d+\.log$");
+                if (legacy || (rolling && File.GetLastWriteTimeUtc(path) <= utcNow.AddMinutes(-30)))
+                    File.Delete(path);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    internal static void PruneLogs()
+    {
+        try { PruneLogDirectory(Path.Combine(DirectoryPath, "logs"), DateTime.UtcNow); }
+        catch { }
     }
 
     public static bool IsAutoStartEnabled()

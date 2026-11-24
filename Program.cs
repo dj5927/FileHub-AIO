@@ -422,6 +422,8 @@ internal static class Program
                 WinFspUpgradePolicy.PolicyTest();
                 PcUpdateService.FeedPolicyTest();
                 PcUpdateApply.LocalPolicyTest();
+                PcUpdateCleanup.PolicyTest();
+                LocalCachePolicy.PolicyTest();
                 RemoteMount.EmergencyPolicyTestAsync().GetAwaiter().GetResult();
                 MountPresentation.GoogleSessionPolicyTest();
                 DriveLetterAllocator.GoogleLetterPolicyTest();
@@ -1587,9 +1589,9 @@ internal static class Program
                 Application.DoEvents();
                 var buttons = settings.Controls.OfType<ModernButton>().ToArray();
                 string[] expected = ["설정 내보내기", "설정 가져오기", "로그 폴더 열기",
-                    "WinFsp 확인 / 설치", "PC 업데이트 확인", "엔진 · 버전 · README", "닫기"];
+                    "WinFsp 확인 / 설치", "PC 업데이트 확인", "엔진 · 버전 · README", "캐시 관리", "닫기"];
                 if (!buttons.Select(b => b.Text).OrderBy(x => x).SequenceEqual(expected.OrderBy(x => x)) ||
-                    buttons.Count(b => b.Glyph is not null) != 6 ||
+                    buttons.Count(b => b.Glyph is not null) != 7 ||
                     buttons.Any(b => !b.Visible || b.Right > settings.ClientSize.Width ||
                         b.Bottom > settings.ClientSize.Height || b.Top < 0 || b.Left < 0) ||
                     buttons.SelectMany((b, i) => buttons.Skip(i + 1).Select(other =>
@@ -1603,6 +1605,21 @@ internal static class Program
                 image.Save(Path.Combine(dir, "settings-v142.png"));
                 settings.Hide();
                 Console.WriteLine("COMPACT_SETTINGS_AND_ALL_PROTOCOL_MENU_ICONS_PASS");
+                using (var cache = dashboard.CreateCacheSettingsForm())
+                {
+                    cache.Show(dashboard);
+                    Application.DoEvents();
+                    var values = cache.Controls.OfType<NumericUpDown>().ToArray();
+                    if (values.Length != 2 || values[0].Value != 30 || values[1].Value != 5 ||
+                        cache.Controls.Cast<Control>().Any(c =>
+                            c.Right > cache.ClientSize.Width || c.Bottom > cache.ClientSize.Height))
+                        throw new InvalidOperationException("Cache settings default/layout mismatch");
+                    using var shot = new Bitmap(cache.ClientSize.Width, cache.ClientSize.Height);
+                    cache.DrawToBitmap(shot, new Rectangle(Point.Empty, shot.Size));
+                    shot.Save(Path.Combine(dir, "cache-settings-v146.png"));
+                    cache.Hide();
+                    Console.WriteLine("CACHE_SETTINGS_DEFAULTS_AND_LAYOUT_PASS");
+                }
             }
             catch (Exception ex)
             {
@@ -2007,10 +2024,10 @@ internal static class Program
                         throw new InvalidOperationException("Synology settings must be profile-menu only");
                     var expectedSettings = new[] { "설정 내보내기", "설정 가져오기",
                         "로그 폴더 열기", "WinFsp 확인 / 설치", "PC 업데이트 확인",
-                        "엔진 · 버전 · README", "닫기" };
+                        "엔진 · 버전 · README", "캐시 관리", "닫기" };
                     if (!settingsButtons.Select(b => b.Text).OrderBy(x => x)
                         .SequenceEqual(expectedSettings.OrderBy(x => x)) ||
-                        settingsButtons.OfType<ModernButton>().Count(b => b.Glyph is not null) != 6)
+                        settingsButtons.OfType<ModernButton>().Count(b => b.Glyph is not null) != 7)
                         throw new InvalidOperationException("Unexpected settings actions or missing icons");
                     if (settings.AutoScroll || settings.ClientSize.Height > 332)
                         throw new InvalidOperationException("Global settings layout too tall");

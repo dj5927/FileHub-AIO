@@ -49,6 +49,10 @@ internal sealed partial class MainForm : Form
     bool deletingProfile;
     bool startupDependenciesReady;
     bool startupDependencyCheckRunning;
+    bool cacheMaintenanceBusy;
+    bool updateCleanupBusy;
+    bool updateCleanupComplete;
+    DateTime nextCacheSweepUtc;
     public MainForm(bool minimized, AppConfig? previewConfig = null)
     {
         cfg = previewConfig ?? AppStore.Load();
@@ -442,7 +446,7 @@ internal sealed partial class MainForm : Form
 
     async Task ConnectOne(NasProfile p,bool explicitRequest,string? suppliedPassword=null)
     {
-        if (shutdownRequested || deletingProfiles.Contains(p.Id)) return;
+        if (shutdownRequested || cacheMaintenanceBusy || deletingProfiles.Contains(p.Id)) return;
         if (explicitRequest)
             RemoteMount.ClearEmergency(p.Id);
         else if (RemoteMount.EmergencyPending(p.Id))
@@ -1150,7 +1154,7 @@ internal sealed partial class MainForm : Form
     }
     async Task ConnectAll(bool manual)
     {
-        if (shutdownRequested || connectBatchRunning) return;
+        if (shutdownRequested || cacheMaintenanceBusy || connectBatchRunning) return;
         if (!manual && !startupDependenciesReady)
         {
             AppStore.Log("AUTO_CONNECT_WAITING_FOR_STARTUP_DEPENDENCIES");

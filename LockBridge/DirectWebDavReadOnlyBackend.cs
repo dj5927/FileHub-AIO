@@ -29,6 +29,12 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
     private readonly Uri _root;
     private readonly HttpClient _http;
     private readonly string _localCache;
+    private readonly TimeSpan _cacheAge;
+    private readonly long _cacheLimit;
+    private readonly System.Threading.Timer _cacheTimer;
+    private readonly ConcurrentDictionary<string, DateTime> _cacheAccess = new();
+    private int _cachePruning;
+    private int _disposed;
     private readonly ConcurrentDictionary<string, TimedEntry> _metadata =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, TimedDirectory> _directories =
@@ -85,9 +91,15 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Basic",
                     Convert.ToBase64String(Encoding.UTF8.GetBytes(
                         profile.Username + ":" + password)));
-        _localCache = Path.Combine(Path.GetTempPath(),
-            "FileHubDirectWebDavLab_" + Guid.NewGuid().ToString("N"));
+        var cache = profile is null ? new AppConfig() : LocalCachePolicy.Current();
+        _cacheAge = TimeSpan.FromMinutes(LocalCachePolicy.Minutes(cache));
+        _cacheLimit = LocalCachePolicy.GiB(cache) * 1073741824L;
+        _localCache = profile is null
+            ? Path.Combine(Path.GetTempPath(), "FileHubDirectWebDavLab_" + Guid.NewGuid().ToString("N"))
+            : Path.Combine(LocalCachePolicy.Root(cache), "webdav-read", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_localCache);
+        _cacheTimer = new System.Threading.Timer(_ => PruneReadCache(),
+            null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
 
     internal static string Normalize(string path)
@@ -380,13 +392,20 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
         if (cachedContent &&
             entry.Size <= MaxCachedExecutableSize)
         {
-            string local = EnsureExecutable(entry);
-            byte[] output = new byte[count];
-            using var file = new FileStream(local, FileMode.Open,
-                FileAccess.Read, FileShare.Read, 65536, FileOptions.RandomAccess);
-            file.Seek((long)offset, SeekOrigin.Begin);
-            int n = file.Read(output, 0, output.Length);
-            return n == output.Length ? output : output[..n];
+            string id = CacheId(entry);
+            // Hold the same per-item gate across download AND read. The
+            // expiry task can never evict a file while this read is active.
+            lock (_fileGates.GetOrAdd(id, _ => new object()))
+            {
+                string local = EnsureExecutable(entry, id);
+                byte[] output = new byte[count];
+                using var file = new FileStream(local, FileMode.Open,
+                    FileAccess.Read, FileShare.Read, 65536, FileOptions.RandomAccess);
+                file.Seek((long)offset, SeekOrigin.Begin);
+                int n = file.Read(output, 0, output.Length);
+                _cacheAccess[id] = DateTime.UtcNow;
+                return n == output.Length ? output : output[..n];
+            }
         }
         using var request = new HttpRequestMessage(HttpMethod.Get, RemoteUrl(entry.Path));
         AddStrongEtagPrecondition(request, entry);
@@ -419,11 +438,12 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
         return read == count ? buffer : buffer[..read];
     }
 
-    private string EnsureExecutable(Entry entry)
-    {
-        string id = Convert.ToHexString(SHA256.HashData(
+    private static string CacheId(Entry entry) => Convert.ToHexString(SHA256.HashData(
             Encoding.UTF8.GetBytes(entry.Path.ToUpperInvariant() + "|" +
                 entry.Size + "|" + entry.ModifiedUtc.Ticks + "|" + entry.ETag)));
+
+    private string EnsureExecutable(Entry entry, string id)
+    {
         if (_cachedExecutables.TryGetValue(id, out var ready) && File.Exists(ready))
             return ready;
         lock (_fileGates.GetOrAdd(id, _ => new object()))
@@ -447,10 +467,51 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
                     throw new IOException("Executable changed during download");
                 File.Move(stage, target, true);
                 _cachedExecutables[id] = target;
+                _cacheAccess[id] = DateTime.UtcNow;
                 return target;
             }
             finally { try { File.Delete(stage); } catch (IOException) { } }
         }
+    }
+
+    private void PruneReadCache(DateTime? testNow = null)
+    {
+        if (Volatile.Read(ref _disposed) != 0 ||
+            Interlocked.Exchange(ref _cachePruning, 1) != 0) return;
+        try
+        {
+            var now = testNow ?? DateTime.UtcNow;
+            var items = _cachedExecutables.ToArray().Select(kv =>
+            {
+                long size = 0;
+                try { size = new FileInfo(kv.Value).Length; } catch { }
+                return (Id: kv.Key, Path: kv.Value, Size: size,
+                    Access: _cacheAccess.GetValueOrDefault(kv.Key, now));
+            }).OrderBy(x => x.Access).ToArray();
+            long total = items.Sum(x => x.Size);
+            foreach (var item in items)
+            {
+                if (total <= _cacheLimit && now - item.Access < _cacheAge) continue;
+                object gate = _fileGates.GetOrAdd(item.Id, _ => new object());
+                if (!Monitor.TryEnter(gate)) continue;
+                try
+                {
+                    if (!_cachedExecutables.TryGetValue(item.Id, out var current) ||
+                        current != item.Path ||
+                        _cacheAccess.GetValueOrDefault(item.Id, now) > item.Access) continue;
+                    if (!LocalCachePolicy.PlainPath(current)) continue;
+                    File.Delete(current);
+                    _cachedExecutables.TryRemove(item.Id, out _);
+                    _cacheAccess.TryRemove(item.Id, out _);
+                    total -= item.Size;
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+                finally { Monitor.Exit(gate); }
+            }
+        }
+        catch { /* The read cache is disposable, never the write journal. */ }
+        finally { Interlocked.Exchange(ref _cachePruning, 0); }
     }
 
     private static void AddStrongEtagPrecondition(HttpRequestMessage request,
@@ -465,6 +526,10 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        using var drained = new ManualResetEvent(false);
+        _cacheTimer.Dispose(drained);
+        drained.WaitOne();
         _http.Dispose();
         try { Directory.Delete(_localCache, true); }
         catch (IOException) { }
@@ -473,6 +538,21 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
 
     internal static void PolicyTest()
     {
+        using (var cache = new DirectWebDavReadOnlyBackend(new Uri("http://127.0.0.1:9/")))
+        {
+            var now = DateTime.UtcNow;
+            string expired = Path.Combine(cache._localCache, "expired.data");
+            string fresh = Path.Combine(cache._localCache, "fresh.data");
+            File.WriteAllText(expired, "OLD"); File.WriteAllText(fresh, "NEW");
+            cache._cachedExecutables["expired"] = expired;
+            cache._cachedExecutables["fresh"] = fresh;
+            cache._cacheAccess["expired"] = now.AddMinutes(-31);
+            cache._cacheAccess["fresh"] = now.AddMinutes(-1);
+            cache.PruneReadCache(now);
+            if (File.Exists(expired) || !File.Exists(fresh))
+                throw new IOException("Native read-cache expiry mismatch");
+            Console.WriteLine("DIRECT_WEBDAV_READ_CACHE_30_MINUTE_EXPIRY_PASS");
+        }
         if (Normalize(@"\apps\Downloader.EXE") != "/apps/Downloader.EXE" ||
             Normalize("/") != "/")
             throw new InvalidOperationException("Direct WebDAV path translation failed");

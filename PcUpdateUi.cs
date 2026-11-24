@@ -207,6 +207,12 @@ internal sealed partial class MainForm
                 checkingPcUpdate = false;
                 await ExitSafely(staged);
             }
+            else
+            {
+                // A verified but declined update is not needed on disk.
+                LocalCachePolicy.DeleteTree(Path.Combine(PcUpdateService.UpdateRoot,
+                    staged.Release.Tag));
+            }
         }
         catch (OperationCanceledException)
         {

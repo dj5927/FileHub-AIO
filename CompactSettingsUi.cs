@@ -101,6 +101,15 @@ internal sealed partial class MainForm
         }, width: 244);
         components.AccessibleName = "사용 엔진, 라이브러리 및 확장 백엔드 버전 README";
 
+        var cache = (ModernButton)ModernTheme.Button("캐시 관리", 243, () =>
+        {
+            using var detail = CreateCacheSettingsForm();
+            detail.ShowDialog(this);
+        }, height: 32);
+        cache.Glyph = "folder";
+        cache.SetBounds(28, 297, 243, 32);
+        window.Controls.Add(cache);
+
         var close = (ModernButton)ModernTheme.Button("닫기", 110,
             () => { window.DialogResult = DialogResult.OK; window.Close(); },
             accent: true, height: 34);

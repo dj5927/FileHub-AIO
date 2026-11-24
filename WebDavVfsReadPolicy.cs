@@ -19,7 +19,6 @@ internal static class WebDavVfsReadPolicy
         args.Add("--vfs-read-ahead"); args.Add("8Mi");
         args.Add("--vfs-read-chunk-size"); args.Add("8Mi");
         args.Add("--vfs-read-chunk-size-limit"); args.Add("32Mi");
-        args.Add("--vfs-cache-max-age"); args.Add("6h");
     }
 
     internal static void PolicyTest()
@@ -27,8 +26,7 @@ internal static class WebDavVfsReadPolicy
         var expected = new[] {
             "--buffer-size", "8Mi", "--vfs-read-ahead", "8Mi",
             "--vfs-read-chunk-size", "8Mi",
-            "--vfs-read-chunk-size-limit", "32Mi",
-            "--vfs-cache-max-age", "6h"
+            "--vfs-read-chunk-size-limit", "32Mi"
         };
         var bridge = new NasProfile { Protocol = "WebDAV", UseLockBridge = true };
         var args = new List<string>();

@@ -1,6 +1,6 @@
-# FileHub AIO PC v1.3.145 — 현재 포함 엔진·라이브러리 (2026-11-24)
+# FileHub AIO PC v1.3.146 — 현재 포함 엔진·라이브러리 (2026-11-25)
 
-이 표가 현재 v1.3.145 배포본 기준입니다. 아래의 NAS Mount v1.3.78
+이 표가 현재 v1.3.146 배포본 기준입니다. 아래의 NAS Mount v1.3.78
 및 후속 기록은 변경 이력을 보존한 것이며 최신 배포 구성 표가 아닙니다.
 
 | 종류 | 배포/빌드 버전 | 상태 |
@@ -15,7 +15,7 @@
 | FluentFTP | 55.1.0 | 공식 최신 유지 |
 | Microsoft .NET | net10.0-windows | 10.0.15 자체 포함 런타임 (고정) |
 | GitHub Actions | checkout v7 / setup-dotnet v6 | 새 빌드 Action 버전 |
-| NASMountLockBridge | 1.3.144 | 이전 정식판과 동일한 검증된 바이너리 유지 (OAuth만 변경) |
+| NASMountLockBridge | 1.3.146 | 캐시 보존 시간 및 용량 관리, 로그 순환 저장 |
 
 NuGet 버전은 루트의 Directory.Packages.props로 중앙 관리합니다.
 Dependabot은 매주 PC 전용 의존성 업데이트 PR/커밋을 자동으로 생성합니다.

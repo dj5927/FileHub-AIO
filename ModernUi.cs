@@ -554,6 +554,9 @@ internal sealed partial class MainForm
         };
         timer.Tick += async (_, _) =>
         {
+            AppStore.PruneLogs();
+            _ = RunUpdateCleanupAsync();
+            await RunInitialCacheCleanupAsync();
             // Auto connect cannot race local engine initialization. Failed
             // preflight is retried on timer, without touching remote drives.
             if (!startupDependenciesReady) await PrepareStartupEnginesAsync();
@@ -574,6 +577,8 @@ internal sealed partial class MainForm
         {
             if (Environment.GetEnvironmentVariable("NASMOUNT_UI_SMOKE") == "1") return;
             if (minimized) { Hide(); ShowInTaskbar = false; }
+            _ = RunUpdateCleanupAsync();
+            await RunInitialCacheCleanupAsync();
             // Start the GitHub PC version check immediately; slow NAS mounts
             // must not delay the bottom-right update notification.
             _ = CheckStartupPcUpdateAsync();

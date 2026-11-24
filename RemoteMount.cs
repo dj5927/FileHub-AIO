@@ -1811,7 +1811,9 @@ internal static partial class RemoteMount
                 AppStore.Log("GOOGLE_VFS_METADATA_POLICY dirCache=30m " +
                     "changePoll=1m writeBack=5s pacer=100ms_burst8");
             args.Add("--cache-dir");
-            args.Add(Path.Combine(AppStore.DirectoryPath, "cache", p.Id.ToString("N")));
+            var localCache = LocalCachePolicy.Current();
+            args.Add(LocalCachePolicy.ProfileRoot(p.Id, localCache));
+            LocalCachePolicy.AppendArgs(args, localCache);
             if (fastRead)
             {
                 // Documented VFS behavior: in 'writes' mode, files opened for
