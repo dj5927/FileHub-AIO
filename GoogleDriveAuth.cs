@@ -409,7 +409,7 @@ internal sealed class GoogleDriveLoginDialog : Form
 
         var hint = ModernTheme.Label(
             "Google 계정 연결을 누르면 Chrome에서 계정을 선택하고" +
-            "\nFileHub AIO의 Google Drive 접근을 승인합니다.",
+            "\n계정 이메일을 확인한 뒤 Google Drive 접근 권한을 선택합니다.",
             10f, false);
         hint.SetBounds(25, 72, 470, 62);
         Controls.Add(hint);
@@ -560,7 +560,9 @@ internal sealed class GoogleDriveLoginDialog : Form
         }
         catch (GoogleDirectBrowserAuth.AuthorizationException ex)
         {
-            state.Text = "Google 인증을 완료할 수 없습니다.\n오류: " + ex.ErrorCode;
+            state.Text = ex.ErrorCode == "drive_scope_not_granted"
+                ? "Drive 접근 권한 미선택 · 연결하지 않았습니다."
+                : "Google 인증을 완료할 수 없습니다.\n오류: " + ex.ErrorCode;
             AppStore.Log("GOOGLE_BROWSER_AUTH_REJECTED code=" + ex.ErrorCode);
             MessageBox.Show(this, ex.Message,
                 "Google Drive 인증 오류", MessageBoxButtons.OK,

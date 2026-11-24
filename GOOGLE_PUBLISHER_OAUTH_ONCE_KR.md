@@ -9,7 +9,10 @@
 
 Google Drive 전체를 Windows 네트워크 드라이브처럼 읽고 쓰려면
 `https://www.googleapis.com/auth/drive` 범위의 Google OAuth 동의가
-필요합니다. 로그인 화면은 Google이 제공하지만, **어느 앱이 접근 권한을
+필요합니다. v1.3.145부터는 승인 계정 이메일 확인에
+`https://www.googleapis.com/auth/userinfo.email`도 요청합니다.
+Google Cloud 데이터 액세스와 심사 영상은 실제 요청 범위에 맞춰야 합니다.
+로그인 화면은 Google이 제공하지만, **어느 앱이 접근 권한을
 요청하는지** 지정하는 OAuth Desktop Client ID는 배포사가 등록해야
 합니다. OpenList 공개 토큰 페이지는 FileHub PC의 자동 localhost 콜백을
 지원하지 않으며, RaiDrive 비공개 앱 자격증명을 사용할 수 없습니다.

@@ -1,0 +1,121 @@
+name: Publish verified FileHub PC v1.3.145 Google consent
+on:
+  push:
+    branches: [pc/windows]
+permissions:
+  contents: write
+jobs:
+  reconstruct:
+    if: contains(github.event.head_commit.message, '[PC_V145_BINARY_HANDOFF_20261124]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify base and reconstruct exact tested Windows package
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v zstd
+          curl --fail --location --retry 3 --connect-timeout 15 --max-time 180 'https://github.com/dj5927/FileHub-AIO/releases/download/pc-v1.3.144/FileHub-AIO-PC-1.3.144-win-x64.zip' -o base.zip
+          cp .github/release-handoffs/pc-v145-handoff.zip handoff.zip
+          echo '43ae2b38f54b5b614314cd6224b027c53e4b2c7efa14cfbb37ea9abb37167c22  handoff.zip' | sha256sum -c -
+          python3 .github/release-handoffs/pc145_delta.py reconstruct base.zip handoff.zip FileHub-AIO-PC-1.3.145-win-x64.zip
+          sha256sum FileHub-AIO-PC-1.3.145-win-x64.zip > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pc145-verified-package
+          path: |
+            FileHub-AIO-PC-1.3.145-win-x64.zip
+            SHA256SUMS
+          compression-level: 0
+          retention-days: 2
+  windows-regression:
+    needs: reconstruct
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pc145-verified-package
+          path: package
+      - name: Verify and test the exact distributable Windows executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = (Resolve-Path package/FileHub-AIO-PC-1.3.145-win-x64.zip).Path
+          $sum = (Get-Content package/SHA256SUMS -Raw).Trim().Split(' ')[0]
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash -ne $sum) { throw 'Package checksum mismatch' }
+          Expand-Archive -LiteralPath $zip -DestinationPath candidate -Force
+          $exe = (Resolve-Path candidate/FileHubAIO.exe).Path
+          if ((Get-Item $exe).VersionInfo.FileVersion -ne '1.3.145.0') { throw 'Incorrect version' }
+          if ((Get-FileHash $exe).Hash -ne '44D62AF8F41C3BCD077025B3D5FF9C369F2D0ECB9C4A17F119255F84BE3AB182') { throw 'Application binary mismatch' }
+          if ((Get-FileHash candidate/tools/NASMountLockBridge.exe).Hash -ne 'D2FB614949E968EFF1DA888A3CF383F4BC9C0AA6614973A77F002094CD2421A6') { throw 'Unchanged bridge mismatch' }
+          $tests = [ordered]@{
+            'google-direct-api-policy-test' = 'GOOGLE_BROWSER_COMPLETE_HEADERS_AND_RELOAD_WITHOUT_REEXCHANGE_PASS'
+            'google-login-ui-policy-test' = 'GOOGLE_CHROME_ONLY_LOGIN_NO_USER_OAUTH_FIELDS_PASS'
+            'google-publisher-oauth-policy-test' = 'GOOGLE_PUBLISHER_OAUTH_PACKAGED_POLICY_PASS'
+            'google-cold-start-policy-test' = 'GOOGLE_COLD_MOUNT_PACING_NO_KEEPALIVE_POLICY_PASS'
+            'pc-updater-policy-test' = 'PC_UPDATE_FEED_ANDROID_ISOLATION_AND_SHA256_PASS'
+            'synology-share-policy-test' = 'SYNOLOGY_SHARING_PATH_URL_REGISTRY_POLICY_PASS'
+            'winfsp-execute-policy-test' = 'WINFSP_EXE_EXECUTE_PERMISSION_ALL_PROVIDERS_PASS'
+            'direct-webdav-routing-policy-test' = 'DIRECT_WEBDAV_ONLY_PROVIDER_ROUTING_POLICY_PASS'
+            'component-inventory-test' = 'COMPONENT_INVENTORY_DISK_README_EXE_VERSION_SHA_PASS'
+          }
+          foreach ($name in $tests.Keys) {
+            $out = Join-Path $env:RUNNER_TEMP ($name+'.out')
+            $err = Join-Path $env:RUNNER_TEMP ($name+'.err')
+            $p = Start-Process -FilePath $exe -ArgumentList ('--'+$name) -Wait -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+            $result = Get-Content -LiteralPath $out -Raw
+            Write-Output $result
+            Get-Content -LiteralPath $err
+            if ($p.ExitCode -ne 0 -or !$result.Contains($tests[$name])) { throw ('Regression failed: '+$name) }
+            if ($name -eq 'google-direct-api-policy-test' -and !$result.Contains('GOOGLE_GRANULAR_SCOPE_DENIAL_AND_ACCOUNT_CHECK_PASS')) { throw 'Selective permission regression' }
+          }
+          Write-Output 'PC145_WINDOWS_REGRESSIONS_PASS'
+  publish:
+    needs: [reconstruct, windows-regression]
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pc145-verified-package
+      - name: Publish official Windows-only OTA
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          sha256sum -c SHA256SUMS
+          python3 .github/release-handoffs/pc145_delta.py verify .github/release-handoffs/pc-v145-handoff.zip FileHub-AIO-PC-1.3.145-win-x64.zip
+          if gh release view pc-v1.3.145 >/dev/null 2>&1; then
+            echo 'Refusing to replace existing release'
+            exit 1
+          fi
+          latest_before="$(gh api repos/$GH_REPO/releases/latest --jq .tag_name)"
+          cat > notes.txt <<'NOTES'
+          FileHub AIO PC v1.3.145 — Google Drive OAuth 개선
+
+          - 선택적 Google Drive 권한 승인과 Google 계정 이메일 확인.
+          - Drive 권한 미승인 시 새 연결 및 인증 정보 저장 중단.
+          - 로그인 완료 안내 페이지, 브라우저 재접속 및 새로고침 처리. 인증 코드 재교환 방지.
+          - 기존 Client ID, 저장된 인증 및 다른 저장소 기능 유지. 이전 정식판의 WinFsp, LockBridge, rclone 엔진 그대로 유지.
+          - 사용자 확인 후 정식 Windows 배포로 승격. 로컬 및 GitHub Windows 회귀 테스트 통과.
+          - Google 제한 범위 인증 심사는 진행 중이며 Google 측 접근 제한은 유지됩니다. 이 릴리즈는 Google 심사 완료를 의미하지 않습니다.
+          NOTES
+          printf '\nArchive SHA256: %s\n' "$(cut -d ' ' -f 1 SHA256SUMS)" >> notes.txt
+          gh release create pc-v1.3.145 FileHub-AIO-PC-1.3.145-win-x64.zip SHA256SUMS --target "$GITHUB_SHA" --latest=false --title 'FileHub AIO PC v1.3.145' --notes-file notes.txt
+          gh release view pc-v1.3.145 --json tagName,isDraft,isPrerelease,assets > release.json
+          python3 - <<'PY'
+          import json, pathlib, hashlib
+          r=json.load(open('release.json'))
+          assert r['tagName']=='pc-v1.3.145' and not r['isDraft'] and not r['isPrerelease']
+          f=pathlib.Path('FileHub-AIO-PC-1.3.145-win-x64.zip')
+          a=next(a for a in r['assets'] if a['name']==f.name)
+          with f.open('rb') as stream: digest=hashlib.file_digest(stream,'sha256').hexdigest()
+          assert a['size']==f.stat().st_size and a['digest']=='sha256:'+digest
+          print('PC145_OFFICIAL_RELEASE_SUCCESS',digest)
+          PY
+          test "$(gh api repos/$GH_REPO/releases/latest --jq .tag_name)" = "$latest_before"
