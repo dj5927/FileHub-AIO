@@ -1,0 +1,68 @@
+name: Publish verified FileHub PC v1.3.139 Excel owner-file lock repair
+on:
+  push:
+    branches: [pc/windows]
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[PC_V138_BINARY_HANDOFF_20261124]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Download, reassemble and verify Windows publisher archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in {00..10}; do
+            curl --http1.1 --fail --location --retry 7 --retry-all-errors --retry-delay 3 --connect-timeout 15 --max-time 330 "https://charity-canvas-plan-fig.trycloudflare.com/pc-v139-part${i}" -o "pc-v139-part${i}"
+            test -s "pc-v139-part${i}"
+            echo "PC139_PART_${i}_READY"
+          done
+          cat pc-v139-part{00..10} > FileHub-AIO-PC-1.3.139-win-x64.zip
+          test "$(stat -c '%s' FileHub-AIO-PC-1.3.139-win-x64.zip)" -eq 169206325
+          echo 'EFC5480B0423B2D42B353D5000F0ACCDEEFA479496268E15603DA95FE4A95F38  FileHub-AIO-PC-1.3.139-win-x64.zip' | sha256sum -c -
+          unzip -tqq FileHub-AIO-PC-1.3.139-win-x64.zip
+          for file in FileHubAIO.exe tools/NASMountLockBridge.exe tools/rclone.exe tools/google-oauth-desktop.json README_PC_V139_EXCEL_OWNER_LOCK_FIX_KR.md RAIDRIVE_2026_10_COMPARATIVE_RESEARCH.md; do
+            unzip -Z1 FileHub-AIO-PC-1.3.139-win-x64.zip | grep -Fx "$file"
+          done
+          printf '%s\n' 'EFC5480B0423B2D42B353D5000F0ACCDEEFA479496268E15603DA95FE4A95F38  FileHub-AIO-PC-1.3.139-win-x64.zip' > SHA256SUMS
+          echo 'PC139_VERIFIED_ARCHIVE_SUCCESS'
+      - name: Publish Windows PC-only OTA release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view pc-v1.3.139 >/dev/null 2>&1; then
+            echo 'Refusing to replace existing PC v1.3.139 release'
+            exit 1
+          fi
+          cat > notes.txt <<'NOTES'
+          FileHub AIO PC v1.3.139 - Restore Excel ~$ owner file creation on Synology WebDAV
+
+          - Fix Excel ~$ owner-file disappearance on Synology WebDAV: first 55-byte PUT accepted without strong ETag, next write previously failed and Excel deleted owner.
+          - After first Excel-owner PUT, query the real NAS ETag for this tiny file and use a guarded If-Match for following Excel writes (55 to 165 bytes).
+          - Real Microsoft Excel WinFsp test with a disposable WebDAV endpoint deliberately omitting ETag from PUT: owner visible on local drive and actual server; two writes succeed.
+          - Independent fresh WebDAV client correctly detects the owner and blocks a second editing session. Second Excel instance opens read-only.
+          - Excel closure removes owner normally; bridge returns SAFE with 0 pending uploads, 0 failures and 0 retained recovery.
+          - Generic bulk file copy remains parallel: 500 small files accepted; no added GET/HEAD per normal file.
+          - Existing file overwrite, crash recovery, updater, Google OAuth and bridge self-test regression checks passed.
+          - User's existing real Synology R: connection was not changed, and no existing document was modified.
+          - Real updated Synology cross-PC Office interoperability still requires acceptance testing after install.
+          - Explorer 100% still represents local staging completion for bulk copies; wait for FileHub NAS transfer completion.
+          - Android and non-WebDAV adapters unchanged.
+          - SHA256: EFC5480B0423B2D42B353D5000F0ACCDEEFA479496268E15603DA95FE4A95F38
+          NOTES
+          gh release create pc-v1.3.139 FileHub-AIO-PC-1.3.139-win-x64.zip SHA256SUMS --target "$GITHUB_SHA" --latest=false --title 'FileHub AIO PC v1.3.139' --notes-file notes.txt
+          gh release view pc-v1.3.139 --json tagName,url,assets > release.json
+          python3 - <<'PY'
+          import json
+          r=json.load(open('release.json',encoding='utf-8'))
+          assert r['tagName']=='pc-v1.3.139'
+          a=next(x for x in r['assets'] if x['name']=='FileHub-AIO-PC-1.3.139-win-x64.zip')
+          assert a['size']==169206325
+          assert a.get('digest','').lower()=='sha256:efc5480b0423b2d42b353d5000f0accdeefa479496268e15603da95fe4a95f38'
+          print('PC139_OFFICIAL_RELEASE_SUCCESS')
+          PY
