@@ -5,7 +5,8 @@ If-Match, so it cannot validate FileHub's cross-client overwrite safety.
 This adapter is TEST-ONLY; real NAS servers must pass the same probe.
 """
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit, unquote
+import xml.etree.ElementTree as ET
 import http.client
 import os
 import re
@@ -29,6 +30,11 @@ REJECT_DELETE_IF_MATCH = os.environ.get(
     "FILEHUB_STRICT_DAV_REJECT_DELETE_IF_MATCH") == "1"
 STRIP_PUT_ETAG = os.environ.get(
     "FILEHUB_STRICT_DAV_STRIP_PUT_ETAG") == "1"
+STRIP_OWNER_ETAGS = os.environ.get(
+    "FILEHUB_STRICT_DAV_STRIP_OWNER_ETAGS") == "1"
+
+def is_owner(path):
+    return unquote(urlsplit(path).path).rsplit("/", 1)[-1].startswith("~$")
 REJECT_NAMED_NEWFILE_PUT = os.environ.get(
     "FILEHUB_STRICT_DAV_REJECT_NAMED_NEWFILE_PUT", "")
 WRITE_LOCK = threading.RLock()
@@ -68,7 +74,7 @@ class Handler(BaseHTTPRequestHandler):
             present = reply.status == 200
             etag = reply.getheader("ETag")
             reply.read()
-            if match and (not present or etag != match):
+            if match and (not present or (match != "*" and etag != match)):
                 return False
             if none == "*" and present:
                 return False
@@ -178,6 +184,14 @@ class Handler(BaseHTTPRequestHandler):
                 conn.request(self.command, request_path, payload, headers)
                 response = conn.getresponse()
                 result = response.read()
+                if STRIP_OWNER_ETAGS and self.command == "PROPFIND" and response.status == 207:
+                    document = ET.fromstring(result)
+                    for item in document.findall("{DAV:}response"):
+                        if is_owner(item.findtext("{DAV:}href", "")):
+                            for prop in item.findall(".//{DAV:}prop"):
+                                for tag in prop.findall("{DAV:}getetag"):
+                                    prop.remove(tag)
+                    result = ET.tostring(document, encoding="utf-8", xml_declaration=True)
                 if RESPONSE_LATENCY_MS > 0:
                     time.sleep(RESPONSE_LATENCY_MS / 1000.0)
                 if FINALIZE_LATENCY_MS > 0 and (
@@ -215,6 +229,9 @@ class Handler(BaseHTTPRequestHandler):
                     if key.lower() in ("content-length", "connection", "transfer-encoding"):
                         continue
                     if (self.command == "PUT" and STRIP_PUT_ETAG and
+                            key.lower() == "etag"):
+                        continue
+                    if (STRIP_OWNER_ETAGS and is_owner(request_path) and
                             key.lower() == "etag"):
                         continue
                     self.send_header(key, value)

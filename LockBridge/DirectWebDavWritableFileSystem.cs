@@ -312,11 +312,9 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         // Synology often omits a strong ETag on the initial PUT response.
         // Only for the tiny owner file published by THIS mount, verify the
         // actual bytes instead. Unrelated Explorer files never incur GETs.
-        var stat = _backend.StatFresh(ownerPath);
-        if (stat is null || stat.IsDirectory || stat.Size != owner.Size ||
-            stat.Size is < 1 or > 4096)
+        var snapshot = _backend.ReadOfficeOwnerFresh(ownerPath);
+        if (snapshot?.Bytes is not { } bytes || bytes.Length != owner.Size)
             return false;
-        var bytes = _backend.Read(stat, 0, (int)stat.Size);
         return CryptographicOperations.FixedTimeEquals(owner.Sha256,
             SHA256.HashData(bytes));
     }
@@ -327,7 +325,9 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         var session = writer.Session;
         lock (session.Gate)
         {
-            if (session.Dirty || session.Local.Length is < 1 or > 4096)
+            if (session.PublishedOfficeOwner is null) return;
+            if (session.Dirty || session.Local.Length >
+                DirectWebDavReadOnlyBackend.MaxOfficeOwnerBytes)
                 throw new IOException("Excel owner was not committed completely");
             session.Local.Seek(0, SeekOrigin.Begin);
             byte[] sha = SHA256.HashData(session.Local);
@@ -606,7 +606,15 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             if (stat.IsDirectory) return AccessDenied;
             string? lease = AcquireOfficeLease(key);
             DirectWebDavWriteStore.Handle session;
-            try { session = _writes.Begin(key, create: false); }
+            try
+            {
+                byte[]? ownedHash = null;
+                if (ExcelOwnerInterop.IsOwnerFile(key) &&
+                    _ownerFilesPublishedHere.TryGetValue(key, out var owner))
+                    ownedHash = owner.Sha256;
+                session = _writes.Begin(key, create: false,
+                    expectedOfficeOwnerHash: ownedHash);
+            }
             catch { ReleaseOfficeLease(lease); throw; }
             var descriptor = new WriteDescriptor(session, stat);
             descriptor.LeaseKey = lease;
@@ -684,31 +692,11 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             if (ExcelOwnerInterop.IsOwnerFile(writer.Entry.Path) &&
                 writer.Session.Dirty)
             {
-                // Excel keeps its owner handle open while the workbook is
-                // being edited: waiting for Cleanup hides ~$ from other PCs.
-                // It also writes 55 bytes first and a larger owner payload
-                // later. Synology's first PUT returns no ETag, so after
-                // publishing the first chunk, fetch the real strong ETag
-                // before allowing a subsequent conditional PUT.
+                // Office keeps this handle open. A real server-confirmed
+                // owner must exist during editing, even on NASes that
+                // supply neither PUT nor PROPFIND/GET ETags.
                 _writes.Commit(writer.Session);
                 RecordCommittedRevision(writer);
-                if (!DirectWebDavWriteStore.StrongEtag(writer.Session.ExpectedEtag))
-                {
-                    for (int i = 0; i < 4; i++)
-                    {
-                        var fresh = _backend.StatFresh(writer.Entry.Path);
-                        if (fresh is not null &&
-                            fresh.Size == writer.Session.Local.Length &&
-                            DirectWebDavWriteStore.StrongEtag(fresh.ETag))
-                        {
-                            writer.Session.ExpectedEtag = fresh.ETag;
-                            writer.Session.CommittedEntry = fresh;
-                            writer.Entry = fresh;
-                            break;
-                        }
-                        if (i < 3) Thread.Sleep(60 * (i + 1));
-                    }
-                }
                 _overlay.TryRemove(writer.Entry.Path, out _);
                 PublishExcelOwnerRevision(writer);
             }

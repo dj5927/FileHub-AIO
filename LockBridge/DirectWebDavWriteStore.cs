@@ -40,6 +40,9 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         internal readonly string LocalPath;
         internal string RemotePath;
         internal string? ExpectedEtag;
+        // Only an exclusively created owner file, or a reopened owner
+        // verified as belonging to this mount, may use the no-ETag path.
+        internal byte[]? PublishedOfficeOwner;
         // A successful progressive MOVE has already refreshed this metadata.
         // Reusing it avoids another slow network PROPFIND from WinFsp Flush.
         internal DirectWebDavReadOnlyBackend.Entry? CommittedEntry;
@@ -349,7 +352,8 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         File.Move(temporary, final, true);
     }
 
-    internal Handle Begin(string path, bool create, bool fastCopy = false)
+    internal Handle Begin(string path, bool create, bool fastCopy = false,
+        byte[]? expectedOfficeOwnerHash = null)
     {
         RequireVerifiedConditionalWrites();
         string name = DirectWebDavReadOnlyBackend.Normalize(path);
@@ -360,7 +364,19 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             throw new FileNotFoundException("Existing WebDAV file missing", name);
         if (current?.IsDirectory == true)
             throw new IOException("Cannot edit directory as file");
-        if (!create && !StrongEtag(current!.ETag))
+        DirectWebDavReadOnlyBackend.OfficeOwnerSnapshot? ownMarker = null;
+        if (!create && ExcelOwnerInterop.IsOwnerFile(name) &&
+            expectedOfficeOwnerHash is not null)
+        {
+            ownMarker = _read.ReadOfficeOwnerFresh(name);
+            if (ownMarker?.Bytes is not { } data ||
+                !CryptographicOperations.FixedTimeEquals(
+                    SHA256.HashData(data), expectedOfficeOwnerHash))
+                throw new CooperativeLocks.LockConflictException(
+                    "Excel owner changed since this mount published it");
+            current = ownMarker.Entry;
+        }
+        if (!create && ownMarker is null && !StrongEtag(current!.ETag))
             throw new IOException("Cannot safely edit without strong server ETag");
 
         string id = Guid.NewGuid().ToString("N");
@@ -370,7 +386,12 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             65536, FileOptions.RandomAccess);
         try
         {
-            if (!create)
+            if (ownMarker?.Bytes is { } previousOwner)
+            {
+                stream.Write(previousOwner);
+                stream.Seek(0, SeekOrigin.Begin);
+            }
+            else if (!create)
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, Remote(name));
                 request.Headers.TryAddWithoutValidation("If-Match", current!.ETag);
@@ -387,7 +408,8 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             }
             var handle = new Handle(this, id, local, name,
                 current?.ETag, create, stream);
-            handle.WriteBehind = fastCopy && create;
+            handle.PublishedOfficeOwner = ownMarker?.Bytes;
+            handle.WriteBehind = fastCopy && create && !ExcelOwnerInterop.IsOwnerFile(name);
             // For fast-copy handles the initial local file is incomplete;
             // a crash here must not replay partial data. Create its
             // resumable journal only when the copy is fully staged.
@@ -740,6 +762,98 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         }
     }
 
+    // Owner files are advisory Office metadata, not workbook payloads.
+    // The server must still accept exclusive creation. When a NAS does not
+    // expose a strong ETag, permit updates only to the exact owner bytes
+    // previously published by this live handle (or verified on reopening).
+    // If-Match:* prevents recreating a deleted owner. It is not a revision
+    // validator, so a non-cooperating client replacing a marker between GET
+    // and PUT remains an inherent limitation of this advisory lock protocol.
+    private void CommitOfficeOwner(Handle handle)
+    {
+        if (handle.UploadMayHaveCommitted)
+            throw new IOException("Previous Excel owner write outcome uncertain");
+        if (handle.Local.Length > DirectWebDavReadOnlyBackend.MaxOfficeOwnerBytes)
+            throw new IOException("Excel owner payload exceeds expected size");
+        string path = handle.RemotePath;
+        byte[] payload = new byte[(int)handle.Local.Length];
+        handle.Local.Seek(0, SeekOrigin.Begin);
+        handle.Local.ReadExactly(payload);
+        bool create = handle.Created;
+        string? match = null;
+        if (!create)
+        {
+            var previous = _read.ReadOfficeOwnerFresh(path);
+            if (previous?.Bytes is not { } old ||
+                handle.PublishedOfficeOwner is not { } ours ||
+                !CryptographicOperations.FixedTimeEquals(old, ours))
+                throw new CooperativeLocks.LockConflictException(
+                    "Excel owner no longer belongs to this handle");
+            string? actual = previous.Entry.ETag;
+            if (StrongEtag(handle.ExpectedEtag) && StrongEtag(actual) &&
+                !string.Equals(handle.ExpectedEtag, actual, StringComparison.Ordinal))
+                throw new CooperativeLocks.LockConflictException("Excel owner revision changed");
+            match = StrongEtag(actual) ? actual :
+                StrongEtag(handle.ExpectedEtag) ? handle.ExpectedEtag : "*";
+        }
+
+        SaveJournal(handle, "uploading");
+        using var request = new HttpRequestMessage(HttpMethod.Put, Remote(path));
+        request.Headers.TryAddWithoutValidation(create ? "If-None-Match" : "If-Match",
+            create ? "*" : match);
+        request.Content = new ByteArrayContent(payload);
+        handle.UploadMayHaveCommitted = true;
+        using var response = _http.Send(request, HttpCompletionOption.ResponseHeadersRead);
+        if (response.StatusCode is HttpStatusCode.PreconditionFailed or
+            HttpStatusCode.Conflict or HttpStatusCode.Locked)
+        {
+            handle.UploadMayHaveCommitted = false;
+            Console.WriteLine("DIRECT_EXCEL_OWNER_PUT_REJECTED status=" +
+                (int)response.StatusCode + " create=" + create +
+                " wildcard=" + (match == "*"));
+            throw new CooperativeLocks.LockConflictException(
+                "Excel owner PUT rejected HTTP " + (int)response.StatusCode);
+        }
+        if (response.StatusCode is not (HttpStatusCode.OK or
+            HttpStatusCode.Created or HttpStatusCode.NoContent))
+            throw new IOException("Excel owner PUT HTTP " + (int)response.StatusCode);
+
+        // A successful PUT must correspond to real server bytes, not a
+        // synthesized overlay entry. Do not require GET/PROPFIND to contain
+        // an ETag, or Excel will delete its owner on otherwise usable NASes.
+        DirectWebDavReadOnlyBackend.OfficeOwnerSnapshot? committed = null;
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            committed = _read.ReadOfficeOwnerFresh(path);
+            if (committed?.Bytes is { } saved &&
+                CryptographicOperations.FixedTimeEquals(saved, payload))
+                break;
+            if (attempt < 2) Thread.Sleep(40 * (attempt + 1));
+        }
+        if (committed?.Bytes is not { } confirmed ||
+            !CryptographicOperations.FixedTimeEquals(confirmed, payload))
+        {
+            Console.WriteLine("DIRECT_EXCEL_OWNER_SERVER_VISIBILITY_FAILED present=" +
+                (committed is not null) + " bytesMatch=false");
+            throw new IOException("Excel owner PUT was not visible on server");
+        }
+        var revision = committed.Entry;
+        if (!StrongEtag(revision.ETag) && StrongEtag(response.Headers.ETag?.ToString()))
+            revision = revision with { ETag = response.Headers.ETag!.ToString() };
+        handle.ExpectedEtag = revision.ETag;
+        handle.CommittedEntry = revision;
+        handle.PublishedOfficeOwner = confirmed;
+        handle.Created = false;
+        handle.Dirty = false;
+        handle.UploadMayHaveCommitted = false;
+        _read.RecordCommittedNewFile(revision);
+        SaveJournal(handle, "committed");
+        Console.WriteLine("DIRECT_EXCEL_OWNER_SERVER_CONFIRMED create=" + create +
+            " bytes=" + payload.Length + " condition=" +
+            (create ? "exclusive-create" : match == "*" ? "owned-existing" : "strong-etag") +
+            " strongEtag=" + StrongEtag(revision.ETag));
+    }
+
     internal void Commit(Handle handle)
     {
         RequireVerifiedConditionalWrites();
@@ -750,6 +864,12 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             string path = handle.RemotePath;
             lock (_locks.GetOrAdd(path, _ => new object()))
             {
+                if (ExcelOwnerInterop.IsOwnerFile(path) &&
+                    (handle.Created || handle.PublishedOfficeOwner is not null))
+                {
+                    CommitOfficeOwner(handle);
+                    return;
+                }
                 var commitTimer = System.Diagnostics.Stopwatch.StartNew();
                 if (handle.Progressive is not null &&
                     TryCommitProgressive(handle))

@@ -20,6 +20,8 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
 {
     internal sealed record Entry(string Path, string Name, bool IsDirectory,
         long Size, DateTime ModifiedUtc, string? ETag = null);
+    internal sealed record OfficeOwnerSnapshot(Entry Entry, byte[]? Bytes);
+    internal const int MaxOfficeOwnerBytes = 4096;
     internal sealed record StorageQuota(long TotalBytes, long FreeBytes);
 
     private sealed record TimedEntry(Entry Value, DateTime ExpiresUtc);
@@ -210,7 +212,10 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
             DateTime modified = DateTime.UnixEpoch;
             if (DateTimeOffset.TryParse(prop.Element(dav + "getlastmodified")?.Value,
                     out var parsed)) modified = parsed.UtcDateTime;
-            string? etag = prop.Element(dav + "getetag")?.Value;
+            string? etag = resource.Elements(dav + "propstat")
+                .Where(e => (e.Element(dav + "status")?.Value ?? "").Contains(" 200 "))
+                .Select(e => e.Element(dav + "prop")?.Element(dav + "getetag")?.Value?.Trim())
+                .FirstOrDefault(e => !string.IsNullOrEmpty(e));
             entries.Add(new Entry(canonical, name, dir, Math.Max(0, size), modified, etag));
         }
         return entries.ToArray();
@@ -226,6 +231,10 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
             cached.ExpiresUtc > DateTime.UtcNow) return cached.Value;
         Entry? result = PropFind(p, 0).FirstOrDefault(e =>
             e.Path.Equals(p, StringComparison.OrdinalIgnoreCase));
+        // Some NAS implementations omit Office temporary files from PROPFIND.
+        // Exact GET can establish presence without trusting directory caches.
+        if (result is null && ExcelOwnerInterop.IsOwnerFile(p))
+            result = ReadOfficeOwnerFresh(p)?.Entry;
         if (result is not null)
         {
             _missing.TryRemove(p, out _);
@@ -240,6 +249,48 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
     {
         Invalidate(path);
         return Stat(path);
+    }
+
+    // A small Excel owner must be discoverable by another mount even when
+    // no strong validator is advertised. No ordinary file uses this path.
+    internal OfficeOwnerSnapshot? ReadOfficeOwnerFresh(string path)
+    {
+        string key = Normalize(path);
+        if (!ExcelOwnerInterop.IsOwnerFile(key))
+            throw new ArgumentException("Expected an Excel owner path");
+        using var request = new HttpRequestMessage(HttpMethod.Get, RemoteUrl(key));
+        request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+        using var response = _http.Send(request, HttpCompletionOption.ResponseHeadersRead);
+        if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
+            return null;
+        if (response.StatusCode != HttpStatusCode.OK)
+            throw new IOException("Excel owner GET HTTP " + (int)response.StatusCode);
+        long? declared = response.Content.Headers.ContentLength;
+        byte[]? bytes = null;
+        long size;
+        if (declared > MaxOfficeOwnerBytes)
+        {
+            size = declared.Value;
+        }
+        else
+        {
+            using var body = response.Content.ReadAsStream();
+            byte[] buffer = new byte[MaxOfficeOwnerBytes + 1];
+            int count = 0;
+            while (count < buffer.Length)
+            {
+                int n = body.Read(buffer, count, buffer.Length - count);
+                if (n == 0) break;
+                count += n;
+            }
+            size = declared ?? count;
+            if (count <= MaxOfficeOwnerBytes && size == count)
+                bytes = buffer[..count];
+        }
+        var entry = new Entry(key, key.Split('/').Last(), false, size,
+            response.Content.Headers.LastModified?.UtcDateTime ?? DateTime.UnixEpoch,
+            response.Headers.ETag?.ToString());
+        return new OfficeOwnerSnapshot(entry, bytes);
     }
 
     // A verified, conditional new-file PUT does not need a separate
