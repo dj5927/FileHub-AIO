@@ -1,0 +1,9 @@
+FileHub AIO PC v1.3.139 Windows x64 verified binary handoff (2026-11-24)
+Source integration commit: 801661b5dc16b5a4583a592de7bb513bfbb1fe1e
+Description: Excel ~$ owner-file WebDAV regression fix for Synology PUT replies without ETag.
+ZIP filename: FileHub-AIO-PC-1.3.139-win-x64.zip
+ZIP size: 169206325 bytes
+ZIP SHA256: EFC5480B0423B2D42B353D5000F0ACCDEEFA479496268E15603DA95FE4A95F38
+Required: FileHubAIO.exe, tools/NASMountLockBridge.exe, tools/NASMountLockBridge.dll, tools/rclone.exe, tools/google-oauth-desktop.json, README_PC_V139_EXCEL_OWNER_LOCK_FIX_KR.md
+Checked: Microsoft Excel test with no ETag on first PUT (owner visible locally/remotely; second Excel read-only); independent separate WebDAV client lock rejection; owner removed on close; 500 small files copied, all on server; bridge self-test and four PC policy checks success.
+Real updated Synology cross-PC case remains for field QA. Other cloud adapters and Android not changed.
