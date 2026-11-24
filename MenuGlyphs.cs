@@ -9,13 +9,80 @@ internal static class MenuGlyphs
 {
     internal static Bitmap Create(string kind, int size, Color color)
     {
+        // Normalize the ink, not just the square canvas: the icon outlines
+        // have different natural top/bottom padding.
+        int resolution = Math.Max(48, size * 2);
+        using var raw = new Bitmap(resolution, resolution,
+            System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(raw))
+            DrawRaw(g, kind, new RectangleF(0, 0, resolution, resolution), color);
+        int left = resolution, top = resolution, right = -1, bottom = -1;
+        for (int y = 0; y < resolution; y++)
+        for (int x = 0; x < resolution; x++)
+        {
+            if (raw.GetPixel(x, y).A < 24) continue;
+            left = Math.Min(left, x); right = Math.Max(right, x);
+            top = Math.Min(top, y); bottom = Math.Max(bottom, y);
+        }
         var image = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        using var g = Graphics.FromImage(image);
-        Draw(g, kind, new RectangleF(0, 0, size, size), color);
+        if (right < left || bottom < top) return image;
+        var source = Rectangle.FromLTRB(Math.Max(0, left - 1), Math.Max(0, top - 1),
+            Math.Min(resolution, right + 2), Math.Min(resolution, bottom + 2));
+        float scale = size * .84f / Math.Max(source.Width, source.Height);
+        float w = source.Width * scale, h = source.Height * scale;
+        using var canvas = Graphics.FromImage(image);
+        canvas.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        canvas.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        canvas.DrawImage(raw, new RectangleF((size - w) / 2f, (size - h) / 2f, w, h),
+            source, GraphicsUnit.Pixel);
         return image;
     }
 
     internal static void Draw(Graphics g, string kind, RectangleF rect, Color color)
+    {
+        using var image = Create(kind, Math.Max(1, (int)Math.Round(rect.Width)), color);
+        g.DrawImage(image, rect);
+    }
+
+    // Center the visible font ink on the same row axis as the icon.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int>
+        LabelOffsets = new();
+
+    internal static void DrawAlignedLabel(Graphics g, string text, Font font,
+        Rectangle bounds, Color color)
+    {
+        if (bounds.Width <= 0 || bounds.Height <= 0 || text.Length == 0) return;
+        const TextFormatFlags flags = TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
+            TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis |
+            TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;
+        string key = string.Join("|", text, font.Name, font.Size, font.Style,
+            g.DpiX, g.DpiY, bounds.Width, bounds.Height);
+        int offset = LabelOffsets.GetOrAdd(key, _ =>
+        {
+            using var probe = new Bitmap(bounds.Width, bounds.Height);
+            probe.SetResolution(g.DpiX, g.DpiY);
+            using (var pg = Graphics.FromImage(probe))
+            {
+                pg.Clear(Color.Black);
+                TextRenderer.DrawText(pg, text, font,
+                    new Rectangle(Point.Empty, probe.Size), Color.White, Color.Black, flags);
+            }
+            int top = probe.Height, bottom = -1;
+            for (int y = 0; y < probe.Height; y++)
+            for (int x = 0; x < probe.Width; x++)
+            {
+                Color pixel = probe.GetPixel(x, y);
+                if (Math.Max(pixel.R, Math.Max(pixel.G, pixel.B)) < 64) continue;
+                top = Math.Min(top, y); bottom = Math.Max(bottom, y);
+            }
+            return bottom < top ? 0 : (int)Math.Round(
+                (probe.Height - 1 - top - bottom) / 2f);
+        });
+        bounds.Offset(0, offset);
+        TextRenderer.DrawText(g, text, font, bounds, color, flags);
+    }
+
+    private static void DrawRaw(Graphics g, string kind, RectangleF rect, Color color)
     {
         var state = g.Save();
         try
@@ -142,6 +209,31 @@ internal sealed class ProfileMenuRenderer : ToolStripProfessionalRenderer
         using var pen = new Pen(ModernTheme.Border);
         e.Graphics.DrawLine(pen, 9, e.Item.Height / 2,
             e.Item.Width - 8, e.Item.Height / 2);
+    }
+
+    protected override void OnRenderItemImage(ToolStripItemImageRenderEventArgs e)
+    {
+        if (e.Item is not ToolStripMenuItem || e.Image is null)
+        {
+            base.OnRenderItemImage(e);
+            return;
+        }
+        var rect = e.ImageRectangle;
+        rect.Y = (e.Item.Height - rect.Height) / 2;
+        e.Graphics.DrawImage(e.Image, rect);
+    }
+
+    protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+    {
+        if (e.Item is not ToolStripMenuItem)
+        {
+            base.OnRenderItemText(e);
+            return;
+        }
+        var rect = new Rectangle(e.TextRectangle.X, 0,
+            e.TextRectangle.Width, e.Item.Height);
+        MenuGlyphs.DrawAlignedLabel(e.Graphics, e.Text, e.TextFont, rect,
+            e.Item.Enabled ? e.TextColor : ModernTheme.Muted);
     }
 
     private sealed class ProfileMenuColors : ProfessionalColorTable

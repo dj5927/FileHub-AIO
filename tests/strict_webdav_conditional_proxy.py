@@ -33,6 +33,8 @@ STRIP_PUT_ETAG = os.environ.get(
 STRIP_OWNER_ETAGS = os.environ.get(
     "FILEHUB_STRICT_DAV_STRIP_OWNER_ETAGS") == "1"
 STRIP_OFFICE_TEMP_ETAGS = os.environ.get("FILEHUB_STRICT_DAV_STRIP_OFFICE_TEMP_ETAGS") == "1"
+STRIP_OFFICE_DOCUMENT_ETAGS = os.environ.get(
+    "FILEHUB_STRICT_DAV_STRIP_OFFICE_DOCUMENT_ETAGS") == "1"
 REJECT_UNVERSIONED_MOVE_IF_MATCH = os.environ.get(
     "FILEHUB_STRICT_DAV_REJECT_UNVERSIONED_MOVE_IF_MATCH") == "1"
 
@@ -41,7 +43,9 @@ def is_owner(path):
 
 def strip_etag(path):
     name = unquote(urlsplit(path).path).rsplit("/", 1)[-1]
-    return (STRIP_OWNER_ETAGS and is_owner(path)) or (STRIP_OFFICE_TEMP_ETAGS and (
+    return (STRIP_OWNER_ETAGS and is_owner(path)) or (
+        STRIP_OFFICE_DOCUMENT_ETAGS and name.lower().endswith(
+            (".xlsx", ".xls", ".xlsm", ".xlsb", ".docx", ".pptx"))) or (STRIP_OFFICE_TEMP_ETAGS and (
         name.lower().endswith(".tmp") or re.fullmatch(r"[0-9a-fA-F]{8}", name)))
 REJECT_NAMED_NEWFILE_PUT = os.environ.get(
     "FILEHUB_STRICT_DAV_REJECT_NAMED_NEWFILE_PUT", "")
@@ -200,7 +204,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.request(self.command, request_path, payload, headers)
                 response = conn.getresponse()
                 result = response.read()
-                if (STRIP_OWNER_ETAGS or STRIP_OFFICE_TEMP_ETAGS) and self.command == "PROPFIND" and response.status == 207:
+                if (STRIP_OWNER_ETAGS or STRIP_OFFICE_TEMP_ETAGS or STRIP_OFFICE_DOCUMENT_ETAGS) and self.command == "PROPFIND" and response.status == 207:
                     document = ET.fromstring(result)
                     for item in document.findall("{DAV:}response"):
                         if strip_etag(item.findtext("{DAV:}href", "")):

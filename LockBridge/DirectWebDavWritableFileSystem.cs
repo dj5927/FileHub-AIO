@@ -261,6 +261,20 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
     {
         _writes = store;
         _leases = leases;
+        _writes.OwnsExcelWorkbook = HasVerifiedExcelOwner;
+    }
+
+    private bool HasVerifiedExcelOwner(string workbook)
+    {
+        if (!ExcelOwnerInterop.IsWorkbook(workbook)) return false;
+        foreach (string owner in ExcelOwnerInterop.PossibleOwners(workbook))
+        {
+            if (!_ownerFilesPublishedHere.ContainsKey(owner)) continue;
+            var snapshot = _backend.ReadOfficeOwnerFresh(owner);
+            if (snapshot is not null && IsOurCurrentExcelOwner(owner, snapshot.Entry.ETag))
+                return true;
+        }
+        return false;
     }
 
     public override int GetVolumeInfo(out VolumeInfo info)
@@ -613,7 +627,9 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
                     _ownerFilesPublishedHere.TryGetValue(key, out var owner))
                     ownedHash = owner.Sha256;
                 session = _writes.Begin(key, create: false,
-                    expectedOfficeOwnerHash: ownedHash);
+                    expectedOfficeOwnerHash: ownedHash,
+                    allowExcelSnapshot: lease?.StartsWith(ExcelOwnerLeasePrefix,
+                        StringComparison.Ordinal) == true);
             }
             catch { ReleaseOfficeLease(lease); throw; }
             var descriptor = new WriteDescriptor(session, stat);
@@ -908,12 +924,11 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             _overlay.TryRemove(from, out _);
             if (fileDesc is WriteDescriptor active)
             {
-                active.Session.RemotePath = to;
                 var newStat = _backend.Stat(to);
+                _writes.UpdateRenamedHandle(active.Session, to, newStat);
                 if (newStat is not null)
                 {
                     active.Entry = newStat;
-                    active.Session.ExpectedEtag = newStat.ETag;
                 }
             }
             return Success;

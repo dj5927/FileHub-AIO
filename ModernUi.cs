@@ -128,13 +128,17 @@ internal sealed class ModernButton : Button
             MenuGlyphs.Draw(e.Graphics, Glyph,
                 new RectangleF(inset, (Height - size) / 2f, size, size),
                 Enabled ? Color.FromArgb(191, 216, 238) : ModernTheme.Muted);
-            textBounds = new Rectangle(start, 2, Math.Max(0, Width - start - inset), Height - 4);
+            textBounds = new Rectangle(start, 0, Math.Max(0, Width - start - inset), Height);
             horizontal = TextFormatFlags.Left;
         }
-        TextRenderer.DrawText(e.Graphics, Text, Font, textBounds,
-            Enabled ? ForeColor : ModernTheme.Muted,
-            horizontal | TextFormatFlags.VerticalCenter |
-            TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
+        if (Glyph is not null)
+            MenuGlyphs.DrawAlignedLabel(e.Graphics, Text, Font, textBounds,
+                Enabled ? ForeColor : ModernTheme.Muted);
+        else
+            TextRenderer.DrawText(e.Graphics, Text, Font, textBounds,
+                Enabled ? ForeColor : ModernTheme.Muted,
+                horizontal | TextFormatFlags.VerticalCenter |
+                TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
         if (Focused && ShowFocusCues)
         {
             using var pen = new Pen(Color.FromArgb(190, 226, 255), 1f)
