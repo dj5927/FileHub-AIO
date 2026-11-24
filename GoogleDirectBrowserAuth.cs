@@ -423,20 +423,35 @@ internal static class GoogleDirectBrowserAuth
     private static async Task<string?> ReadRequestLineAsync(NetworkStream stream,
         CancellationToken cancel)
     {
-        byte[] bytes = new byte[8500];
+        // Consume the complete bounded HTTP header. Closing a socket with
+        // unread Chrome headers can reset an otherwise successful response.
+        byte[] bytes = new byte[65536];
         int total = 0;
+        int firstLineEnd = -1;
         while (total < bytes.Length)
         {
             int count = await stream.ReadAsync(bytes.AsMemory(total,
-                Math.Min(1024, bytes.Length - total)), cancel).ConfigureAwait(false);
+                Math.Min(4096, bytes.Length - total)), cancel).ConfigureAwait(false);
             if (count == 0) return null;
-            int newline = Array.IndexOf(bytes, (byte)'\n', total, count);
+            int oldTotal = total;
             total += count;
-            if (newline < 0) continue;
-            int length = newline > 0 && bytes[newline - 1] == '\r' ? newline - 1 : newline;
-            for (int i = 0; i < length; i++)
-                if (bytes[i] < 32 || bytes[i] >= 127) return null;
-            return Encoding.ASCII.GetString(bytes, 0, length);
+            if (firstLineEnd < 0)
+            {
+                firstLineEnd = Array.IndexOf(bytes, (byte)'\n', oldTotal, count);
+                if (firstLineEnd > 8500 || (firstLineEnd < 0 && total > 8500))
+                    return null;
+            }
+            if (firstLineEnd < 0) continue;
+            for (int i = Math.Max(0, oldTotal - 3); i + 3 < total; i++)
+            {
+                if (bytes[i] != 13 || bytes[i + 1] != 10 ||
+                    bytes[i + 2] != 13 || bytes[i + 3] != 10) continue;
+                int length = firstLineEnd > 0 && bytes[firstLineEnd - 1] == '\r'
+                    ? firstLineEnd - 1 : firstLineEnd;
+                for (int j = 0; j < length; j++)
+                    if (bytes[j] < 32 || bytes[j] >= 127) return null;
+                return Encoding.ASCII.GetString(bytes, 0, length);
+            }
         }
         return null;
     }
@@ -459,21 +474,48 @@ internal static class GoogleDirectBrowserAuth
 
     private static async Task WriteCallbackAsync(NetworkStream stream, bool success,
         bool denied, bool failed, CancellationToken cancel,
-        string? accountEmail = null, bool driveNotGranted = false)
+        string? accountEmail = null, bool driveNotGranted = false,
+        string? completionPath = null)
     {
         string message = success ? "Google 로그인 완료. 이 창을 닫아도 됩니다." :
             driveNotGranted ? "Google 계정은 확인됐지만 Drive 접근 권한을 선택하지 않았습니다. 연결하지 않았습니다." :
             denied ? "Google 접근 승인이 취소되었습니다. FileHub로 돌아가세요." :
             failed ? "Google 인증을 완료하지 못했습니다. FileHub로 돌아가 다시 시도하세요." :
             "인증 응답이 올바르지 않습니다. 진행 중인 Google 승인 창으로 돌아가세요.";
-        byte[] output = Encoding.UTF8.GetBytes(
-            "<!doctype html><meta charset=utf-8><title>FileHub AIO</title><p>" +
-            message + "</p>" + (accountEmail is null ? "" :
-                "<p>Google 계정: " + WebUtility.HtmlEncode(accountEmail) + "</p>"));
+        string title = success ? "Google Drive access authorized" :
+            driveNotGranted ? "Google Drive access not granted" :
+            denied ? "Authorization cancelled" : "Authorization unsuccessful";
+        string nonce = Base64Url(RandomNumberGenerator.GetBytes(18));
+        // Replace the OAuth code in the address bar with an unguessable,
+        // short-lived result URL. Refreshing it never exchanges a code again.
+        string script = completionPath is null ? "" :
+            "<script nonce=\"" + nonce + "\">history.replaceState(null,''," +
+            JsonSerializer.Serialize(completionPath) + ");</script>";
+        string html = "<!doctype html><html lang=en><head><meta charset=utf-8>" +
+            "<meta name=viewport content=\"width=device-width,initial-scale=1\">" +
+            "<title>FileHub AIO - Google Drive</title>" +
+            "<link rel=icon href=\"data:,\">" +
+            "<style>body{margin:0;background:#f7f9fc;color:#202124;font:16px system-ui,sans-serif}" +
+            "main{max-width:540px;margin:12vh auto;padding:36px;background:#fff;border:1px solid #dfe4ea;border-radius:16px}" +
+            "h1{font-size:25px;margin:20px 0 12px}p{line-height:1.65;overflow-wrap:anywhere}" +
+            ".brand{font-weight:700;color:#315b8a}.mark{font-size:26px;font-weight:700;color:" +
+            (success ? "#188038" : "#b3261e") + "}</style></head><body><main>" +
+            "<div class=brand>FileHub AIO &middot; Google Drive</div>" +
+            "<p class=mark>" + (success ? "&#10003; Authorized" : "Not connected") + "</p>" +
+            "<h1>" + title + "</h1><p>" +
+            (success ? "Return to FileHub AIO to check your drive connection. You may close this tab." :
+                "Return to FileHub AIO to review the authorization result.") +
+            "</p><p>" + message + "</p>" + (accountEmail is null ? "" :
+                "<p>Google account: " + WebUtility.HtmlEncode(accountEmail) + "</p>") +
+            "</main>" + script + "</body></html>";
+        byte[] output = Encoding.UTF8.GetBytes(html);
         byte[] header = Encoding.ASCII.GetBytes(
             $"HTTP/1.1 {(success ? "200 OK" : "400 Bad Request")}\r\n" +
             "Content-Type: text/html; charset=utf-8\r\n" +
             "Cache-Control: no-store\r\nReferrer-Policy: no-referrer\r\n" +
+            "X-Content-Type-Options: nosniff\r\n" +
+            "Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src data:; " +
+            "script-src 'nonce-" + nonce + "'; base-uri 'none'; frame-ancestors 'none'\r\n" +
             "Connection: close\r\n" +
             $"Content-Length: {output.Length}\r\n\r\n");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancel);
@@ -482,11 +524,55 @@ internal static class GoogleDirectBrowserAuth
         {
             await stream.WriteAsync(header, deadline.Token).ConfigureAwait(false);
             await stream.WriteAsync(output, deadline.Token).ConfigureAwait(false);
+            await stream.FlushAsync(deadline.Token).ConfigureAwait(false);
         }
         // A closed browser connection cannot invalidate an already committed
         // grant, conceal an OAuth error, or abort a genuine pending approval.
         catch (IOException) { }
         catch (OperationCanceledException) { }
+    }
+
+    // The result server owns the listener after the OAuth exchange. Keep it
+    // alive briefly for Chrome retries/reloads, without delaying drive mount.
+    // No bearer/refresh tokens, account API calls or repeat exchanges here.
+    private static async Task ServeCompletionAsync(TcpListener listener,
+        string resultPath, string state, string? originalCode, string? originalError,
+        bool success, bool denied, string? accountEmail, bool driveNotGranted)
+    {
+        using var lifetime = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        try
+        {
+            for (int requests = 0; requests < 64; requests++)
+            {
+                using var browser = await listener.AcceptTcpClientAsync(lifetime.Token)
+                    .ConfigureAwait(false);
+                using var stream = browser.GetStream();
+                using var read = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+                read.CancelAfter(TimeSpan.FromSeconds(3));
+                try
+                {
+                    RequestTarget(await ReadRequestLineAsync(stream, read.Token)
+                        .ConfigureAwait(false), out string path, out string query);
+                    var kind = ParseCallback(path, query, state, out var code, out var error);
+                    bool sameCallback = (kind == CallbackKind.Approved && originalCode is not null &&
+                        code == originalCode) || (kind == CallbackKind.Rejected &&
+                        originalError is not null && error == originalError);
+                    bool isResult = (path == resultPath && query.Length == 0) || sameCallback;
+                    await WriteCallbackAsync(stream, isResult && success,
+                        isResult && denied, isResult && !success, lifetime.Token,
+                        isResult ? accountEmail : null, isResult && driveNotGranted,
+                        isResult ? resultPath : null).ConfigureAwait(false);
+                    try { browser.Client.Shutdown(SocketShutdown.Send); }
+                    catch (SocketException) { }
+                }
+                catch (IOException) { }
+                catch (OperationCanceledException) when (!lifetime.IsCancellationRequested) { }
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (SocketException) { }
+        catch (ObjectDisposedException) { }
+        finally { listener.Stop(); }
     }
 
     internal static async Task<string> AuthorizeAsync(string clientId,
@@ -502,7 +588,10 @@ internal static class GoogleDirectBrowserAuth
             await CheckPublisherAsync(clientId, clientSecret, cancel).ConfigureAwait(false);
         }
         cancel.ThrowIfCancellationRequested();
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        bool completionOwnsListener = false;
+        try
+        {
         listener.Start(8);
         int port = ((IPEndPoint)listener.LocalEndpoint).Port;
         string redirect = $"http://127.0.0.1:{port}/callback";
@@ -569,12 +658,34 @@ internal static class GoogleDirectBrowserAuth
                     failure = ex;
                 }
             }
+            bool terminal = failure is not null || tokenJson is not null;
+            string? resultPath = terminal ? "/complete/" +
+                Base64Url(RandomNumberGenerator.GetBytes(24)) : null;
+            bool driveNotGranted = failure is AuthorizationException
+                { ErrorCode: "drive_scope_not_granted" };
+            // The terminal HTTP response has its own bounded write timeout,
+            // independent of the OAuth dialog cancellation/deadline.
             await WriteCallbackAsync(stream, tokenJson is not null,
-                rejection == "access_denied", failure is not null, deadline.Token,
-                accountEmail, failure is AuthorizationException { ErrorCode: "drive_scope_not_granted" })
+                rejection == "access_denied", failure is not null,
+                terminal ? CancellationToken.None : deadline.Token,
+                accountEmail, driveNotGranted, resultPath)
                 .ConfigureAwait(false);
+            try { browser.Client.Shutdown(SocketShutdown.Send); }
+            catch (SocketException) { }
+            if (terminal && resultPath is not null)
+            {
+                completionOwnsListener = true;
+                _ = ServeCompletionAsync(listener, resultPath, state, grant, rejection,
+                    tokenJson is not null, rejection == "access_denied",
+                    accountEmail, driveNotGranted);
+            }
             if (failure is not null) throw failure;
             if (tokenJson is not null) return tokenJson; // Never log or print.
+        }
+        }
+        finally
+        {
+            if (!completionOwnsListener) listener.Stop();
         }
     }
 

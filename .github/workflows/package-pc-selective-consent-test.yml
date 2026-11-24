@@ -20,16 +20,16 @@ jobs:
           echo 'd47da47d528da441cb88a75bc4fa04f69500291e7124b775da4e8ce4f9a5a166  base.zip' | sha256sum -c -
           unzip -p base.zip FileHubAIO.exe > base.exe
           echo '06f33c67d3f498829030b2d580b1f6759d40cc76e55f1912bd4bd35e029a8b90  base.exe' | sha256sum -c -
-          echo '5b1133b697aebaeddc1102e0751f83649897b740caa470ff057adf3083dd8cd1  .github/oauth-consent-test/FileHubAIO.exe.zst' | sha256sum -c -
+          echo 'e0727977b33aa0b165efeb5b66e57dc536530d178b87bc457afd64e21bace1b5  .github/oauth-consent-test/FileHubAIO.exe.zst' | sha256sum -c -
           mkdir -p output
           zstd -d -f --long=28 --patch-from=base.exe .github/oauth-consent-test/FileHubAIO.exe.zst -o output/FileHubAIO.exe
-          echo '208936ccab696ab791ab9872bad407478d5df4e2e8a9f60fc55fc0ddc5f2b7f5  output/FileHubAIO.exe' | sha256sum -c -
+          echo '27d1d493b84813e37e1e4cfd007335acb9528c10fda4ce2faa64d3a7d6836977  output/FileHubAIO.exe' | sha256sum -c -
           cp .github/oauth-consent-test/README.txt output/README.txt
           cd output
           sha256sum FileHubAIO.exe > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: FileHub-AIO-PC-1.3.144-selective-consent-test
+          name: FileHub-AIO-PC-1.3.144-selective-consent-callback-v2
           path: output/
           retention-days: 14
           compression-level: 3

@@ -449,6 +449,94 @@ internal static class GoogleDirectBrowserOAuthPolicyLab
         }
     }
 
+    private static async Task CompletionPageRetryAsync()
+    {
+        using var endpoint = new FakeTokenEndpoint { Block = false };
+        using var client = new HttpClient(endpoint);
+        using var browser = new HttpClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var authLifetime = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+        string? callbackUrl = null;
+        int saves = 0;
+        var ready = new TaskCompletionSource<string>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var authorize = GoogleDirectBrowserAuth.AuthorizeAsync(ClientId, ClientSecret,
+            _ => { }, url => ready.SetResult(Query(url, "redirect_uri") +
+                "?code=FAKE_CODE&state=" + Uri.EscapeDataString(Query(url, "state"))),
+            authLifetime.Token, client, (_, _) =>
+            { Interlocked.Increment(ref saves); return Task.CompletedTask; });
+        try
+        {
+            callbackUrl = await ready.Task.WaitAsync(timeout.Token);
+            var uri = new Uri(callbackUrl);
+            using var socket = new TcpClient();
+            await socket.ConnectAsync(IPAddress.Loopback, uri.Port, timeout.Token);
+            using var stream = socket.GetStream();
+            // Real browser requests can arrive as several TCP segments,
+            // including a header much larger than a single network read.
+            string first = "GET " + uri.PathAndQuery + " HTTP/1.1\r\nHost: " +
+                uri.Authority + "\r\n";
+            await stream.WriteAsync(Encoding.ASCII.GetBytes(first), timeout.Token);
+            await Task.Delay(100, timeout.Token);
+            if (endpoint.Requests != 0)
+                throw new InvalidOperationException("Exchange began before full headers arrived");
+            await stream.WriteAsync(Encoding.ASCII.GetBytes("X-Browser-Test: " +
+                new string('x', 12000) + "\r\nConnection: close\r\n\r\n"), timeout.Token);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            string response = await reader.ReadToEndAsync(timeout.Token);
+            await authorize.WaitAsync(timeout.Token);
+            if (!response.StartsWith("HTTP/1.1 200 OK", StringComparison.Ordinal) ||
+                !response.Contains("Google Drive access authorized", StringComparison.Ordinal) ||
+                !response.Contains("history.replaceState", StringComparison.Ordinal) ||
+                !response.Contains("Content-Security-Policy:", StringComparison.Ordinal) ||
+                response.Contains("FAKE_CODE", StringComparison.Ordinal) ||
+                response.Contains("OFFLINE_TEST", StringComparison.Ordinal) ||
+                response.Contains("OFFLINE_REFRESH", StringComparison.Ordinal))
+                throw new InvalidOperationException("Initial completion page incorrect");
+            var match = System.Text.RegularExpressions.Regex.Match(response,
+                @"/complete/[A-Za-z0-9_-]{32}");
+            if (!match.Success)
+                throw new InvalidOperationException("Completion URL not found");
+            // The dialog is now gone, but the local result remains available
+            // to the browser without reusing an authorization code.
+            authLifetime.Cancel();
+            string cleanUrl = uri.GetLeftPart(UriPartial.Authority) + match.Value;
+            foreach (string retryUrl in new[] { callbackUrl, cleanUrl, cleanUrl })
+            {
+                using var retry = await browser.GetAsync(retryUrl, timeout.Token);
+                string body = await retry.Content.ReadAsStringAsync(timeout.Token);
+                if (!retry.IsSuccessStatusCode ||
+                    !body.Contains("Google Drive access authorized", StringComparison.Ordinal) ||
+                    body.Contains("FAKE_CODE", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Completion page retry failed");
+            }
+            using (var wrong = await browser.GetAsync(uri.GetLeftPart(UriPartial.Authority) +
+                "/callback?code=WRONG&state=" +
+                Uri.EscapeDataString(Query(callbackUrl, "state")), timeout.Token))
+            {
+                string body = await wrong.Content.ReadAsStringAsync(timeout.Token);
+                if (wrong.IsSuccessStatusCode ||
+                    body.Contains("test@example.invalid", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Wrong callback replay exposed the result");
+            }
+            using (var wrong = await browser.GetAsync(uri.GetLeftPart(UriPartial.Authority) +
+                "/complete/not-authorized", timeout.Token))
+            {
+                string body = await wrong.Content.ReadAsStringAsync(timeout.Token);
+                if (wrong.IsSuccessStatusCode ||
+                    body.Contains("test@example.invalid", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Guessed completion path exposed the result");
+            }
+            if (endpoint.Requests != 1 || endpoint.AccountRequests != 1 || saves != 1)
+                throw new InvalidOperationException("Completion retries caused repeat authorization");
+        }
+        finally
+        {
+            authLifetime.Cancel();
+            await ObserveAsync(authorize);
+        }
+    }
+
     internal static async Task RunAsync()
     {
         await ScenarioAsync(false);
@@ -480,6 +568,8 @@ internal static class GoogleDirectBrowserOAuthPolicyLab
             """{"error":"deleted_client","error_description":"SYNTHETIC_PRIVATE_ERROR_PAYLOAD"}""",
             HttpStatusCode.Unauthorized), "deleted_client");
         Console.WriteLine("GOOGLE_BROWSER_TOKEN_RESPONSE_BOUNDS_PASS");
+        await CompletionPageRetryAsync();
+        Console.WriteLine("GOOGLE_BROWSER_COMPLETE_HEADERS_AND_RELOAD_WITHOUT_REEXCHANGE_PASS");
         await PartialGrantAsync(GoogleDirectBrowserAuth.EmailScope,
             "drive_scope_not_granted", true, 1);
         await PartialGrantAsync(GoogleDirectBrowserAuth.EmailScope + " " +
