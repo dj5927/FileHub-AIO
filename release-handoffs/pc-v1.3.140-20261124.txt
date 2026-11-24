@@ -1,0 +1,6 @@
+Verified Windows x64 build for PC v1.3.140.
+Source: b4b34e8802f4a970bb5ab6ff2368ff2e22b41ba7
+ZIP: FileHub-AIO-PC-1.3.140-win-x64.zip
+Size: 169210160
+SHA256: 825CCA824B4DD7862329BE9404F8345F14991126FD52A24E9977C26DB5F9A820
+Real Excel and all-owner-ETags-missing test passed, five saves retained marker, independent backend blocked edit; actual updated Synology field QA pending.
