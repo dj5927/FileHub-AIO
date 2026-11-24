@@ -220,7 +220,7 @@ jobs:
           persist-credentials: false
 
       - name: Install pinned Go toolchain for Google-only engine
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version: '1.27.4'
           cache: true
