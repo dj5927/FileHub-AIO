@@ -1,0 +1,63 @@
+name: Publish verified FileHub PC v1.3.140 Excel owner-file lock repair
+on:
+  push:
+    branches: [pc/windows]
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[PC_V140_BINARY_HANDOFF_20261124]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Download, reassemble and verify Windows publisher archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in {00..10}; do
+            curl --http1.1 --fail --location --retry 7 --retry-all-errors --retry-delay 3 --connect-timeout 15 --max-time 330 "https://have-allen-violation-dealer.trycloudflare.com/pc-v140-part${i}" -o "pc-v140-part${i}"
+            test -s "pc-v140-part${i}"
+            echo "PC140_PART_${i}_READY"
+          done
+          cat pc-v140-part{00..10} > FileHub-AIO-PC-1.3.140-win-x64.zip
+          test "$(stat -c '%s' FileHub-AIO-PC-1.3.140-win-x64.zip)" -eq 169210160
+          echo '825CCA824B4DD7862329BE9404F8345F14991126FD52A24E9977C26DB5F9A820  FileHub-AIO-PC-1.3.140-win-x64.zip' | sha256sum -c -
+          unzip -tqq FileHub-AIO-PC-1.3.140-win-x64.zip
+          for file in FileHubAIO.exe tools/NASMountLockBridge.exe tools/rclone.exe tools/google-oauth-desktop.json README_PC_V140_EXCEL_OWNER_LOCK_FIX_KR.md RAIDRIVE_2026_10_COMPARATIVE_RESEARCH.md; do
+            unzip -Z1 FileHub-AIO-PC-1.3.140-win-x64.zip | grep -Fx "$file"
+          done
+          printf '%s\n' '825CCA824B4DD7862329BE9404F8345F14991126FD52A24E9977C26DB5F9A820  FileHub-AIO-PC-1.3.140-win-x64.zip' > SHA256SUMS
+          echo 'PC140_VERIFIED_ARCHIVE_SUCCESS'
+      - name: Publish Windows PC-only OTA release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view pc-v1.3.140 >/dev/null 2>&1; then
+            echo 'Refusing to replace existing PC v1.3.140 release'
+            exit 1
+          fi
+          cat > notes.txt <<'NOTES'
+          FileHub AIO PC v1.3.140 - Restore Excel ~$ owner file creation on Synology WebDAV
+
+          - Fix v139 regression on servers omitting strong ETags from both PUT and subsequent metadata requests.
+          - Excel owner writes use exclusive creation, exact server readback, and same-owner updates with an existence condition if no strong ETag is available.
+          - Real Microsoft Excel test: all owner ETags stripped from PUT, GET, HEAD and PROPFIND. Server receives 55 and 165 bytes; owner remains present across five saves; independent client blocked; close removes owner.
+          - No synthetic lock sidecar or change to ordinary file transfer and workbook overwrite guards.
+          - If-Match wildcard is an existence condition, not a revision validator; advisory locks cannot prevent non-cooperating clients from replacing a marker during a race.
+          - Actual updated Synology connection requires reconnection and verification; saved password is disabled.
+          - SHA256: 825CCA824B4DD7862329BE9404F8345F14991126FD52A24E9977C26DB5F9A820
+          NOTES
+          gh release create pc-v1.3.140 FileHub-AIO-PC-1.3.140-win-x64.zip SHA256SUMS --target "$GITHUB_SHA" --latest=false --title 'FileHub AIO PC v1.3.140' --notes-file notes.txt
+          gh release view pc-v1.3.140 --json tagName,url,assets > release.json
+          python3 - <<'PY'
+          import json
+          r=json.load(open('release.json',encoding='utf-8'))
+          assert r['tagName']=='pc-v1.3.140'
+          a=next(x for x in r['assets'] if x['name']=='FileHub-AIO-PC-1.3.140-win-x64.zip')
+          assert a['size']==169210160
+          assert a.get('digest','').lower()=='sha256:825cca824b4dd7862329be9404f8345f14991126fd52a24e9977c26db5f9a820'
+          print('PC140_OFFICIAL_RELEASE_SUCCESS')
+          PY
