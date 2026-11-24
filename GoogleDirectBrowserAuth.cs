@@ -17,6 +17,11 @@ internal static class GoogleDirectBrowserAuth
         "https://accounts.google.com/o/oauth2/v2/auth";
     private static readonly Uri TokenEndpoint =
         new("https://oauth2.googleapis.com/token");
+    internal const string DriveScope = "https://www.googleapis.com/auth/drive";
+    internal const string EmailScope = "https://www.googleapis.com/auth/userinfo.email";
+    internal const string RequestedScopes = EmailScope + " " + DriveScope;
+    private static readonly Uri AccountEndpoint =
+        new("https://www.googleapis.com/oauth2/v2/userinfo?fields=email,verified_email");
     private const int ResponseLimit = 256 * 1024;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
@@ -36,13 +41,21 @@ internal static class GoogleDirectBrowserAuth
         "redirect_uri_mismatch" or "access_denied" or "disallowed_useragent" or
         "admin_policy_enforced" or "org_internal" or "invalid_scope" or
         "invalid_request" or "invalid_grant" or "provider_unavailable" or
-        "invalid_token_response" or "browser_launch_failed" => code,
+        "invalid_token_response" or "browser_launch_failed" or
+        "drive_scope_not_granted" or "account_scope_not_granted" or
+        "account_identity_unavailable" => code,
         _ => "authorization_error"
     };
 
     private static string ErrorMessage(string code) => code switch
     {
         "access_denied" => "Google 계정 접근 승인이 취소되었습니다.",
+        "drive_scope_not_granted" =>
+            "Google Drive 접근 권한이 선택되지 않았습니다. 연결하려면 Drive 권한을 선택하고 다시 승인하세요.",
+        "account_scope_not_granted" =>
+            "Google 계정 이메일 확인 권한이 승인되지 않았습니다. 연결할 계정을 확인하려면 다시 승인하세요.",
+        "account_identity_unavailable" =>
+            "Google 계정 이메일을 확인하지 못했습니다. 연결하지 않고 종료합니다.",
         "deleted_client" or "invalid_client" or "unauthorized_client" =>
             "FileHub 게시자의 Google 로그인 등록을 사용할 수 없습니다. 게시자 설정을 확인해야 합니다.",
         "browser_launch_failed" =>
@@ -76,7 +89,7 @@ internal static class GoogleDirectBrowserAuth
             ["client_id"] = clientId,
             ["redirect_uri"] = redirect,
             ["response_type"] = "code",
-            ["scope"] = "https://www.googleapis.com/auth/drive",
+            ["scope"] = RequestedScopes,
             ["access_type"] = "offline",
             ["prompt"] = "select_account consent",
             ["code_challenge"] = challenge,
@@ -336,10 +349,7 @@ internal static class GoogleDirectBrowserAuth
             }
             if (!value.TryGetProperty("access_token", out var access) ||
                 access.ValueKind != JsonValueKind.String ||
-                string.IsNullOrWhiteSpace(access.GetString()) ||
-                !value.TryGetProperty("refresh_token", out var refresh) ||
-                refresh.ValueKind != JsonValueKind.String ||
-                string.IsNullOrWhiteSpace(refresh.GetString()))
+                string.IsNullOrWhiteSpace(access.GetString()))
                 throw new AuthorizationException("invalid_token_response");
             return value.GetRawText();
         }
@@ -349,6 +359,65 @@ internal static class GoogleDirectBrowserAuth
         { throw new AuthorizationException("provider_unavailable"); }
         catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
         { throw new AuthorizationException("provider_unavailable"); }
+    }
+
+    private static HashSet<string> GrantedScopes(JsonElement token)
+    {
+        if (!token.TryGetProperty("scope", out var scope) ||
+            scope.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(scope.GetString()))
+            throw new AuthorizationException("invalid_token_response");
+        return scope.GetString()!.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static async Task<string> ReadAccountEmailAsync(HttpClient client,
+        JsonElement token, CancellationToken cancel)
+    {
+        var scopes = GrantedScopes(token);
+        if (!scopes.Contains(EmailScope) && !scopes.Contains("email"))
+            throw new AuthorizationException("account_scope_not_granted");
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        deadline.CancelAfter(TimeSpan.FromSeconds(15));
+        using var request = new HttpRequestMessage(HttpMethod.Get, AccountEndpoint);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", token.GetProperty("access_token").GetString());
+        try
+        {
+            using var response = await client.SendAsync(request,
+                HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                throw new AuthorizationException("account_identity_unavailable");
+            byte[] body = await ReadBoundedAsync(response.Content,
+                "account_identity_unavailable", deadline.Token).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            string? email = root.ValueKind == JsonValueKind.Object &&
+                root.TryGetProperty("email", out var value) &&
+                value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+            if (string.IsNullOrWhiteSpace(email) || email.Length > 320 ||
+                !email.Contains('@') || email.Any(c => char.IsControl(c) || char.IsWhiteSpace(c)) ||
+                !root.TryGetProperty("verified_email", out var verified) ||
+                verified.ValueKind != JsonValueKind.True)
+                throw new AuthorizationException("account_identity_unavailable");
+            return email;
+        }
+        catch (JsonException)
+        { throw new AuthorizationException("account_identity_unavailable"); }
+        catch (HttpRequestException)
+        { throw new AuthorizationException("account_identity_unavailable"); }
+        catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
+        { throw new AuthorizationException("account_identity_unavailable"); }
+    }
+
+    private static void RequireDriveGrant(JsonElement token)
+    {
+        if (!GrantedScopes(token).Contains(DriveScope))
+            throw new AuthorizationException("drive_scope_not_granted");
+        if (!token.TryGetProperty("refresh_token", out var refresh) ||
+            refresh.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(refresh.GetString()))
+            throw new AuthorizationException("invalid_token_response");
     }
 
     private static async Task<string?> ReadRequestLineAsync(NetworkStream stream,
@@ -389,15 +458,18 @@ internal static class GoogleDirectBrowserAuth
     }
 
     private static async Task WriteCallbackAsync(NetworkStream stream, bool success,
-        bool denied, bool failed, CancellationToken cancel)
+        bool denied, bool failed, CancellationToken cancel,
+        string? accountEmail = null, bool driveNotGranted = false)
     {
         string message = success ? "Google 로그인 완료. 이 창을 닫아도 됩니다." :
+            driveNotGranted ? "Google 계정은 확인됐지만 Drive 접근 권한을 선택하지 않았습니다. 연결하지 않았습니다." :
             denied ? "Google 접근 승인이 취소되었습니다. FileHub로 돌아가세요." :
             failed ? "Google 인증을 완료하지 못했습니다. FileHub로 돌아가 다시 시도하세요." :
             "인증 응답이 올바르지 않습니다. 진행 중인 Google 승인 창으로 돌아가세요.";
         byte[] output = Encoding.UTF8.GetBytes(
             "<!doctype html><meta charset=utf-8><title>FileHub AIO</title><p>" +
-            message + "</p>");
+            message + "</p>" + (accountEmail is null ? "" :
+                "<p>Google 계정: " + WebUtility.HtmlEncode(accountEmail) + "</p>"));
         byte[] header = Encoding.ASCII.GetBytes(
             $"HTTP/1.1 {(success ? "200 OK" : "400 Bad Request")}\r\n" +
             "Content-Type: text/html; charset=utf-8\r\n" +
@@ -466,6 +538,7 @@ internal static class GoogleDirectBrowserAuth
             CallbackKind kind = ParseCallback(path, query, state,
                 out string? grant, out string? rejection);
             string? tokenJson = null;
+            string? accountEmail = null;
             Exception? failure = kind == CallbackKind.Rejected
                 ? new AuthorizationException(rejection!) : null;
             if (kind == CallbackKind.Approved)
@@ -476,6 +549,15 @@ internal static class GoogleDirectBrowserAuth
                     tokenJson = await ExchangeAuthorizationCodeAsync(client,
                         grant!, clientId, clientSecret, redirect, verifier,
                         deadline.Token).ConfigureAwait(false);
+                    // Identity is independently useful even when Drive is declined.
+                    // Only the verified account email is displayed, never persisted/logged.
+                    using (var token = JsonDocument.Parse(tokenJson))
+                    {
+                        accountEmail = await ReadAccountEmailAsync(client, token.RootElement,
+                            deadline.Token).ConfigureAwait(false);
+                        progress("Google 계정 확인: " + accountEmail);
+                        RequireDriveGrant(token.RootElement);
+                    }
                     if (finalizeGrant is not null)
                         await finalizeGrant(tokenJson, deadline.Token).ConfigureAwait(false);
                 }
@@ -488,7 +570,8 @@ internal static class GoogleDirectBrowserAuth
                 }
             }
             await WriteCallbackAsync(stream, tokenJson is not null,
-                rejection == "access_denied", failure is not null, deadline.Token)
+                rejection == "access_denied", failure is not null, deadline.Token,
+                accountEmail, failure is AuthorizationException { ErrorCode: "drive_scope_not_granted" })
                 .ConfigureAwait(false);
             if (failure is not null) throw failure;
             if (tokenJson is not null) return tokenJson; // Never log or print.
@@ -501,6 +584,7 @@ internal static class GoogleDirectBrowserAuth
         string url = BuildAuthorizationUrl(id,
             "http://127.0.0.1:45678/callback", "verifier", "STATE");
         if (!url.Contains("code_challenge_method=S256", StringComparison.Ordinal) ||
+            !url.Contains("scope=" + Uri.EscapeDataString(RequestedScopes), StringComparison.Ordinal) ||
             !url.Contains("redirect_uri=", StringComparison.Ordinal) ||
             !url.Contains("access_type=offline", StringComparison.Ordinal) ||
             !url.Contains("prompt=select_account%20consent", StringComparison.Ordinal) ||
