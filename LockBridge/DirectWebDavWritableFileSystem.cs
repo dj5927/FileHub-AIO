@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using Fsp.Interop;
 using FileInfo = Fsp.Interop.FileInfo;
 
@@ -24,7 +25,8 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
     private readonly object _excelOwnerGate = new();
     private readonly Dictionary<string, int> _localExcelEditors =
         new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, string> _ownerFilesPublishedHere =
+    private sealed record OwnedExcelMarker(string? Etag, byte[] Sha256, long Size);
+    private readonly ConcurrentDictionary<string, OwnedExcelMarker> _ownerFilesPublishedHere =
         new(StringComparer.OrdinalIgnoreCase);
     private const string ExcelOwnerLeasePrefix = "excel-owner-only:";
     private int _activeWriteHandles;
@@ -285,11 +287,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
                 {
                     ExcelOwnerInterop.RequireAvailable(_backend, workbook,
                         (ownerPath, remoteEtag) =>
-                            DirectWebDavWriteStore.StrongEtag(remoteEtag) &&
-                            _ownerFilesPublishedHere.TryGetValue(ownerPath,
-                                out string? ourEtag) &&
-                            string.Equals(remoteEtag, ourEtag,
-                                StringComparison.Ordinal));
+                            IsOurCurrentExcelOwner(ownerPath, remoteEtag));
                     count = 0;
                 }
                 _localExcelEditors[workbook] = count + 1;
@@ -300,6 +298,45 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         string key = path.TrimStart('/').Replace('\\', '/');
         _leases.AddHandle(key);
         return key;
+    }
+
+    private bool IsOurCurrentExcelOwner(string ownerPath, string? remoteEtag)
+    {
+        if (!_ownerFilesPublishedHere.TryGetValue(ownerPath, out var owner))
+            return false;
+        // Two strong revisions identify a remote replacement even if the
+        // other Windows editor has the same account/display name.
+        if (DirectWebDavWriteStore.StrongEtag(owner.Etag) &&
+            DirectWebDavWriteStore.StrongEtag(remoteEtag))
+            return string.Equals(owner.Etag, remoteEtag, StringComparison.Ordinal);
+        // Synology often omits a strong ETag on the initial PUT response.
+        // Only for the tiny owner file published by THIS mount, verify the
+        // actual bytes instead. Unrelated Explorer files never incur GETs.
+        var stat = _backend.StatFresh(ownerPath);
+        if (stat is null || stat.IsDirectory || stat.Size != owner.Size ||
+            stat.Size is < 1 or > 4096)
+            return false;
+        var bytes = _backend.Read(stat, 0, (int)stat.Size);
+        return CryptographicOperations.FixedTimeEquals(owner.Sha256,
+            SHA256.HashData(bytes));
+    }
+
+    private void PublishExcelOwnerRevision(WriteDescriptor writer)
+    {
+        if (!ExcelOwnerInterop.IsOwnerFile(writer.Entry.Path)) return;
+        var session = writer.Session;
+        lock (session.Gate)
+        {
+            if (session.Dirty || session.Local.Length is < 1 or > 4096)
+                throw new IOException("Excel owner was not committed completely");
+            session.Local.Seek(0, SeekOrigin.Begin);
+            byte[] sha = SHA256.HashData(session.Local);
+            _ownerFilesPublishedHere[writer.Entry.Path] = new OwnedExcelMarker(
+                session.CommittedEntry?.ETag, sha, session.Local.Length);
+        }
+        Console.WriteLine("DIRECT_EXCEL_OWNER_REMOTE_VISIBLE on=write" +
+            " strongEtag=" + DirectWebDavWriteStore.StrongEtag(
+                session.CommittedEntry?.ETag));
     }
 
     private void ReleaseOfficeLease(string? key)
@@ -647,17 +684,33 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             if (ExcelOwnerInterop.IsOwnerFile(writer.Entry.Path) &&
                 writer.Session.Dirty)
             {
-                // Excel writes its own binary owner file. Publish the bytes
-                // to the NAS before acknowledging its WinFsp Write, rather
-                // than waiting for eventual Cleanup (which left RaiDrive
-                // unaware of an editor). No synthetic owner file is made.
+                // Excel keeps its owner handle open while the workbook is
+                // being edited: waiting for Cleanup hides ~$ from other PCs.
+                // It also writes 55 bytes first and a larger owner payload
+                // later. Synology's first PUT returns no ETag, so after
+                // publishing the first chunk, fetch the real strong ETag
+                // before allowing a subsequent conditional PUT.
                 _writes.Commit(writer.Session);
-                _overlay.TryRemove(writer.Entry.Path, out _);
                 RecordCommittedRevision(writer);
-                if (DirectWebDavWriteStore.StrongEtag(writer.Session.ExpectedEtag))
-                    _ownerFilesPublishedHere[writer.Entry.Path] =
-                        writer.Session.ExpectedEtag!;
-                Console.WriteLine("DIRECT_EXCEL_OWNER_REMOTE_VISIBLE");
+                if (!DirectWebDavWriteStore.StrongEtag(writer.Session.ExpectedEtag))
+                {
+                    for (int i = 0; i < 4; i++)
+                    {
+                        var fresh = _backend.StatFresh(writer.Entry.Path);
+                        if (fresh is not null &&
+                            fresh.Size == writer.Session.Local.Length &&
+                            DirectWebDavWriteStore.StrongEtag(fresh.ETag))
+                        {
+                            writer.Session.ExpectedEtag = fresh.ETag;
+                            writer.Session.CommittedEntry = fresh;
+                            writer.Entry = fresh;
+                            break;
+                        }
+                        if (i < 3) Thread.Sleep(60 * (i + 1));
+                    }
+                }
+                _overlay.TryRemove(writer.Entry.Path, out _);
+                PublishExcelOwnerRevision(writer);
             }
             transferred = (uint)data.Length;
             info = Describe(writer);
@@ -908,6 +961,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
                 try
                 {
                     if (dirty.Session.WriteBehind && dirty.Session.Created &&
+                        !ExcelOwnerInterop.IsOwnerFile(dirty.Entry.Path) &&
                         QueueCopy(dirty))
                     {
                         if (Environment.GetEnvironmentVariable("FILEHUB_DIRECT_DEBUG") == "1")
