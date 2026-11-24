@@ -1,0 +1,2 @@
+Trigger pinned pc-v1.3.139 build release after verifying 11 ZIP parts from local Windows publisher.
+Expected 169206325 bytes and SHA256 EFC5480B0423B2D42B353D5000F0ACCDEEFA479496268E15603DA95FE4A95F38.
