@@ -75,6 +75,8 @@ internal static class ModernTheme
 internal sealed class ModernButton : Button
 {
     private readonly bool accent;
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal string? Glyph { get; set; }
     private bool hovered;
     private bool pressed;
 
@@ -115,9 +117,23 @@ internal sealed class ModernButton : Button
             (accent ? Color.FromArgb(63, 153, 245) : Color.FromArgb(55, 70, 90)) :
             (accent ? ModernTheme.Accent : ModernTheme.Elevated);
         using (var brush = new SolidBrush(fill)) e.Graphics.FillPath(brush, path);
-        TextRenderer.DrawText(e.Graphics, Text, Font, Rectangle.Inflate(ClientRectangle, -7, -2),
+        var textBounds = Rectangle.Inflate(ClientRectangle, -7, -2);
+        var horizontal = TextFormatFlags.HorizontalCenter;
+        if (Glyph is not null)
+        {
+            float scale = DeviceDpi / 96f;
+            int inset = (int)Math.Round(13 * scale);
+            int size = Math.Min((int)Math.Round(21 * scale), Height - 8);
+            int start = inset + size + (int)Math.Round(10 * scale);
+            MenuGlyphs.Draw(e.Graphics, Glyph,
+                new RectangleF(inset, (Height - size) / 2f, size, size),
+                Enabled ? Color.FromArgb(191, 216, 238) : ModernTheme.Muted);
+            textBounds = new Rectangle(start, 2, Math.Max(0, Width - start - inset), Height - 4);
+            horizontal = TextFormatFlags.Left;
+        }
+        TextRenderer.DrawText(e.Graphics, Text, Font, textBounds,
             Enabled ? ForeColor : ModernTheme.Muted,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
+            horizontal | TextFormatFlags.VerticalCenter |
             TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
         if (Focused && ShowFocusCues)
         {
@@ -957,23 +973,25 @@ internal sealed partial class MainForm
                         row.Controls.OfType<Label>().Any(n => n.Text == p.DisplayName))));
             if (card is null) throw new InvalidOperationException("Card missing: " + p.DisplayName);
             var grid = card.Controls.OfType<TableLayoutPanel>().Single();
-            if (p.Protocol != "SMB" &&
-                card.ContextMenuStrip?.Items.Cast<ToolStripItem>()
-                    .All(x => x.Text != "끊어진 네트워크 위치 정리") != false)
-                throw new InvalidOperationException(
-                    "Manual disconnected network-location recovery menu missing");
+            var menu = card.ContextMenuStrip ??
+                throw new InvalidOperationException("Profile menu missing");
+            var expected = new List<string> { "드라이브 열기", "연결 설정" };
+            if (SynologySharing.IsNas(p)) expected.Add("Synology 공유 설정");
             if (p.Protocol == "WebDAV")
             {
-                var menu = card.ContextMenuStrip ??
-                    throw new InvalidOperationException("WebDAV diagnostic menu missing");
-                string[] captions = menu.Items.Cast<ToolStripItem>().Select(x => x.Text).ToArray();
-                if (!captions.Contains("파일잠금 상태 확인") ||
-                    !captions.Contains("서버 잠금 충돌 검사"))
-                    throw new InvalidOperationException("WebDAV lock inspection actions not exposed");
+                expected.Add("파일잠금 상태 확인");
                 if (p.UseLockBridge &&
                     !LockStatusPresentation.CardStatus(p, true, false).Contains("파일잠금 브리지"))
                     throw new InvalidOperationException("WebDAV protected mode is not shown");
             }
+            if (p.Protocol == "GoogleDrive") expected.Add("Google 계정 재인증");
+            if (p.Protocol == "OneDrive") expected.Add("Microsoft 계정 재인증");
+            expected.AddRange(["업로드 상태", "로그 폴더", "연결 삭제"]);
+            var menuItems = menu.Items.OfType<ToolStripMenuItem>().ToArray();
+            if (!menuItems.Select(x => x.Text).SequenceEqual(expected) ||
+                !menu.ShowImageMargin || menuItems.Any(x => x.Image is null) ||
+                menu.Items.OfType<ToolStripSeparator>().Count() != 1)
+                throw new InvalidOperationException("Simplified icon menu invalid: " + p.Protocol);
             if (card.Height > 74 || card.Width > ClientSize.Width ||
                 card.Controls.OfType<FlowLayoutPanel>().Single().Controls.OfType<DriveActionButton>().Count() != 4)
                 throw new InvalidOperationException("Compact card row or action layout invalid: " + p.Protocol);
@@ -1053,21 +1071,34 @@ internal sealed partial class MainForm
 
     private ContextMenuStrip MakeCardMenu(NasProfile p)
     {
-        var menu = new ContextMenuStrip { BackColor = ModernTheme.Surface,
-            ForeColor = ModernTheme.Text, ShowImageMargin = false };
-        void Item(string caption, Action action)
+        var menu = new ContextMenuStrip
         {
-            menu.Items.Add(caption, null, (_, _) => {
+            BackColor = ModernTheme.Surface,
+            ForeColor = ModernTheme.Text,
+            ShowImageMargin = true,
+            ImageScalingSize = new Size(18, 18),
+            Font = new Font("Malgun Gothic", 9f),
+            Renderer = new ProfileMenuRenderer()
+        };
+        var images = new List<Image>();
+        menu.Disposed += (_, _) => { foreach (var image in images) image.Dispose(); };
+        void Item(string caption, string icon, Action action)
+        {
+            var image = MenuGlyphs.Create(icon, 36, ModernTheme.Muted);
+            images.Add(image);
+            var item = new ToolStripMenuItem(caption, image, (_, _) =>
+            {
                 selectedId = p.Id;
                 action();
             });
+            item.ForeColor = ModernTheme.Text;
+            item.Padding = new Padding(0, 3, 8, 3);
+            menu.Items.Add(item);
         }
-        Item("드라이브 열기", OpenDrive);
-        Item("연결 설정", Edit);
+        Item("드라이브 열기", "open", OpenDrive);
+        Item("연결 설정", "settings", Edit);
         if (SynologySharing.IsNas(p))
-            Item("Synology 공유 설정", () => {
-                // Open after the card menu closes to avoid WinForms reentry
-                // into ContextMenuStrip keyboard processing.
+            Item("Synology 공유 설정", "share", () => {
                 BeginInvoke((Action)(() => {
                     if (IsDisposed || Disposing) return;
                     using var form = new SynologySettingsForm(cfg, preferredProfileId: p.Id);
@@ -1075,26 +1106,15 @@ internal sealed partial class MainForm
                 }));
             });
         if (p.Protocol == "WebDAV")
-        {
-            Item("파일잠금 상태 확인", () => _ = ShowWebDavLockStatus());
-            Item("서버 잠금 충돌 검사", () => _ = RemoteLockCheck());
-        }
-        Item("연결 진단", () => _ = DiagnoseSelected());
+            Item("파일잠금 상태 확인", "lock", () => _ = ShowWebDavLockStatus());
         if (p.Protocol == "GoogleDrive")
-            Item("Google 탐색기 표시 재확인", () =>
-                _ = CheckGoogleExplorerVisibilityAsync(p, manual: true));
-        if (p.Protocol == "GoogleDrive")
-            Item("Google 계정 재인증", () => _ = ReauthorizeGoogleDrive());
-        if (p.Protocol == "GoogleDrive")
-            Item("이전 Google 인증 복원", () => _ = RestoreGooglePreviousAuthorization());
+            Item("Google 계정 재인증", "account", () => _ = ReauthorizeGoogleDrive());
         if (p.Protocol == "OneDrive")
-            Item("Microsoft 계정 재인증", () => _ = ReauthorizeOneDrive());
-        Item("업로드 상태", () => _ = CheckUploadStatus());
-        if (p.Protocol != "SMB")
-            Item("끊어진 네트워크 위치 정리", () => _ = CleanupOldNetworkLocation());
-        Item("로그 폴더", OpenLogs);
+            Item("Microsoft 계정 재인증", "account", () => _ = ReauthorizeOneDrive());
+        Item("업로드 상태", "upload", () => _ = CheckUploadStatus());
+        Item("로그 폴더", "folder", OpenLogs);
         menu.Items.Add(new ToolStripSeparator());
-        Item("연결 삭제", Delete);
+        Item("연결 삭제", "delete", Delete);
         return menu;
     }
 
@@ -1203,64 +1223,4 @@ internal sealed partial class MainForm
         }
     }
 
-    private void ShowModernSettings()
-    {
-        using var dialog = new Form
-        {
-            Text = "FileHub AIO · 환경 설정", ClientSize = new Size(610, 560),
-            MinimumSize = new Size(560, 500), StartPosition = FormStartPosition.CenterParent,
-            BackColor = ModernTheme.Background, ForeColor = ModernTheme.Text,
-            Font = new Font("Malgun Gothic", 10), AutoScaleMode = AutoScaleMode.Dpi
-        };
-        ModernTheme.EnableDarkTitleBar(dialog);
-        var body = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(23),
-            ColumnCount = 1, RowCount = 3 };
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 75));
-        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        dialog.Controls.Add(body);
-        var settingsTitle = ModernTheme.Label("환경 설정", 18, true);
-        settingsTitle.Dock = DockStyle.Fill;
-        body.Controls.Add(settingsTitle, 0, 0);
-        var autoStart = new CheckBox
-        {
-            Text = "Windows 로그인 시 FileHub AIO 자동 실행", Checked = AppStore.IsAutoStartEnabled(),
-            ForeColor = ModernTheme.Text, BackColor = ModernTheme.Background,
-            Dock = DockStyle.Fill, FlatStyle = FlatStyle.Flat
-        };
-        autoStart.CheckedChanged += (_, _) =>
-        {
-            try { AppStore.SetAutoStart(autoStart.Checked); cfg.StartWithWindows = autoStart.Checked; AppStore.Save(cfg); }
-            catch (Exception ex) { MessageBox.Show(ex.Message); }
-        };
-        body.Controls.Add(autoStart, 0, 1);
-        var group = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
-            WrapContents = false, AutoScroll = true, BackColor = ModernTheme.Background
-        };
-        body.Controls.Add(group, 0, 2);
-        var diagnosticsTitle = ModernTheme.Label("연결 관리 및 진단", 11, true);
-        diagnosticsTitle.Size = new Size(500, 36);
-        group.Controls.Add(diagnosticsTitle);
-        void Tool(string label, Action action)
-        {
-            var button = ModernTheme.Button(label, 350, action, height: 35);
-            button.Margin = new Padding(0, 4, 0, 4);
-            group.Controls.Add(button);
-        }
-        Tool("연결 진단", () => _ = DiagnoseSelected());
-        Tool("업로드 상태 확인", () => _ = CheckUploadStatus());
-        Tool("WebDAV 저장 테스트", () => _ = CheckWebDavSave());
-        Tool("Excel 읽기 진단", () => _ = CompareExcelRead());
-        Tool("파일 잠금 검사", () => _ = LockCheck());
-        Tool("서버 잠금 검사", () => _ = RemoteLockCheck());
-        Tool("WebDAV 표준 잠금 검사", () => _ = CheckWebDavStandardLock());
-        Tool("연결 상태 유지 확인", () => _ = CheckPersistentMount());
-        Tool("루트 목록 갱신", () => _ = RefreshRootMetadata());
-        Tool("전체 연결 재시도", () => _ = ConnectAll(true));
-        Tool("WinFsp 설치 / 확인", () => _ = InstallWinFsp());
-        Tool("로그 폴더 열기", OpenLogs);
-        dialog.ShowDialog(this);
-    }
 }

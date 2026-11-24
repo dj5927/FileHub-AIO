@@ -400,7 +400,8 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             else if (!create)
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, Remote(name));
-                request.Headers.TryAddWithoutValidation("If-Match", renameOnly ? "*" : current!.ETag);
+                if (!renameOnly)
+                    request.Headers.TryAddWithoutValidation("If-Match", current!.ETag);
                 using var response = _http.Send(request,
                     HttpCompletionOption.ResponseHeadersRead);
                 if (!response.IsSuccessStatusCode)
@@ -1345,7 +1346,6 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             if (!_publishedOfficeTemps.TryGetValue(from, out var expected))
                 throw new IOException("Office temporary source is no longer owned");
             using var source = new HttpRequestMessage(HttpMethod.Get, Remote(from));
-            source.Headers.TryAddWithoutValidation("If-Match", "*");
             using var content = _http.Send(source, HttpCompletionOption.ResponseHeadersRead);
             if (!content.IsSuccessStatusCode || !CryptographicOperations.FixedTimeEquals(
                 SHA256.HashData(content.Content.ReadAsStream()), expected))
@@ -1354,15 +1354,28 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         using var request = new HttpRequestMessage(new HttpMethod("MOVE"), Remote(from));
         request.Headers.TryAddWithoutValidation("Destination", Remote(to).AbsoluteUri);
         request.Headers.TryAddWithoutValidation("Overwrite", "F");
-        request.Headers.TryAddWithoutValidation("If-Match", newOfficeDocument ? "*" : originalEtag);
+        // Some WebDAV servers reject If-Match:* on MOVE even when the source
+        // exists. For our byte-verified, unversioned temporary file, the
+        // verified Overwrite:F guard is the destination precondition.
+        if (!newOfficeDocument)
+            request.Headers.TryAddWithoutValidation("If-Match", originalEtag);
         using var result = _http.Send(request);
         if (result.StatusCode is not (HttpStatusCode.Created or HttpStatusCode.NoContent))
             throw new IOException("Safe WebDAV MOVE failed HTTP " + (int)result.StatusCode);
         _read.Invalidate(from);
         _read.Invalidate(to);
-        _publishedOfficeTemps.TryRemove(from, out _);
         if (newOfficeDocument)
+        {
+            using var verify = _http.GetAsync(Remote(to),
+                HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
+            verify.EnsureSuccessStatusCode();
+            if (!_publishedOfficeTemps.TryGetValue(from, out var expected) ||
+                !CryptographicOperations.FixedTimeEquals(
+                    SHA256.HashData(verify.Content.ReadAsStream()), expected))
+                throw new IOException("Office MOVE destination checksum mismatch");
             Console.WriteLine("DIRECT_WEBDAV_NEW_DOCUMENT_MOVE_WITHOUT_ETAG_ACCEPTED");
+        }
+        _publishedOfficeTemps.TryRemove(from, out _);
         return result.Headers.ETag?.ToString();
     }
 

@@ -1564,6 +1564,53 @@ internal static class Program
             }
             return;
         }
+        if (args.Contains("--compact-menu-policy-test", StringComparer.OrdinalIgnoreCase))
+        {
+            Environment.SetEnvironmentVariable("NASMOUNT_UI_SMOKE", "1");
+            try
+            {
+                var sample = new AppConfig
+                {
+                    Profiles = new[] { "WebDAV", "FTP", "SFTP", "SMB", "GoogleDrive",
+                        "OneDrive", "TeraBox", "MyBox" }.Select((protocol, index) =>
+                        new NasProfile { Protocol = protocol, DisplayName = protocol,
+                            Host = "nas.example.invalid", Letter = ((char)('Z' - index)).ToString(),
+                            UseLockBridge = protocol == "WebDAV" }).ToList()
+                };
+                using var dashboard = new MainForm(false, sample);
+                dashboard.Show();
+                Application.DoEvents();
+                dashboard.VerifyProtocolIconsForUiTest();
+                dashboard.VerifyCardMenuLifetimeForUiTest();
+                using var settings = dashboard.CreateCompactSettingsForm();
+                settings.Show(dashboard);
+                Application.DoEvents();
+                var buttons = settings.Controls.OfType<ModernButton>().ToArray();
+                string[] expected = ["설정 내보내기", "설정 가져오기", "로그 폴더 열기",
+                    "WinFsp 확인 / 설치", "PC 업데이트 확인", "엔진 · 버전 · README", "닫기"];
+                if (!buttons.Select(b => b.Text).OrderBy(x => x).SequenceEqual(expected.OrderBy(x => x)) ||
+                    buttons.Count(b => b.Glyph is not null) != 6 ||
+                    buttons.Any(b => !b.Visible || b.Right > settings.ClientSize.Width ||
+                        b.Bottom > settings.ClientSize.Height || b.Top < 0 || b.Left < 0) ||
+                    buttons.SelectMany((b, i) => buttons.Skip(i + 1).Select(other =>
+                        b.Bounds.IntersectsWith(other.Bounds))).Any(x => x) ||
+                    settings.Controls.OfType<CheckBox>().Count() != 1)
+                    throw new InvalidOperationException("Compact settings content or layout invalid");
+                string dir = Path.Combine(AppContext.BaseDirectory, "ui-qa");
+                Directory.CreateDirectory(dir);
+                using var image = new Bitmap(settings.ClientSize.Width, settings.ClientSize.Height);
+                settings.DrawToBitmap(image, new Rectangle(Point.Empty, image.Size));
+                image.Save(Path.Combine(dir, "settings-v142.png"));
+                settings.Hide();
+                Console.WriteLine("COMPACT_SETTINGS_AND_ALL_PROTOCOL_MENU_ICONS_PASS");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("COMPACT_MENU_POLICY_FAILED " + ex);
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
         if (args.Contains("--ui-smoke-test", StringComparer.OrdinalIgnoreCase))
         {
             ProtocolIconFactory.VerifyProtocolDistinctnessForUiTest();
@@ -1956,13 +2003,18 @@ internal static class Program
                             "PC update button missing or overlapping compact settings");
                     var shareButton = settings.Controls.OfType<Button>()
                         .SingleOrDefault(x => x.Text == "Synology 공유 설정");
-                    if (shareButton is null || !shareButton.Visible ||
-                        shareButton.Bounds.IntersectsWith(updateButton.Bounds) ||
-                        shareButton.Bottom > settings.ClientSize.Height)
-                        throw new InvalidOperationException(
-                            "Synology link management button missing or overlapping settings");
-                    if (settings.AutoScroll || settings.ClientSize.Height > 438)
+                    if (shareButton is not null)
+                        throw new InvalidOperationException("Synology settings must be profile-menu only");
+                    var expectedSettings = new[] { "설정 내보내기", "설정 가져오기",
+                        "로그 폴더 열기", "WinFsp 확인 / 설치", "PC 업데이트 확인",
+                        "엔진 · 버전 · README", "닫기" };
+                    if (!settingsButtons.Select(b => b.Text).OrderBy(x => x)
+                        .SequenceEqual(expectedSettings.OrderBy(x => x)) ||
+                        settingsButtons.OfType<ModernButton>().Count(b => b.Glyph is not null) != 6)
+                        throw new InvalidOperationException("Unexpected settings actions or missing icons");
+                    if (settings.AutoScroll || settings.ClientSize.Height > 332)
                         throw new InvalidOperationException("Global settings layout too tall");
+                    Console.WriteLine("COMPACT_SETTINGS_EXACT_ACTIONS_AND_ICONS_PASS");
                     dashboard.VerifyUpdateNoticeForUiTest();
                     using var bitmap = new Bitmap(settings.Width, settings.Height);
                     settings.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));

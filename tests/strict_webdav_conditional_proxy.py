@@ -33,6 +33,8 @@ STRIP_PUT_ETAG = os.environ.get(
 STRIP_OWNER_ETAGS = os.environ.get(
     "FILEHUB_STRICT_DAV_STRIP_OWNER_ETAGS") == "1"
 STRIP_OFFICE_TEMP_ETAGS = os.environ.get("FILEHUB_STRICT_DAV_STRIP_OFFICE_TEMP_ETAGS") == "1"
+REJECT_UNVERSIONED_MOVE_IF_MATCH = os.environ.get(
+    "FILEHUB_STRICT_DAV_REJECT_UNVERSIONED_MOVE_IF_MATCH") == "1"
 
 def is_owner(path):
     return unquote(urlsplit(path).path).rsplit("/", 1)[-1].startswith("~$")
@@ -106,6 +108,14 @@ class Handler(BaseHTTPRequestHandler):
         write = self.command in ("PUT", "DELETE", "MOVE", "MKCOL", "COPY")
         guard = write_guard(request_path) if write else threading.RLock()
         with guard:
+            if (REJECT_UNVERSIONED_MOVE_IF_MATCH and self.command == "MOVE" and
+                    strip_etag(request_path) and self.headers.get("If-Match")):
+                self.send_response(412)
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+                return
             # Reproduce Synology's refusal of valid conditional DELETE after
             # a recent upload. Explicit Explorer deletion must work without
             # an If-Match, while automatic Office replacement retains it.

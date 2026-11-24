@@ -15,7 +15,7 @@ internal sealed partial class MainForm
         var window = new Form
         {
             Text = "FileHub AIO · 환경 설정",
-            ClientSize = new Size(565, 438),
+            ClientSize = new Size(565, 332),
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false,
@@ -57,105 +57,57 @@ internal sealed partial class MainForm
         };
         window.Controls.Add(startup);
 
-        var line = new Panel { BackColor = ModernTheme.Border };
-        line.SetBounds(27, 94, 510, 1);
-        window.Controls.Add(line);
-        var section = ModernTheme.Label("연결 도구", 10, true);
-        section.SetBounds(28, 103, 450, 26);
-        window.Controls.Add(section);
+        void Section(string title, int y)
+        {
+            var label = ModernTheme.Label(title, 10, true, ModernTheme.Muted);
+            label.SetBounds(28, y, 250, 24);
+            window.Controls.Add(label);
+            var rule = new Panel { BackColor = ModernTheme.Border };
+            rule.SetBounds(282, y + 12, 244, 1);
+            window.Controls.Add(rule);
+        }
 
-        var diagnostics = ModernTheme.Button("연결 진단", 243,
-            () => _ = DiagnoseSelected(), height: 37);
-        diagnostics.SetBounds(28, 139, 243, 33);
-        window.Controls.Add(diagnostics);
-        var logs = ModernTheme.Button("로그 폴더 열기", 244, OpenLogs, height: 37);
-        logs.SetBounds(282, 139, 244, 33);
-        window.Controls.Add(logs);
-        var driver = ModernTheme.Button("WinFsp 확인 / 설치", 243,
-            () => _ = InstallWinFsp(), height: 37);
-        driver.SetBounds(28, 180, 243, 33);
-        window.Controls.Add(driver);
-        var retry = ModernTheme.Button("전체 연결 재시도", 244,
-            () => _ = ConnectAll(true), height: 37);
-        retry.SetBounds(282, 180, 244, 33);
-        window.Controls.Add(retry);
-        var diagnoseGhost = ModernTheme.Button(
-            "빨간 X 원인 정밀 진단 저장", 244,
-            () =>
-            {
-                try
-                {
-                    string path = GhostSystemDiagnostics.SaveReport();
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                    {
-                        FileName = path, UseShellExecute = true
-                    });
-                    MessageBox.Show(window,
-                        "현재 PC의 Windows 연결 상태와 WinFsp 드라이버 볼륨을" +
-                        " 읽기 전용으로 검사해 진단 파일을 만들었습니다.\n\n" +
-                        path + "\n\n" +
-                        "빨간 X가 그대로라면 이 파일을 보내 주세요.\n" +
-                        "실제 볼륨이 남아 있는 경우 다른 연결 보호를 위해" +
-                        " WinFsp 전체 재시작은 자동 실행하지 않습니다.",
-                        $"FileHub AIO v{PcUpdateService.DisplayVersion} · 네트워크 위치 정밀 진단",
-                        MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
-                catch (Exception ex)
-                {
-                    AppStore.Log("GHOST_DIAGNOSTICS_ERROR " + ex);
-                    MessageBox.Show(window, "진단 저장 실패: " + ex.Message,
-                        "정밀 진단", MessageBoxButtons.OK,
-                        MessageBoxIcon.Warning);
-                }
-            }, height: 37);
-        diagnoseGhost.SetBounds(28, 221, 244, 33);
-        window.Controls.Add(diagnoseGhost);
-        var backup = ModernTheme.Button("설정 내보내기", 243,
-            () => ExportSettings(window), height: 37);
-        backup.SetBounds(28, 262, 243, 33);
+        ModernButton ActionButton(string title, string icon, int x, int y,
+            Action action, int width = 243, bool accent = false)
+        {
+            var button = (ModernButton)ModernTheme.Button(title, width, action,
+                accent: accent, height: 40);
+            button.Glyph = icon;
+            button.SetBounds(x, y, width, 40);
+            button.AccessibleName = title;
+            window.Controls.Add(button);
+            return button;
+        }
+
+        Section("설정 백업", 92);
+        var backup = ActionButton("설정 내보내기", "export", 28, 119,
+            () => ExportSettings(window));
         backup.AccessibleName = "모든 연결 설정과 저장된 암호를 암호화 백업 파일로 내보내기";
-        window.Controls.Add(backup);
-        var restore = ModernTheme.Button("설정 가져오기", 244,
-            () => ImportSettings(window), height: 37);
-        restore.SetBounds(282, 262, 244, 33);
+        var restore = ActionButton("설정 가져오기", "import", 282, 119,
+            () => ImportSettings(window), width: 244);
         restore.AccessibleName = "암호화된 FileHub AIO 백업 파일을 가져오기";
-        window.Controls.Add(restore);
 
-        // Permanent, self-contained reference for future maintenance:
-        // versions, binary roles, upstream repositories and real on-disk
-        // rclone versions. Opens independently of current connections.
-        var components = ModernTheme.Button("엔진 · 버전 · README", 243,
-            () =>
-            {
-                using var detail = new ComponentInventoryDialog();
-                detail.ShowDialog(this); // MainForm is the top-level owner.
-            }, height: 34);
-        components.SetBounds(28, 385, 243, 33);
+        Section("프로그램 관리", 174);
+        ActionButton("로그 폴더 열기", "folder", 28, 201, OpenLogs);
+        ActionButton("WinFsp 확인 / 설치", "driver", 282, 201,
+            () => _ = InstallWinFsp(), width: 244);
+        var update = ActionButton("PC 업데이트 확인", "update", 28, 249,
+            () => _ = CheckForPcUpdateAsync(window));
+        update.AccessibleName = "Windows 전용 GitHub pc-v 릴리즈 업데이트 확인";
+        var components = ActionButton("엔진 · 버전 · README", "info", 282, 249, () =>
+        {
+            using var detail = new ComponentInventoryDialog();
+            detail.ShowDialog(this);
+        }, width: 244);
         components.AccessibleName = "사용 엔진, 라이브러리 및 확장 백엔드 버전 README";
-        window.Controls.Add(components);
 
-        var close = ModernTheme.Button("닫기", 109,
+        var close = (ModernButton)ModernTheme.Button("닫기", 110,
             () => { window.DialogResult = DialogResult.OK; window.Close(); },
             accent: true, height: 34);
-        close.SetBounds(417, 385, 109, 33);
+        close.SetBounds(416, 297, 110, 32);
         window.Controls.Add(close);
-        var share = ModernTheme.Button("Synology 공유 설정", 498,
-            OpenSynologyShare, height: 34);
-        share.SetBounds(28, 303, 498, 33);
-        window.Controls.Add(share);
-        var checkPcUpdate = ModernTheme.Button("PC 업데이트 확인", 498,
-            () => _ = CheckForPcUpdateAsync(window), height: 34);
-        checkPcUpdate.SetBounds(28, 344, 498, 33);
-        checkPcUpdate.AccessibleName =
-            "Windows 전용 GitHub pc-v 릴리즈 업데이트 확인";
-        window.Controls.Add(checkPcUpdate);
         window.AcceptButton = close;
+        window.CancelButton = close;
         return window;
-    }
-
-    private void OpenSynologyShare()
-    {
-        using var form = new SynologySettingsForm(cfg);
-        form.ShowDialog(this);
     }
 }

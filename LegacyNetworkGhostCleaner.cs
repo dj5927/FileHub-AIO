@@ -46,7 +46,7 @@ internal static class LegacyNetworkGhostCleaner
             "Shell 신규 조회에서 남은 항목 " + StillShown + "개\n\n" +
             (StillShown > 0 ?
                 "남은 항목은 실행 중이거나 Windows가 아직 사용 중입니다. 로그를 확인하세요." :
-                "조회 가능한 연결 기록을 정리했습니다. 열린 탐색기의 빨간 X가 계속 남으면 정밀 진단을 저장하세요.");
+                "조회 가능한 연결 기록을 정리했습니다. 열린 탐색기의 빨간 X가 계속 남으면 로그를 확인하세요.");
     }
 
     private static string? SavedRemote(string letter)

@@ -1,4 +1,4 @@
-param([string]$Repo=(Split-Path -Parent $PSScriptRoot),[string]$ProxyRepo=$Repo,[int]$Port=19141,[int]$Latency=0,[switch]$NoPutEtag,[switch]$NoTempEtag,[switch]$DenyFinalPut)
+param([string]$Repo=(Split-Path -Parent $PSScriptRoot),[string]$ProxyRepo=$Repo,[int]$Port=19141,[int]$Latency=0,[switch]$NoPutEtag,[switch]$NoTempEtag,[switch]$RejectUnversionedMove,[switch]$DenyFinalPut)
 $ErrorActionPreference='Stop'
 $root=Join-Path $env:TEMP ('filehub-office-new-save-'+[guid]::NewGuid().ToString('N').Substring(0,8))
 $server=Join-Path $root 'remote';$journals=Join-Path $root 'journals'
@@ -16,6 +16,7 @@ try {
  $env:FILEHUB_STRICT_DAV_BACKEND="$Port";$env:FILEHUB_STRICT_DAV_FRONT="$front";$env:FILEHUB_STRICT_DAV_RESPONSE_LATENCY_MS="$Latency";$env:FILEHUB_STRICT_DAV_PER_PATH_LOCKS='1';$env:FILEHUB_STRICT_DAV_STRIP_OWNER_ETAGS='1';$env:FILEHUB_STRICT_DAV_STRIP_PUT_ETAG=if($NoPutEtag){'1'}else{'0'}
  $env:FILEHUB_STRICT_DAV_REJECT_NAMED_NEWFILE_PUT=if($DenyFinalPut){'Denied.xlsx'}else{''}
  $env:FILEHUB_STRICT_DAV_STRIP_OFFICE_TEMP_ETAGS=if($NoTempEtag){'1'}else{'0'}
+ $env:FILEHUB_STRICT_DAV_REJECT_UNVERSIONED_MOVE_IF_MATCH=if($RejectUnversionedMove){'1'}else{'0'}
  $p=Start-Process python.exe -PassThru -NoNewWindow -ArgumentList @('-u',(Join-Path $ProxyRepo 'tests\strict_webdav_conditional_proxy.py')) -RedirectStandardOutput (Join-Path $root 'proxy.log') -RedirectStandardError (Join-Path $root 'proxy.err')
  $ready=$false;for($i=0;$i -lt 60;$i++){try{$tcp=[Net.Sockets.TcpClient]::new('127.0.0.1',$front);$tcp.Dispose();$ready=$true;break}catch{Start-Sleep -Milliseconds 200}}
  if(!$ready){throw 'proxy did not start'}
@@ -40,6 +41,16 @@ try {
  $book.Close($false);$book=$null
  $book=$excel.Workbooks.Open($remote,0,$true);if($book.Worksheets.Item(1).Cells.Item(2,1).Value2 -ne 'SAVE_ROUND_5'){throw 'Remote workbook content does not match'}
  $book.Close($false);$book=$null;Write-Output 'NEW_SAVE_AND_REPEAT_PASS'
+ $local=Join-Path $root 'LocalSource.xlsx'
+ $book=$excel.Workbooks.Add();$book.Worksheets.Item(1).Cells.Item(1,1).Value2='LOCAL_TO_NAS_SAVE_AS'
+ $book.SaveAs($local,51)
+ $name2=([char]0xC0C8)+([char]0xBB38)+([char]0xC11C)+'.xlsx'
+ $book.SaveAs((Join-Path $drive $name2),51)
+ if(!$book.Saved -or !(Test-Path (Join-Path $server $name2))){throw 'Local to NAS SaveAs failed'}
+ $book.Close($false);$book=$null
+ $book=$excel.Workbooks.Open((Join-Path $server $name2),0,$true)
+ if($book.Worksheets.Item(1).Cells.Item(1,1).Value2 -ne 'LOCAL_TO_NAS_SAVE_AS'){throw 'SaveAs content mismatch'}
+ $book.Close($false);$book=$null;Write-Output 'LOCAL_TO_NAS_KOREAN_SAVE_AS_PASS'
 }finally{
  if($ownedExcel){if($book){try{$book.Close($false)}catch{}};try{$excel.Quit()}catch{}}
  foreach($c in @($book,$excel)){if($c){try{[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($c)}catch{}}}

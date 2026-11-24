@@ -160,7 +160,7 @@ internal sealed partial class MainForm : Form
     // Probe both out of the UI thread, then re-announce ONLY our verified
     // mounted profile. Never restart Explorer, kill WinFsp or remount here.
     private async Task CheckGoogleExplorerVisibilityAsync(
-        NasProfile profile, bool manual = false)
+        NasProfile profile)
     {
         if (shutdownRequested || exiting || IsDisposed || Disposing ||
             profile.Protocol != "GoogleDrive" ||
@@ -168,7 +168,7 @@ internal sealed partial class MainForm : Form
         if (!cloudHealthRunning.Add(profile.Id)) return;
         try
         {
-            if (!manual && nextCloudHealthCheck.TryGetValue(profile.Id,
+            if (nextCloudHealthCheck.TryGetValue(profile.Id,
                     out var next) && DateTime.UtcNow < next) return;
             nextCloudHealthCheck[profile.Id] = DateTime.UtcNow.AddSeconds(55);
             var health = await RemoteMount.CheckMountedHealthAsync(profile);
@@ -179,11 +179,6 @@ internal sealed partial class MainForm : Form
                     " detail=" + health.Message.Replace('\n', ' '));
                 cloudShellShown[profile.Id] = null;
                 RefreshList();
-                if (manual)
-                    MessageBox.Show(this, health.Message +
-                        "\n\n기존 연결 프로세스와 미전송 파일은 보존했습니다.",
-                        "Google Drive 연결 재확인", MessageBoxButtons.OK,
-                        MessageBoxIcon.Warning);
                 return;
             }
             bool? shown = await ExplorerDriveIcon.ComputerFolderShowsAsync(profile.Letter);
@@ -192,8 +187,8 @@ internal sealed partial class MainForm : Form
             cloudShellShown[profile.Id] = shown;
             AppStore.Log("GOOGLE_EXPLORER_SHELL_VISIBILITY id=" + profile.Id +
                 " letter=" + profile.Letter + " shown=" +
-                (shown?.ToString() ?? "unknown") + " manual=" + manual);
-            if (shown == false || manual)
+                (shown?.ToString() ?? "unknown"));
+            if (shown == false)
             {
                 ExplorerDriveIcon.NotifyMounted(profile, deferGlobalNotify: true);
                 shellRefresh.Request("GOOGLE_VERIFIED_EXPLORER_REANNOUNCE_" +
@@ -205,31 +200,13 @@ internal sealed partial class MainForm : Form
                     cloudShellShown[profile.Id] = after;
                 AppStore.Log("GOOGLE_EXPLORER_SHELL_REPAIR_RESULT id=" +
                     profile.Id + " shown=" + (after?.ToString() ?? "unknown"));
-                if (manual && !IsDisposed && !Disposing)
-                    MessageBox.Show(this,
-                        after == true
-                            ? "드라이브 " + profile.Letter + ": 가 Windows '내 PC' 목록에 등록돼 있습니다.\n" +
-                              "탐색기가 계속 이전 목록을 표시하면 해당 탐색기 창에서 F5를 눌러주세요."
-                            : "Google Drive 마운트 파일은 읽을 수 있지만 Windows '내 PC' 등록 상태를 아직 확인하지 못했습니다.\n" +
-                              "드라이브 문자를 변경하거나 캐시를 삭제하지 않았습니다.\n" +
-                              "Windows 탐색기 주소창에서 " + profile.Letter + @":\ 를 직접 입력해 접근을 확인하세요.",
-                        "Google Drive 탐색기 표시 복구",
-                        MessageBoxButtons.OK, after == true
-                            ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
             }
-            else if (manual)
-                MessageBox.Show(this, "탐색기 " + profile.Letter +
-                    ": 드라이브 등록을 확인했습니다.",
-                    "Google Drive 탐색기 표시");
             if (!IsDisposed && !Disposing) RefreshList();
         }
         catch (Exception ex)
         {
             AppStore.Log("GOOGLE_EXPLORER_RECONCILE_FAILED id=" + profile.Id +
                 " reason=" + ex.GetType().Name);
-            if (manual && !IsDisposed && !Disposing)
-                MessageBox.Show(this, "탐색기 표시 확인 중 오류: " + ex.Message,
-                    "Google Drive");
         }
         finally { cloudHealthRunning.Remove(profile.Id); }
     }
@@ -629,41 +606,6 @@ internal sealed partial class MainForm : Form
         if (login.ShowDialog(this) == DialogResult.OK)
             await ConnectOne(p, true);
     }
-    async Task RestoreGooglePreviousAuthorization()
-    {
-        var p = Selected();
-        if (p is null || p.Protocol != "GoogleDrive") return;
-        if (RemoteMount.IsRunning(p))
-        {
-            MessageBox.Show(this,
-                "Google Drive를 정상 연결 해제한 다음 이전 인증을 복원하세요.",
-                "Google 인증 복구", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-        if (!GoogleDriveAuth.HasPreviousAuthorization(p))
-        {
-            MessageBox.Show(this, "이전 Google 인증 백업이 없습니다.",
-                "Google 인증 복구", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-        if (MessageBox.Show(this,
-                "이전 Google 인증으로 되돌릴까요? 현재 인증도 별도로 백업합니다.\n" +
-                "Google 계정 연결 후 파일 목록을 확인하세요.",
-                "Google 인증 복구", MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question) != DialogResult.Yes) return;
-        try
-        {
-            GoogleDriveAuth.RestorePreviousAuthorization(p);
-            await ConnectOne(p, true);
-        }
-        catch (Exception ex)
-        {
-            AppStore.Log("GOOGLE_OAUTH_RESTORE_FAILED profile=" + p.Id +
-                " type=" + ex.GetType().Name);
-            MessageBox.Show(this, "이전 인증 복원에 실패했습니다: " + ex.Message,
-                "Google 인증 복구", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        }
-    }
 
     async Task ReauthorizeOneDrive()
     {
@@ -682,194 +624,6 @@ internal sealed partial class MainForm : Form
             await ConnectOne(p, true);
     }
 
-    async Task CheckPersistentMount()
-    {
-        var p = Selected();
-        if (p is null || p.Protocol == "SMB")
-        {
-            MessageBox.Show("연결된 WebDAV/SFTP/FTP 프로필을 선택하세요.");
-            return;
-        }
-        status.Text = "rclone 프로세스와 로컬 제어 채널 확인 중...";
-        try
-        {
-            var result = await RemoteMount.CheckPersistentMount(p);
-            AppStore.Log("PERSISTENT_MOUNT_CHECK " + p.Id + " ok=" + result.Success);
-            MessageBox.Show(result.Message, "FileHub AIO 연결 유지 상태",
-                MessageBoxButtons.OK, result.Success ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
-        }
-        catch(Exception ex) { MessageBox.Show(ex.Message,"연결 확인 오류"); }
-        finally { RefreshList(); }
-    }
-    async Task RefreshRootMetadata()
-    {
-        var p = Selected();
-        if (p is null || p.Protocol != "WebDAV")
-        {
-            MessageBox.Show("WebDAV 프로필을 선택하세요.");
-            return;
-        }
-        status.Text = "NAS 최상위 폴더 목록을 미리 조회 중...";
-        try
-        {
-            var result = await RemoteMount.RefreshRootCache(p);
-            AppStore.Log("VFS_ROOT_REFRESH " + p.Id + " ok=" + result.Success);
-            MessageBox.Show(result.Message, "NAS 공유 폴더 목록 예열",
-                MessageBoxButtons.OK, result.Success ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
-        }
-        catch(Exception ex) { MessageBox.Show(ex.Message,"목록 예열 오류"); }
-        finally { RefreshList(); }
-    }
-    async Task DiagnoseSelected()
-    {
-        var p=Selected();
-        if(p is null) {MessageBox.Show("먼저 NAS 연결 프로필을 선택하세요.");return;}
-        if(p.Protocol=="SMB")
-        {
-            MessageBox.Show("SMB는 [연결]을 눌러 Windows 네트워크 오류를 확인하세요.");
-            return;
-        }
-        string? password=p.RememberPassword?WindowsCredentials.Read(p.Id):null;
-        if(password is null && (!string.IsNullOrWhiteSpace(p.Username) || p.Protocol is "TeraBox" or "MyBox"))
-        {
-            using var dialog=new PasswordDialog(p.DisplayName);
-            if(dialog.ShowDialog(this)!=DialogResult.OK)return;
-            password=dialog.Password;
-        }
-        try
-        {
-            status.Text=p.DisplayName+" NAS 연결 진단 중...";
-            var result=await RemoteMount.Diagnose(p,password);
-            AppStore.Log("DIAGNOSE "+p.RemoteDisplay+" | "+result.Message);
-            MessageBox.Show(result.Message,result.Success?"연결 진단 통과":"연결 진단 실패",
-                MessageBoxButtons.OK,result.Success?MessageBoxIcon.Information:MessageBoxIcon.Warning);
-        }
-        catch(Exception ex) { MessageBox.Show("진단 오류: "+ex.Message); }
-        finally {RefreshList(); RefreshWinFspNotice();}
-    }
-    async Task CompareExcelRead()
-    {
-        var p=Selected();
-        if (p is null || p.Protocol!="WebDAV" || !IsConnected(p))
-        {
-            MessageBox.Show("먼저 연결된 WebDAV 프로필을 선택하세요.","Excel 읽기 진단");
-            return;
-        }
-        using var picker=new OpenFileDialog {
-            Title="읽기 속도를 비교할 Excel 테스트 파일 선택",
-            InitialDirectory=p.Letter.ToUpperInvariant()+@":\",
-            Filter="Excel 파일 (*.xlsx;*.xlsm;*.xls)|*.xlsx;*.xlsm;*.xls|모든 파일 (*.*)|*.*",
-            CheckFileExists=true, Multiselect=false, RestoreDirectory=true
-        };
-        if (picker.ShowDialog(this)!=DialogResult.OK)return;
-        string? password=p.RememberPassword?WindowsCredentials.Read(p.Id):null;
-        if (password is null && !string.IsNullOrWhiteSpace(p.Username))
-        {
-            using var dialog=new PasswordDialog(p.DisplayName);
-            if(dialog.ShowDialog(this)!=DialogResult.OK)return;
-            password=dialog.Password;
-        }
-        try
-        {
-            status.Text="Excel 파일 읽기 비교 중... (파일을 변경하지 않습니다)";
-            string report=await OfficeReadProbe.Compare(p,picker.FileName,password);
-            AppStore.Log("EXCEL_READ_DIAGNOSTIC "+p.Id+" "+report.Replace('\n',' '));
-            MessageBox.Show(report,"Excel 드라이브 / WebDAV 직접 읽기 비교",
-                MessageBoxButtons.OK,MessageBoxIcon.Information);
-        }
-        catch(Exception ex)
-        {
-            AppStore.Log("EXCEL_READ_DIAGNOSTIC_ERROR "+p.Id+" "+ex.Message);
-            MessageBox.Show(ex.Message,"Excel 읽기 검사 실패",
-                MessageBoxButtons.OK,MessageBoxIcon.Warning);
-        }
-        finally {RefreshList();}
-    }
-    async Task CheckWebDavStandardLock()
-    {
-        var p=Selected();
-        if (p is null || p.Protocol!="WebDAV")
-        {
-            MessageBox.Show("검사할 WebDAV NAS 프로필을 선택하세요.","WebDAV 표준 잠금 검사");
-            return;
-        }
-        if (MessageBox.Show(
-            "선택한 WebDAV 공유 폴더에 임의의 작은 테스트 파일을 만들어\n" +
-            "LOCK → 다른 연결의 무토큰 쓰기 시도 → UNLOCK → 삭제를 검사합니다.\n\n" +
-            "NAS에 기존 문서를 수정하지 않지만 서버가 UNLOCK을 지원하지 않으면\n" +
-            "테스트 파일이 잠금 만료까지 남을 수 있습니다.\n" +
-            "실제 문서의 두 PC 자동 잠금 완료를 의미하지 않습니다.\n\n진행할까요?",
-            "WebDAV LOCK/UNLOCK 지원 검사",MessageBoxButtons.YesNo,MessageBoxIcon.Question)
-            !=DialogResult.Yes) return;
-        string? password=p.RememberPassword?WindowsCredentials.Read(p.Id):null;
-        if(password is null && !p.IsAnonymous)
-        {
-            using var d=new PasswordDialog(p.DisplayName);
-            if(d.ShowDialog(this)!=DialogResult.OK)return;
-            password=d.Password;
-        }
-        try
-        {
-            status.Text="WebDAV LOCK/UNLOCK 교차 쓰기 검사 중...";
-            var result=await WebDavLockProbe.TestProfile(p,password??"");
-            string headline=result.Success
-                ? "서버 WebDAV 잠금 프로토콜 및 무토큰 쓰기 차단 확인"
-                : "WebDAV 잠금 완전 지원을 확인하지 못함";
-            string report=headline+"\n\n"+result.Detail+"\n\n" +
-                (result.CleanupSucceeded ? "임시 파일 정리 확인" :
-                    "임시 파일 정리가 확인되지 않았습니다. NAS 관리자 확인 필요");
-            AppStore.Log("WEBDAV_LOCK_RFC4918 profile="+p.Id+
-                " support="+result.Supported+" enforced="+result.Enforced+
-                " token-write="+result.AuthorizedWrite+
-                " unlock="+result.Released+" cleanup="+result.CleanupSucceeded);
-            MessageBox.Show(report,"WebDAV 표준 잠금 검사",
-                MessageBoxButtons.OK,result.Success?MessageBoxIcon.Information:MessageBoxIcon.Warning);
-        }
-        catch(Exception ex)
-        {
-            AppStore.Log("WEBDAV_LOCK_RFC4918_FAIL "+p.Id+" "+ex.Message);
-            MessageBox.Show(ex.Message,"WebDAV 표준 잠금 검사 실패");
-        }
-        finally {RefreshList();}
-    }
-    async Task CheckWebDavSave()
-    {
-        var p=Selected();
-        if(p is null) { MessageBox.Show("연결 프로필을 선택하세요."); return; }
-        if(p.Protocol!="WebDAV")
-        {
-            MessageBox.Show("이 검사는 WebDAV 연결에서만 사용할 수 있습니다.");
-            return;
-        }
-        if(MessageBox.Show(
-            "WebDAV 공유 폴더에 임의 이름의 작은 임시 테스트 파일을 만들고\n" +
-            "PUT → MOVE(이름 변경) → GET(내용 확인) 후 삭제합니다.\n" +
-            "기존 문서는 변경하지 않습니다. 쓰기/삭제 권한이 필요합니다.\n\n검사를 진행할까요?",
-            "WebDAV Excel 저장 호환성",MessageBoxButtons.YesNo,MessageBoxIcon.Question)
-            !=DialogResult.Yes)return;
-        string? password=p.RememberPassword?WindowsCredentials.Read(p.Id):null;
-        if(password is null && !p.IsAnonymous)
-        {
-            using var d=new PasswordDialog(p.DisplayName);
-            if(d.ShowDialog(this)!=DialogResult.OK)return;
-            password=d.Password;
-        }
-        try
-        {
-            status.Text="WebDAV 임시 파일 → 이름 변경 → 내용 검증 중...";
-            var result=await WebDavSaveProbe.TestProfile(p,password??"");
-            AppStore.Log("WEBDAV_SAVE_PROBE "+p.Id+" "+result.Message);
-            MessageBox.Show(result.Message,
-                result.Success?"WebDAV 저장 검사 통과":"WebDAV 저장 검사 실패",
-                MessageBoxButtons.OK,result.Success?MessageBoxIcon.Information:MessageBoxIcon.Warning);
-        }
-        catch(Exception ex)
-        {
-            AppStore.Log("WEBDAV_SAVE_PROBE FAIL "+p.Id+" "+ex.Message);
-            MessageBox.Show(ex.Message,"WebDAV 저장 검사 실패");
-        }
-        finally { RefreshList(); }
-    }
     async Task CheckUploadStatus()
     {
         var p=Selected();
@@ -1711,65 +1465,6 @@ internal sealed partial class MainForm : Form
             "잔여 연결 또는 드라이브 문자 충돌",
             MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
-    async Task CleanupOldNetworkLocation()
-    {
-        var p = Selected();
-        if (p is null || p.Protocol == "SMB") return;
-        if (RemoteMount.HasManagedRecord(p) || IsConnected(p))
-        {
-            MessageBox.Show(this,
-                "이 연결이 아직 실행 중입니다. 먼저 파일을 저장하고" +
-                " [연결 해제]로 업로드 완료를 확인하세요.",
-                "연결 실행 중", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
-        }
-        if (p.UseLockBridge &&
-            (await BridgeOwnership.ProbeAsync(p.Id)).IsOccupied)
-        {
-            MessageBox.Show(this,
-                "이전 WinFsp 잠금 브리지가 아직 실행 중입니다." +
-                " 문서를 닫고 이전 프로그램에서 정상 종료한 후 다시 시도하세요.",
-                "잠금 브리지 실행 중", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
-        }
-        // Old versions can leave a process without its GUI. Check this
-        // profile's GUID instead of blocking because ANY unrelated rclone
-        // process (including a healthy RaiDrive/FileHub AIO) is running.
-        if (NetworkDriveResidueCleaner.OldBackendMayStillOwn(p))
-        {
-            MessageBox.Show(this,
-                "이 연결의 이전 rclone/WinFsp 프로세스가 살아 있거나" +
-                " 프로세스 소유권을 안전하게 확인할 수 없습니다.\n" +
-                "다른 프로그램과 파일 전송을 건드리지 않도록 정리를 중단했습니다.",
-                "업로드 안전 확인 필요", MessageBoxButtons.OK,
-                MessageBoxIcon.Warning);
-            return;
-        }
-        if (RemoteMount.HasVerifiedOtherVendorMapping(p))
-        {
-            MessageBox.Show(this,
-                p.Letter + ": 드라이브는 다른 프로그램에서 사용 중입니다." +
-                " RaiDrive 등 타사 연결은 제거하지 않습니다.",
-                "다른 드라이브 보호", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
-        }
-        if (MessageBox.Show(this,
-            p.DisplayName + " (" + p.Letter + ":)의 끊어진 Windows 네트워크 위치만 정리합니다.\n\n" +
-            "NAS 서버 파일이나 Excel 문서, 캐시는 삭제하지 않습니다.\n" +
-            "이 프로필의 저장된 연결 및 탐색기 기록을 정리합니다.\n계속할까요?",
-            "끊어진 네트워크 위치 정리", MessageBoxButtons.YesNo,
-            MessageBoxIcon.Question) != DialogResult.Yes) return;
-        var result = NetworkDriveResidueCleaner.AfterSafeStop(p);
-        bool free = !RemoteMount.DriveLetterExists(p.Letter);
-        AppStore.Log("MANUAL_NETWORK_GHOST_CLEANUP " + p.Id + " " +
-            result.Message + " letterFree=" + free);
-        RefreshList();
-        MessageBox.Show(this, result.Message + (free
-            ? "\n탐색기의 네트워크 위치 목록에서도 제거됐는지 확인하세요."
-            : "\n드라이브 문자가 아직 남아 있습니다. 강제 종료하지 않았습니다."),
-            "네트워크 위치 정리 결과", MessageBoxButtons.OK,
-            result.Success && free ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
-    }
     void OpenDrive()
     {
         var p=Selected();if(p is null)return;
@@ -1779,21 +1474,6 @@ internal sealed partial class MainForm : Form
     {
         if(!IsConnected(p)){MessageBox.Show("먼저 연결하세요.");return;}
         Process.Start(new ProcessStartInfo("explorer.exe",p.Letter+":\\") { UseShellExecute=true });
-    }
-    async Task LockCheck()
-    {
-        var p=Selected();if(p is null)return;
-        if(!IsConnected(p)){MessageBox.Show("먼저 연결하세요.");return;}
-        if(p.Protocol!="SMB" && !p.AllowUnprotectedWrites && !p.UseLockBridge)
-        {
-            MessageBox.Show("읽기 전용 드라이브에서는 임시 파일 잠금 검사를 할 수 없습니다.\n" +
-                "원격 NAS 잠금은 [서버 잠금 검사]를 사용하세요.");
-            return;
-        }
-        if(MessageBox.Show("공유 루트에 임시 파일을 생성하여 배타적 파일 잠금을 진단합니다. 계속할까요?","잠금 진단",MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
-        var result=await Task.Run(()=>WindowsShare.ProbeFileLock(p.Letter+":\\"));
-        AppStore.Log("LOCK TEST "+p.RemoteDisplay+" | "+result.Message);
-        MessageBox.Show(result.Message+"\n\n주의: 이 검사는 같은 PC의 배타적 파일 핸들만 검사합니다.\nWebDAV/SFTP/FTP 다중 PC 잠금은 별도 검증이 필요합니다.","잠금 진단");
     }
     async Task ShowWebDavLockStatus()
     {
@@ -1847,54 +1527,12 @@ internal sealed partial class MainForm : Form
         }
         message += "\n\n~$파일명.xlsx는 Excel이 직접 생성하는 숨김 소유자 파일입니다.\n" +
                    "이 파일이 보이지 않는 것만으로 FileHub AIO 잠금 실패를 판단할 수 없습니다.\n" +
-                   "서버의 잠금 충돌까지 보려면 […] → [서버 잠금 충돌 검사]를 실행하세요.\n" +
                    "실제 2대 PC 동시 편집 차단은 별도로 확인해야 합니다.";
         AppStore.Log("WEBDAV_LOCK_STATUS profile=" + p.Id +
             " enabled=" + p.UseLockBridge + " mounted=" + IsConnected(p));
         MessageBox.Show(this, message, "WebDAV 파일잠금 상태",
             MessageBoxButtons.OK, p.UseLockBridge && IsConnected(p) ?
                 MessageBoxIcon.Information : MessageBoxIcon.Warning);
-    }
-    async Task RemoteLockCheck()
-    {
-        var p=Selected();if(p is null)return;
-        if(p.Protocol=="SMB")
-        {
-            MessageBox.Show("SMB는 NAS 서버/Windows 파일 잠금을 사용합니다.\n2대 PC에서 동일 Excel 파일을 열어 검사하세요.");
-            return;
-        }
-        if (p.Protocol == "WebDAV" && !p.UseLockBridge)
-        {
-            MessageBox.Show(this, "현재 프로필에서 [파일잠금] 모드가 꺼져 있습니다.\n" +
-                "먼저 드라이브를 안전하게 해제한 후 연결 설정에서 [파일잠금]을 선택하세요.",
-                "WebDAV 파일잠금 비활성", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
-        }
-        if(MessageBox.Show("서버에 임시 .nasmount.lock 폴더를 생성해 중복 획득이 차단되는지 검사합니다.\n" +
-            "검사가 성공하면 소유권을 확인하고 이 테스트 폴더만 삭제합니다.\n" +
-            "이 검사는 실제 Excel 파일을 수정하지 않으며 Office 자동 잠금을 증명하지 않습니다.\n진행할까요?",
-            "서버 잠금 검사",MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
-        string? password=p.RememberPassword?WindowsCredentials.Read(p.Id):null;
-        if(password is null && !p.IsAnonymous)
-        {
-            using var dialog=new PasswordDialog(p.DisplayName);
-            if(dialog.ShowDialog(this)!=DialogResult.OK)return;
-            password=dialog.Password;
-        }
-        try
-        {
-            var pw=password??"";
-            status.Text="서버 잠금 검사 중...";
-            string result=await Task.Run(()=>CooperativeLocks.Test(p,pw));
-            AppStore.Log("SERVER LOCK TEST "+p.RemoteDisplay+" | "+result);
-            MessageBox.Show(result,"서버 잠금 진단");
-        }
-        catch(Exception ex)
-        {
-            AppStore.Log("SERVER LOCK TEST ERROR "+p.RemoteDisplay+" | "+ex.Message);
-            MessageBox.Show(ex.Message+"\n\n실패 시 안전을 위해 잠금 폴더가 남아 있을 수 있습니다.","서버 잠금 진단 실패");
-        }
-        finally { RefreshList(); }
     }
     void OpenLogs()
     {

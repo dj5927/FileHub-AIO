@@ -30,44 +30,6 @@ internal static class GoogleDriveAuth
             File.Move(temporary, destination);
     }
 
-    internal static string PreviousAuthorizationPath(NasProfile p) =>
-        ConfigPath(p) + ".previous-auth.bak";
-    internal static bool HasPreviousAuthorization(NasProfile p) =>
-        p.Protocol == "GoogleDrive" &&
-        (GoogleDirectCredentialStore.HasBackup(p) ||
-         File.Exists(PreviousAuthorizationPath(p)));
-
-    internal static void RestorePreviousAuthorization(NasProfile p)
-    {
-        if (p.Protocol != "GoogleDrive")
-            throw new InvalidOperationException("Google Drive 프로필이 아닙니다.");
-        if (GoogleDirectCredentialStore.HasBackup(p))
-        {
-            GoogleDirectCredentialStore.RestoreBackup(p);
-            AppStore.Log("GOOGLE_DIRECT_DPAPI_PREVIOUS_AUTH_RESTORED profile=" + p.Id);
-            return;
-        }
-        SecureDirectory();
-        string original = ConfigPath(p);
-        string backup = PreviousAuthorizationPath(p);
-        if (!File.Exists(backup))
-            throw new FileNotFoundException("복구할 이전 Google 인증이 없습니다.");
-        string content = File.ReadAllText(backup, Encoding.UTF8);
-        if (!content.Contains("[" + RemoteName(p) + "]", StringComparison.Ordinal) ||
-            !content.Contains("type = drive", StringComparison.Ordinal) ||
-            !content.Contains("refresh_token", StringComparison.Ordinal))
-            throw new InvalidDataException(
-                "이전 Google 인증 파일이 현재 프로필과 일치하지 않습니다.");
-        string temporary = original + "." + Guid.NewGuid().ToString("N") + ".restore";
-        try
-        {
-            File.WriteAllText(temporary, content, new UTF8Encoding(false));
-            AtomicReplaceWithBackup(temporary, original,
-                original + ".before-restore.bak");
-            AppStore.Log("GOOGLE_OAUTH_PREVIOUS_AUTH_RESTORED profile=" + p.Id);
-        }
-        finally { if (File.Exists(temporary)) File.Delete(temporary); }
-    }
 
     // Only report whether the access token is currently expired. Never log
     // tokens, refresh secrets, Google IDs, file paths or full config content.
