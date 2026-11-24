@@ -28,7 +28,7 @@ jobs:
       - name: Install .NET 10
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '10.0.404'
 
       - name: Derive PC-only release tag
         id: version
@@ -149,7 +149,7 @@ jobs:
           }
           $regular = FetchVerified 'https://github.com/rclone/rclone/releases/download/v1.76.0/rclone-v1.76.0-windows-amd64.zip' 'rclone.zip' '8B4FD2737ADE4E70C057EF4A49DEB7CFFE94B0FB9D7587C189D149823F21A1DC'
           $extra = FetchVerified 'https://github.com/gulp79/rclone-extra/releases/download/v1.76.0-extra/rclone-windows-amd64.zip' 'rclone-extra.zip' 'A9BB4C6F30E7C6F73ABA05D9EA3355C0C540E7ADD2E10480A7C976516DCD2D37'
-          $msi = FetchVerified 'https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi' 'winfsp-2.1.25156.msi' '073A70E00F77423E34BED98B86E600DEF93393BA5822204FAC57A29324DB9F7A'
+          $msi = FetchVerified 'https://github.com/winfsp/winfsp/releases/download/v2.2/winfsp-2.2.26323.msi' 'winfsp-2.2.26323.msi' '36CE01F9EEDBBE6842B7FB4BEDC79D7D4F71983E8ACEB6877B46A07B331C7E19'
           Expand-Archive $regular -DestinationPath vendor/rclone -Force
           Expand-Archive $extra -DestinationPath vendor/rclone-extra -Force
           $normalExe = Get-ChildItem vendor/rclone -Filter rclone.exe -Recurse -File | Select-Object -First 1 -ExpandProperty FullName
@@ -159,7 +159,7 @@ jobs:
           if ((Get-FileHash $extraExe -Algorithm SHA256).Hash -ne 'A72B8D123517696C4CC996FD17BD7509DDD7850B5E13893EE970F8C8A2B8390C') { throw 'TeraBox engine changed' }
           Copy-Item $normalExe publish/tools/rclone.exe -Force
           Copy-Item $extraExe publish/tools/rclone-terabox.exe -Force
-          Copy-Item $msi publish/tools/winfsp-2.1.25156.msi -Force
+          Copy-Item $msi publish/tools/winfsp-2.2.26323.msi -Force
           (Get-FileHash publish/tools/rclone.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content publish/tools/rclone.sha256 -Encoding ascii
           (Get-FileHash publish/tools/rclone-terabox.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content publish/tools/rclone-terabox.sha256 -Encoding ascii
 
@@ -178,7 +178,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $driverDll = Join-Path ${env:ProgramFiles(x86)} 'WinFsp\bin\winfsp-x64.dll'
           if (!(Test-Path $driverDll)) {
-            $installer = (Resolve-Path publish/tools/winfsp-2.1.25156.msi).Path
+            $installer = (Resolve-Path publish/tools/winfsp-2.2.26323.msi).Path
             $arguments = '/i "' + $installer + '" /qn /norestart'
             $proc = Start-Process msiexec.exe -ArgumentList $arguments -Wait -PassThru
             if ($proc.ExitCode -notin @(0, 3010)) {
@@ -222,7 +222,7 @@ jobs:
       - name: Install pinned Go toolchain for Google-only engine
         uses: actions/setup-go@v6
         with:
-          go-version: '1.26.11'
+          go-version: '1.27.4'
           cache: true
           cache-dependency-path: vendor/rclone-source/go.sum
 
@@ -292,7 +292,7 @@ jobs:
         shell: pwsh
         run: |
           $asset = '${{ steps.version.outputs.asset }}'
-          foreach ($required in @('FileHubAIO.exe','tools/NASMountLockBridge.exe','tools/google-oauth-desktop.json','tools/rclone.exe','tools/rclone.sha256','tools/rclone-filehub-google.exe','tools/rclone-filehub-google.sha256','tools/rclone-terabox.exe','tools/rclone-terabox.sha256','tools/winfsp-2.1.25156.msi')) {
+          foreach ($required in @('FileHubAIO.exe','tools/NASMountLockBridge.exe','tools/google-oauth-desktop.json','tools/rclone.exe','tools/rclone.sha256','tools/rclone-filehub-google.exe','tools/rclone-filehub-google.sha256','tools/rclone-terabox.exe','tools/rclone-terabox.sha256','tools/winfsp-2.2.26323.msi')) {
             if (-not (Test-Path ("publish/" + $required))) { throw "Missing $required" }
           }
           Copy-Item README.md publish/README.md -Force

@@ -7,10 +7,10 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="FluentFTP" Version="55.1.0" />
-    <PackageVersion Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+    <PackageVersion Include="Microsoft.Web.WebView2" Version="1.0.4370.26" />
     <PackageVersion Include="SSH.NET" Version="2026.0.1" />
     <!-- Manually paired with the separately hash-pinned WinFsp MSI.
          Dependabot must not update this package independently. -->
-    <PackageVersion Include="winfsp.net" Version="2.1.25156" />
+    <PackageVersion Include="winfsp.net" Version="2.2.26323" />
   </ItemGroup>
 </Project>

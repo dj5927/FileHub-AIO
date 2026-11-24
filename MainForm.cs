@@ -849,26 +849,13 @@ internal sealed partial class MainForm : Form
     async Task InstallWinFsp()
     {
         var installed = WinFspUpgradePolicy.InstalledVersion();
-        // MSI is NOT a safe downgrade mechanism for a shared kernel driver.
-        // RaiDrive and other WinFsp consumers may have active mount handles.
-        if (RemoteMount.HasWinFsp && WinFspUpgradePolicy.IsKnownBeta(installed))
-        {
-            MessageBox.Show(this,
-                "WinFsp " + installed + " (2026 Beta)가 설치되어 있습니다.\n\n" +
-                "드라이버 버전이 베타라는 사실만으로 연결 오류가 있는 것은 아닙니다.\n" +
-                "RaiDrive와 FileHub의 연결이 정상이라면 변경할 필요가 없습니다.\n\n" +
-                "FileHub 패키지에는 2025 정식판이 포함되어 있지만,\n" +
-                "다른 프로그램이 사용하는 공용 시스템 드라이버를 강제로\n" +
-                "내리거나 덮어쓰지 않습니다. 실제 문제가 재발하면\n" +
-                "연결 로그와 설치 상태를 먼저 확인하세요.",
-                "WinFsp 설치 버전 확인",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
+        // Never downgrade the shared kernel driver. Upgrades from the
+        // previous beta to 2.2 stable use the existing explicit consent
+        // and disconnected-mount checks below.
         if(RemoteMount.HasWinFsp && !WinFspUpgradePolicy.UpgradeAvailable(installed))
         {
             MessageBox.Show("WinFsp " + installed + "이(가) 설치되어 있으며 " +
-                "FileHub 포함 안정판(2025)과 같거나 더 최신입니다.\n" +
+                "FileHub 포함 안정판(2026)과 같거나 더 최신입니다.\n" +
                 "다른 앱의 드라이버를 임의로 교체하지 않았습니다.", "FileHub AIO");
             return;
         }
@@ -885,7 +872,7 @@ internal sealed partial class MainForm : Form
             }
             if(MessageBox.Show(this,
                 "기존 WinFsp: " + (installed?.ToString() ?? "버전 확인 불가") + "\n" +
-                "포함된 WinFsp: " + WinFspUpgradePolicy.PackageVersion + " (2025 정식판)\n\n" +
+                "포함된 WinFsp: " + WinFspUpgradePolicy.PackageVersion + " (2026 정식판)\n\n" +
                 "RaiDrive 등 다른 WinFsp 사용 프로그램도 설치에 영향을 받습니다.\n" +
                 "진행 전 다른 WinFsp 프로그램의 마운트도 해제하세요.\n" +
                 "드라이버 업데이트 후 재부팅이 필요할 수 있습니다.\n\n" +

@@ -1,6 +1,6 @@
-# FileHub AIO PC v1.3.126 — 현재 포함 엔진·라이브러리 (2026-11-20)
+# FileHub AIO PC v1.3.144 — 현재 포함 엔진·라이브러리 (2026-11-24)
 
-이 표가 현재 v1.3.126 배포본 기준입니다. 아래의 NAS Mount v1.3.78
+이 표가 현재 v1.3.144 배포본 기준입니다. 아래의 NAS Mount v1.3.78
 및 후속 기록은 변경 이력을 보존한 것이며 최신 배포 구성 표가 아닙니다.
 
 | 종류 | 배포/빌드 버전 | 상태 |
@@ -8,24 +8,23 @@
 | 일반 rclone | v1.76.0 | 공식 릴리즈 ZIP·EXE SHA-256 고정, 최신 유지 |
 | Google 전용 비동기 용량 rclone | v1.76.0 FileHub 패치 | 공식 태그·패치를 고정해 소스 빌드, WinFsp 포함. 빌드별 SHA-256 매니페스트와 패치 마커를 함께 검증. 네트워크 용량 요청에서 Google API 동기 호출 제거 |
 | TeraBox rclone-extra | v1.76.0-extra | 확장 ZIP·EXE SHA-256 고정, 최신 유지 |
-| WinFsp MSI | **2.1.25156 (2025 정식판)** | 공식 서명 MSI, SHA-256 고정, RaiDrive와 공유하는 시스템 드라이버 |
-| WinFsp .NET 바인딩 | **2.1.25156** | 포함된 정식 드라이버와 버전 일치 |
+| WinFsp MSI | **2.2.26323 (2026 정식판)** | 공식 서명 MSI, SHA-256 고정, RaiDrive와 공유하는 시스템 드라이버 |
+| WinFsp .NET 바인딩 | **2.2.26323** | 2.2 이상 드라이버용; 기존 2.1 드라이버는 검증된 2.1.25156 호환 바인딩 사용 |
 | SSH.NET | **2026.0.1** | 메인 및 LockBridge 동일 |
-| Microsoft Edge WebView2 SDK | **1.0.4314.35** | TeraBox 계정 로그인 창 |
+| Microsoft Edge WebView2 SDK | **1.0.4370.26** | TeraBox 계정 로그인 창 |
 | FluentFTP | 55.1.0 | 공식 최신 유지 |
-| Microsoft .NET | net10.0-windows | 자체 포함 최신 .NET 10 패치 SDK 빌드 |
+| Microsoft .NET | net10.0-windows | 10.0.15 자체 포함 런타임 (고정) |
 | GitHub Actions | checkout v7 / setup-dotnet v6 | 새 빌드 Action 버전 |
 
 NuGet 버전은 루트의 Directory.Packages.props로 중앙 관리합니다.
 Dependabot은 매주 PC 전용 의존성 업데이트 PR/커밋을 자동으로 생성합니다.
 WinFsp .NET과 설치 MSI는 반드시 함께 검증해야 하므로 자동 병합 대상에서
 제외했습니다. rclone·확장 엔진 역시 해시 검증 없는 자동 교체를 허용하지 않습니다.
-WinFsp 2.2 Beta가 설치되어도 정상 동작한다면 오류가 아닙니다.
+WinFsp 2.2 Beta는 오류로 간주하지 않지만 2.2.26323 정식판으로 갱신을 권장합니다.
 FileHub에서 강제 다운그레이드하지 않으며 베타 설치 자체를
 RaiDrive 실패로 오판하지 않습니다. 드라이버 제거/재부팅/재설치는
 실제 장애가 확인된 경우에만 로그를 확인한 후 검토해야 합니다.
-WinFsp 2025 정식판에는 Beta에서 수정된 보안 문제(CVE-2026-3006 및
-CVE-2026-7162)가 남아 있을 수 있으니 신뢰할 수 없는 환경에서는 주의하세요.
+WinFsp 2026 정식판에는 보안 및 파일시스템 안정성 수정이 포함되어 있습니다.
 GitHub Dependabot 설정은 기본 브랜치 main의 .github/dependabot.yml에
 등록해야 PC용 pc/windows 브랜치 PR이 실제로 생성됩니다.
 

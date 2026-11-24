@@ -11,10 +11,10 @@ internal static class WinFspUpgradePolicy
 {
     // Last official non-beta WinFsp release. Do not float to a prerelease:
     // RaiDrive also uses this system-wide file-system driver.
-    internal static readonly Version PackageVersion = new(2, 1, 25156);
-    internal const string InstallerFileName = "winfsp-2.1.25156.msi";
+    internal static readonly Version PackageVersion = new(2, 2, 26323);
+    internal const string InstallerFileName = "winfsp-2.2.26323.msi";
     internal const string InstallerSha256 =
-        "073A70E00F77423E34BED98B86E600DEF93393BA5822204FAC57A29324DB9F7A";
+        "36CE01F9EEDBBE6842B7FB4BEDC79D7D4F71983E8ACEB6877B46A07B331C7E19";
 
     internal static string? InstalledDllPath()
     {
@@ -48,7 +48,8 @@ internal static class WinFspUpgradePolicy
     }
 
     internal static bool IsKnownBeta(Version? installed) =>
-        installed is not null && installed.Major == 2 && installed.Minor == 2;
+        installed is not null && installed.Major == 2 && installed.Minor == 2 &&
+        installed < PackageVersion;
 
     internal static bool UpgradeAvailable(Version? installed) =>
         installed is null || installed < PackageVersion;
@@ -63,8 +64,6 @@ internal static class WinFspUpgradePolicy
             return "● WinFsp 미설치 · 설정에서 WinFsp 확인/설치";
         if (installedVersion is null)
             return string.Empty;
-        if (IsKnownBeta(installedVersion))
-            return string.Empty;
         if (!UpgradeAvailable(installedVersion))
             return string.Empty;
         return $"● WinFsp {installedVersion} · 설정에서 정식판 설치 권장";
@@ -74,8 +73,10 @@ internal static class WinFspUpgradePolicy
     {
         if (!UpgradeAvailable(null) ||
             !UpgradeAvailable(new Version(2, 1, 24255)) ||
-            UpgradeAvailable(new Version(2, 1, 25156)) ||
-            UpgradeAvailable(new Version(2, 2, 26286)) ||
+            !UpgradeAvailable(new Version(2, 1, 25156)) ||
+            !UpgradeAvailable(new Version(2, 2, 26286)) ||
+            UpgradeAvailable(new Version(2, 2, 26323)) ||
+            UpgradeAvailable(new Version(2, 2, 26324)) ||
             UpgradeAvailable(new Version(2, 3, 0)) ||
             InstallerFileName != $"winfsp-{PackageVersion}.msi" ||
             InstallerSha256.Length != 64 ||
@@ -84,9 +85,11 @@ internal static class WinFspUpgradePolicy
         if (!IsKnownBeta(new Version(2, 2, 26215)) ||
             !IsKnownBeta(new Version(2, 2, 26286)) ||
             IsKnownBeta(new Version(2, 1, 25156)) ||
-            FooterNotice(true, new Version(2, 2, 26215)) != string.Empty ||
-            FooterNotice(true, new Version(2, 2, 26286)) != string.Empty ||
-            FooterNotice(true, new Version(2, 1, 25156)) != string.Empty ||
+            IsKnownBeta(new Version(2, 2, 26323)) ||
+            !FooterNotice(true, new Version(2, 2, 26215)).Contains("정식판 설치 권장") ||
+            !FooterNotice(true, new Version(2, 2, 26286)).Contains("정식판 설치 권장") ||
+            !FooterNotice(true, new Version(2, 1, 25156)).Contains("정식판 설치 권장") ||
+            FooterNotice(true, new Version(2, 2, 26323)) != string.Empty ||
             FooterNotice(true, new Version(2, 3, 0)) != string.Empty ||
             !FooterNotice(true, new Version(2, 1, 24255)).Contains("정식판 설치 권장") ||
             FooterNotice(true, null) != string.Empty ||

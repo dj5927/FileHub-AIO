@@ -22,6 +22,38 @@ internal static class Program
     {
         try
         {
+            // Run before JIT resolves methods whose signatures use Fsp.
+            // Both supported managed packages have the same strong assembly
+            // identity; loading the correct one first avoids a 2.1 outage.
+            if (args.Length == 1 && args[0] == "--winfsp-binding-compatibility-test")
+            {
+                WinFspBindingPolicy.PolicyTest();
+                return 0;
+            }
+            if (WinFspBindingPolicy.UseLegacyDriver() ||
+                (args.Length == 1 && args[0] == "--winfsp-legacy-binding-mounted-test"))
+                return WinFspBindingPolicy.RunLegacy(args);
+            return Run(args);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex);
+            return 1;
+        }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static int Run(string[] args)
+    {
+        try
+        {
+            if (args.Length == 1 && args[0] == "--winfsp-legacy-binding-mounted-test")
+            {
+                WinFspBindingPolicy.VerifyLoadedLegacy(typeof(FileSystemHost).Assembly);
+                DirectGoogleWinFspPolicyLab.Run();
+                return 0;
+            }
             if (args.Length == 1 &&
                 args[0] == "--direct-google-progressive-policy-test")
             {
