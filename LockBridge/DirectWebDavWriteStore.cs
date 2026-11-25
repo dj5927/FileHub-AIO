@@ -55,6 +55,9 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         // follow-up verification failed. Do not retry with a stale ETag.
         internal bool UploadMayHaveCommitted;
         internal bool Closed;
+        internal long ConfirmedSize;
+        internal bool WrotePayload;
+        internal string? OfficeSafetyBackup;
         internal long ContiguousWritten;
         internal bool SequentialWrites = true;
         // New-file journals are already marked uncommitted at Begin. For an
@@ -77,6 +80,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         {
             Owner = owner; Id = id; LocalPath = path; RemotePath = remote;
             ExpectedEtag = etag; Created = created; Dirty = created;
+            ConfirmedSize = created ? 0 : stream.Length;
             // The initial "new-uncommitted" manifest covers zero bytes.
             // The first actual Write must checkpoint its updated length so
             // a complete small file remains recoverable after a crash.
@@ -474,6 +478,122 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         Path.GetFileName(path).StartsWith("~$", StringComparison.Ordinal) ||
         IsOfficeSaveTemporary(path);
 
+    // Never put private names or server addresses in the normal engine log.
+    internal static string OfficeTrace(string path) => Convert.ToHexString(
+        SHA256.HashData(Encoding.UTF8.GetBytes(
+            Path.GetFileName(path.Replace('/', '\\')).Normalize().ToUpperInvariant())))[..16];
+
+    private static bool OfficePayload(string path) =>
+        ExcelOwnerInterop.IsWorkbook(path) || IsOfficeSaveTemporary(path);
+
+    private void RejectEmptyCommit(Handle handle)
+    {
+        if (!ExcelOwnerInterop.IsWorkbook(handle.RemotePath) || handle.Local.Length != 0 ||
+            (handle.ConfirmedSize <= 0 && !handle.WrotePayload)) return;
+        SaveJournal(handle, "office-empty-blocked");
+        Console.WriteLine("DIRECT_WEBDAV_OFFICE_EMPTY_BLOCKED operation=commit file=" +
+            OfficeTrace(handle.RemotePath) + " priorBytes=" + handle.ConfirmedSize +
+            " journal=" + handle.Id);
+        throw new IOException("Office save has no payload; original was not overwritten; recovery retained");
+    }
+
+    private void RecordConfirmedPayload(Handle handle)
+    {
+        handle.ConfirmedSize = handle.Local.Length;
+        handle.WrotePayload = false;
+        if (handle.ConfirmedSize > 0)
+        {
+            RetireOfficeSafetyCopy(handle.OfficeSafetyBackup);
+            handle.OfficeSafetyBackup = null;
+            if (ExcelOwnerInterop.IsWorkbook(handle.RemotePath))
+                RetireOfficeRenameBackup(handle.RemotePath);
+        }
+    }
+
+    private readonly ConcurrentDictionary<string, string> _officeRenameBackups =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    // Keep the original revision outside the auto-replayed journal files.
+    private string SaveOfficeSafetyCopy(string path, Stream original, long length)
+    {
+        if (length <= 0) throw new IOException("Cannot back up an empty workbook");
+        string directory = Path.Combine(_journalRoot, "office-safety");
+        Directory.CreateDirectory(directory);
+        string id = Guid.NewGuid().ToString("N");
+        string backup = Path.Combine(directory, id + Path.GetExtension(path));
+        using (var file = new FileStream(backup, FileMode.CreateNew, FileAccess.ReadWrite,
+            FileShare.Read, 65536, FileOptions.WriteThrough))
+        {
+            original.CopyTo(file);
+            file.Flush(true);
+            if (file.Length != length)
+                throw new IOException("Workbook safety copy length mismatch");
+            file.Position = 0;
+            string hash = Convert.ToHexString(SHA256.HashData(file));
+            using var manifest = new FileStream(backup + ".json", FileMode.CreateNew,
+                FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough);
+            JsonSerializer.Serialize(manifest, new { Path = path, Size = length,
+                Sha256 = hash, CreatedUtc = DateTime.UtcNow });
+            manifest.Flush(true);
+        }
+        Console.WriteLine("DIRECT_WEBDAV_OFFICE_SAFETY_BACKUP file=" + OfficeTrace(path) +
+            " bytes=" + length + " backup=" + id);
+        return backup;
+    }
+
+    private void PreserveBeforeMutation(Handle handle)
+    {
+        if (!ExcelOwnerInterop.IsWorkbook(handle.RemotePath) || handle.Created ||
+            handle.Dirty || handle.ConfirmedSize <= 0 || handle.OfficeSafetyBackup is not null)
+            return;
+        long position = handle.Local.Position;
+        try
+        {
+            handle.Local.Position = 0;
+            handle.OfficeSafetyBackup = SaveOfficeSafetyCopy(handle.RemotePath, handle.Local,
+                handle.ConfirmedSize);
+        }
+        finally { handle.Local.Position = position; }
+    }
+
+    private static void RetireOfficeSafetyCopy(string? path)
+    {
+        if (path is null) return;
+        try { File.Delete(path); File.Delete(path + ".json"); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
+    private void PreserveOfficeRenameBackup(string path,
+        DirectWebDavReadOnlyBackend.Entry source)
+    {
+        if (!ExcelOwnerInterop.IsWorkbook(path) || source.Size <= 0 ||
+            _officeRenameBackups.ContainsKey(path)) return;
+        using var request = new HttpRequestMessage(HttpMethod.Get, Remote(path));
+        request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+        if (StrongEtag(source.ETag))
+            request.Headers.TryAddWithoutValidation("If-Match", source.ETag);
+        using var result = _http.Send(request, HttpCompletionOption.ResponseHeadersRead);
+        if (!result.IsSuccessStatusCode)
+            throw new IOException("Workbook safety backup GET HTTP " + (int)result.StatusCode);
+        string backup = SaveOfficeSafetyCopy(path, result.Content.ReadAsStream(), source.Size);
+        if (!StrongEtag(source.ETag) &&
+            _publishedOfficeTemps.TryGetValue(path, out var expected))
+        {
+            using var saved = File.OpenRead(backup);
+            if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(saved), expected))
+                throw new IOException("Workbook changed before safety backup; recovery retained");
+        }
+        if (!_officeRenameBackups.TryAdd(path, backup))
+            RetireOfficeSafetyCopy(backup);
+    }
+
+    private void RetireOfficeRenameBackup(string workbook)
+    {
+        if (_officeRenameBackups.TryRemove(workbook, out var backup))
+            RetireOfficeSafetyCopy(backup);
+    }
+
     internal void Write(Handle handle, ulong offset, ReadOnlySpan<byte> data,
         bool append = false)
     {
@@ -483,10 +603,12 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         {
             if (handle.Closed) throw new ObjectDisposedException(nameof(Handle));
             if (offset > long.MaxValue) throw new IOException("File offset overflow");
+            if (!data.IsEmpty) PreserveBeforeMutation(handle);
             long position = append ? handle.Local.Length : (long)offset;
             handle.Local.Seek(append ? 0 : (long)offset,
                 append ? SeekOrigin.End : SeekOrigin.Begin);
             handle.Local.Write(data);
+            if (!data.IsEmpty) handle.WrotePayload = true;
             handle.Dirty = true;
             if (handle.Created)
             {
@@ -575,6 +697,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
     {
         lock (handle.Gate)
         {
+            if (handle.Local.Length != size) PreserveBeforeMutation(handle);
             if (handle.Progressive is not null &&
                 handle.Local.Length != size)
             {
@@ -907,6 +1030,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         {
             if (!handle.Dirty) return;
             if (handle.Closed) throw new ObjectDisposedException(nameof(Handle));
+            RejectEmptyCommit(handle);
             string path = handle.RemotePath;
             lock (_locks.GetOrAdd(path, _ => new object()))
             {
@@ -996,7 +1120,26 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     committed = new DirectWebDavReadOnlyBackend.Entry(
                         path, path.Split('/').Last(), false, handle.Local.Length,
                         DateTime.UtcNow, acceptedEtag);
-                    if (StrongEtag(acceptedEtag))
+                    if (OfficePayload(path))
+                    {
+                        using var verify = new HttpRequestMessage(HttpMethod.Get, Remote(path));
+                        verify.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+                        using var checkedBody = _http.Send(verify, HttpCompletionOption.ResponseHeadersRead);
+                        if (!checkedBody.IsSuccessStatusCode)
+                            throw new IOException("Office stage verification GET HTTP " + (int)checkedBody.StatusCode);
+                        handle.Local.Position = 0;
+                        if (!CryptographicOperations.FixedTimeEquals(
+                            SHA256.HashData(handle.Local), SHA256.HashData(checkedBody.Content.ReadAsStream())))
+                        {
+                            SaveJournal(handle, "office-verification-failed");
+                            Console.WriteLine("DIRECT_WEBDAV_OFFICE_STAGE_MISMATCH file=" + OfficeTrace(path));
+                            throw new IOException("Office stage readback mismatch; recovery retained");
+                        }
+                        committed = committed with { ETag = checkedBody.Headers.ETag?.ToString() };
+                        Console.WriteLine("DIRECT_WEBDAV_OFFICE_STAGE_VERIFIED file=" + OfficeTrace(path) +
+                            " bytes=" + handle.Local.Length + " placeholder=" + (handle.Local.Length == 0));
+                    }
+                    if (StrongEtag(committed.ETag))
                         _read.RecordCommittedNewFile(committed);
                     else
                         _read.Invalidate(path);
@@ -1027,7 +1170,8 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     journalMs - putMs;
                 // Never re-download a newly copied file just to verify it.
                 // Existing-file edit consistency is a separate workflow.
-                if (handle.Local.Length <= 16 * 1024 * 1024 && !newFile)
+                if (!newFile && (handle.Local.Length <= 16 * 1024 * 1024 ||
+                    ExcelOwnerInterop.IsWorkbook(path)))
                 {
                     using var check = _http.GetAsync(Remote(path),
                         HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
@@ -1048,6 +1192,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 handle.Dirty = false;
                 handle.UploadMayHaveCommitted = false;
                 SaveJournal(handle, "committed");
+                RecordConfirmedPayload(handle);
                 if (IsOfficeSaveTemporary(path) || ExcelOwnerInterop.IsWorkbook(path))
                 {
                     handle.Local.Seek(0, SeekOrigin.Begin);
@@ -1136,6 +1281,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         _publishedOfficeTemps[path] = desired;
         _read.RecordCommittedNewFile(entry);
         SaveJournal(handle, "committed");
+        RecordConfirmedPayload(handle);
         Console.WriteLine("DIRECT_WEBDAV_OWNED_OFFICE_SAVE_WITHOUT_ETAG_VERIFIED");
     }
 
@@ -1213,9 +1359,11 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         if (_read.Stat(handle.RemotePath)?.ETag != current.ETag)
             return false;
         handle.ExpectedEtag = current.ETag;
+        handle.CommittedEntry = current;
         handle.Created = false;
         handle.Dirty = false;
         SaveJournal(handle, "recovered-verified");
+        RecordConfirmedPayload(handle);
         return true;
     }
 
@@ -1248,6 +1396,15 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     Console.WriteLine("DIRECT_EXCEL_OWNER_LOCAL_RECOVERY_DISCARDED");
                 }
                 catch (IOException) { retained++; }
+                continue;
+            }
+            // A crashed zero-byte Office reservation is not a completed save.
+            if (journal.Size == 0 && OfficePayload(journal.Path) &&
+                journal.Status is not ("opened" or "committed" or "recovered-verified"))
+            {
+                retained++;
+                Console.WriteLine("DIRECT_WEBDAV_OFFICE_EMPTY_RECOVERY_RETAINED file=" +
+                    OfficeTrace(journal.Path) + " journal=" + journal.Id);
                 continue;
             }
             // A preallocated, partly copied NEW file contains zero-filled
@@ -1418,6 +1575,28 @@ internal sealed class DirectWebDavWriteStore : IDisposable
     internal string? RenameNewDestination(string from, string to, string? originalEtag)
     {
         RequireVerifiedConditionalWrites();
+        // A zero-byte reservation is not a complete Excel workbook.
+        byte[]? workbookHash = null;
+        if (ExcelOwnerInterop.IsWorkbook(to))
+        {
+            var fresh = _read.StatFresh(from);
+            if (fresh is null || fresh.IsDirectory)
+                throw new FileNotFoundException("Workbook rename source is missing");
+            if (fresh.Size <= 0)
+                RejectEmptyWorkbookPromotion(from, to);
+            if (StrongEtag(originalEtag) && fresh.ETag != originalEtag)
+                throw new IOException("Workbook source changed before rename");
+            using var get = new HttpRequestMessage(HttpMethod.Get, Remote(from));
+            get.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+            if (StrongEtag(originalEtag))
+                get.Headers.TryAddWithoutValidation("If-Match", originalEtag);
+            using var body = _http.Send(get, HttpCompletionOption.ResponseHeadersRead);
+            if (!body.IsSuccessStatusCode)
+                throw new IOException("Workbook source verification GET HTTP " + (int)body.StatusCode);
+            workbookHash = SHA256.HashData(body.Content.ReadAsStream());
+            if (CryptographicOperations.FixedTimeEquals(workbookHash, SHA256.HashData(Array.Empty<byte>())))
+                RejectEmptyWorkbookPromotion(from, to);
+        }
         // Never use WebDAV MOVE Overwrite:T. Excel normally performs two
         // new-destination renames; replacing an existing original requires
         // a separately verified lock+conditional-commit transaction.
@@ -1437,11 +1616,25 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             RequireVerifiedStageMove(to);
             if (!_publishedOfficeTemps.TryGetValue(from, out var expected))
                 throw new IOException("Office temporary source is no longer owned");
-            using var source = new HttpRequestMessage(HttpMethod.Get, Remote(from));
-            using var content = _http.Send(source, HttpCompletionOption.ResponseHeadersRead);
-            if (!content.IsSuccessStatusCode || !CryptographicOperations.FixedTimeEquals(
-                SHA256.HashData(content.Content.ReadAsStream()), expected))
-                throw new IOException("Office temporary source changed before rename");
+            if (workbookHash is not null)
+            {
+                if (!CryptographicOperations.FixedTimeEquals(workbookHash, expected))
+                    throw new IOException("Office temporary source changed before rename");
+            }
+            else
+            {
+                using var source = new HttpRequestMessage(HttpMethod.Get, Remote(from));
+                using var content = _http.Send(source, HttpCompletionOption.ResponseHeadersRead);
+                if (!content.IsSuccessStatusCode || !CryptographicOperations.FixedTimeEquals(
+                    SHA256.HashData(content.Content.ReadAsStream()), expected))
+                    throw new IOException("Office temporary source changed before rename");
+            }
+        }
+        if (ExcelOwnerInterop.IsWorkbook(from) && IsOfficeSaveTemporary(to))
+        {
+            var original = _read.StatFresh(from) ??
+                throw new FileNotFoundException("Workbook disappeared before backup rename");
+            PreserveOfficeRenameBackup(from, original);
         }
         using var request = new HttpRequestMessage(new HttpMethod("MOVE"), Remote(from));
         request.Headers.TryAddWithoutValidation("Destination", Remote(to).AbsoluteUri);
@@ -1456,17 +1649,28 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             throw new IOException("Safe WebDAV MOVE failed HTTP " + (int)result.StatusCode);
         _read.Invalidate(from);
         _read.Invalidate(to);
-        if (newOfficeDocument)
+        if (newOfficeDocument || workbookHash is not null)
         {
-            using var verify = _http.GetAsync(Remote(to),
-                HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
-            verify.EnsureSuccessStatusCode();
-            if (!_publishedOfficeTemps.TryGetValue(from, out var expected) ||
+            using var get = new HttpRequestMessage(HttpMethod.Get, Remote(to));
+            get.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+            using var verify = _http.Send(get, HttpCompletionOption.ResponseHeadersRead);
+            if (!verify.IsSuccessStatusCode)
+                throw new IOException("Office MOVE verification GET HTTP " + (int)verify.StatusCode);
+            byte[]? expected = workbookHash;
+            if (expected is null) _publishedOfficeTemps.TryGetValue(from, out expected);
+            if (expected is null ||
                 !CryptographicOperations.FixedTimeEquals(
                     SHA256.HashData(verify.Content.ReadAsStream()), expected))
                 throw new IOException("Office MOVE destination checksum mismatch");
             _publishedOfficeTemps[to] = expected;
-            Console.WriteLine("DIRECT_WEBDAV_NEW_DOCUMENT_MOVE_WITHOUT_ETAG_ACCEPTED");
+            if (newOfficeDocument)
+                Console.WriteLine("DIRECT_WEBDAV_NEW_DOCUMENT_MOVE_WITHOUT_ETAG_ACCEPTED");
+            if (workbookHash is not null)
+            {
+                Console.WriteLine("DIRECT_WEBDAV_OFFICE_FINAL_VERIFIED file=" +
+                    OfficeTrace(to) + " source=" + OfficeTrace(from));
+                RetireOfficeRenameBackup(to);
+            }
         }
         else if (_publishedOfficeTemps.TryGetValue(from, out var movedHash) &&
             (IsOfficeSaveTemporary(to) || ExcelOwnerInterop.IsWorkbook(to)))
@@ -1486,6 +1690,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         handle.RemotePath = to;
         handle.ExpectedEtag = entry?.ETag;
         handle.CommittedEntry = entry;
+        handle.ConfirmedSize = entry?.Size ?? handle.Local.Length;
         handle.UnversionedBaseHash =
             !StrongEtag(entry?.ETag) && _publishedOfficeTemps.TryGetValue(to, out var hash)
                 ? hash : null;
@@ -1529,6 +1734,10 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             var source = _read.Stat(from);
             if (source?.ETag != sourceEtag || source.Size != new FileInfo(stage).Length)
                 throw new IOException("Source changed during conditional replacement");
+            if (ExcelOwnerInterop.IsWorkbook(to) && new FileInfo(stage).Length == 0)
+                RejectEmptyWorkbookPromotion(from, to);
+            if (ExcelOwnerInterop.IsWorkbook(to) && destination.Size > 0)
+                PreserveOfficeRenameBackup(to, destination);
 
             using (var put = new HttpRequestMessage(HttpMethod.Put, Remote(to)))
             {
@@ -1558,9 +1767,58 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     throw new IOException("Replacement checksum mismatch; source retained");
             }
             Delete(from, sourceEtag);
+            if (ExcelOwnerInterop.IsWorkbook(to))
+                RetireOfficeRenameBackup(to);
             Console.WriteLine("DIRECT_WEBDAV_EXCEL_REPLACEMENT_VERIFIED");
         }
         finally { try { File.Delete(stage); } catch (IOException) { } }
+    }
+
+    private void RejectEmptyWorkbookPromotion(string from, string to)
+    {
+        Console.WriteLine("DIRECT_WEBDAV_OFFICE_EMPTY_BLOCKED operation=rename file=" +
+            OfficeTrace(to) + " source=" + OfficeTrace(from));
+        // Excel may already have moved the previous workbook to its backup.
+        // Recover only a missing name, never overwrite another client's file.
+        // Keep the durable preimage even when this conditional restore works.
+        if (_officeRenameBackups.TryGetValue(to, out var backup))
+        {
+            try
+            {
+                if (_read.StatFresh(to) is null)
+                {
+                    using var manifest = JsonDocument.Parse(File.ReadAllText(backup + ".json"));
+                    var meta = manifest.RootElement;
+                    using var original = File.OpenRead(backup);
+                    string expected = meta.GetProperty("Sha256").GetString()!;
+                    if (meta.GetProperty("Path").GetString()!.Equals(to, StringComparison.OrdinalIgnoreCase) &&
+                        original.Length > 0 && original.Length == meta.GetProperty("Size").GetInt64() &&
+                        Convert.ToHexString(SHA256.HashData(original)) == expected)
+                    {
+                        original.Position = 0;
+                        using var put = new HttpRequestMessage(HttpMethod.Put, Remote(to));
+                        put.Headers.TryAddWithoutValidation("If-None-Match", "*");
+                        put.Content = new StreamContent(new NonClosingStream(original));
+                        using var restored = _http.Send(put, HttpCompletionOption.ResponseHeadersRead);
+                        if (restored.IsSuccessStatusCode)
+                        {
+                            _read.Invalidate(to);
+                            using var get = new HttpRequestMessage(HttpMethod.Get, Remote(to));
+                            get.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+                            using var verified = _http.Send(get, HttpCompletionOption.ResponseHeadersRead);
+                            if (verified.IsSuccessStatusCode &&
+                                Convert.ToHexString(SHA256.HashData(verified.Content.ReadAsStream())) == expected)
+                                Console.WriteLine("DIRECT_WEBDAV_OFFICE_ORIGINAL_RESTORED file=" + OfficeTrace(to));
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is IOException or HttpRequestException or UnauthorizedAccessException or JsonException)
+            {
+                Console.WriteLine("DIRECT_WEBDAV_OFFICE_RESTORE_PENDING file=" + OfficeTrace(to));
+            }
+        }
+        throw new IOException("Refusing to promote zero-byte source to an Excel workbook");
     }
 
     internal void Delete(string path, string? etag, bool directory = false,
@@ -1583,6 +1841,9 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         else if (!explicitUserDelete) RequireVerifiedConditionalWrites();
         if (!directory && !explicitUserDelete && !StrongEtag(etag))
             throw new IOException("Refusing DELETE without strong source ETag");
+        if (!directory && explicitUserDelete && ExcelOwnerInterop.IsWorkbook(path) &&
+            OwnsExcelWorkbook?.Invoke(path) == true && _read.StatFresh(path) is { } owned)
+            PreserveOfficeRenameBackup(path, owned);
         using var request = new HttpRequestMessage(HttpMethod.Delete, Remote(path));
         if (!directory && !explicitUserDelete && StrongEtag(etag))
             request.Headers.TryAddWithoutValidation("If-Match", etag);
@@ -1616,6 +1877,59 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         write.MakeDirectory(folder);
         try
         {
+            // Empty Excel placeholders are valid while Save As is in
+            // progress; publishing one as the finished document is not.
+            string guarded = "/" + folder + "/zero-guard.xlsx";
+            string emptyTemp = "/" + folder + "/A1B2C3D4";
+            string oldTemp = "/" + folder + "/A1B2C3D5.tmp";
+            string absent = "/" + folder + "/new-zero.xlsx";
+            byte[] originalBytes = Encoding.UTF8.GetBytes("nonempty workbook revision");
+            using (var h = write.Begin(guarded, create: true))
+            {
+                write.Write(h, 0, originalBytes);
+                write.Close(h, commit: true);
+            }
+            using var officeCheck = new HttpClient();
+            using (var h = write.Begin(guarded, create: false))
+            {
+                write.SetLength(h, 0);
+                bool blocked = false;
+                try { write.Commit(h); }
+                catch (IOException) { blocked = true; }
+                if (!blocked || !officeCheck.GetByteArrayAsync(write.Remote(guarded))
+                        .GetAwaiter().GetResult().SequenceEqual(originalBytes) ||
+                    h.OfficeSafetyBackup is null ||
+                    !File.ReadAllBytes(h.OfficeSafetyBackup).SequenceEqual(originalBytes))
+                    throw new IOException("Zero truncation corrupted the original workbook");
+                write.Close(h, commit: false);
+            }
+            using (var h = write.Begin(emptyTemp, create: true))
+                write.Close(h, commit: true);
+            var emptyRevision = read.StatFresh(emptyTemp) ??
+                throw new IOException("Legitimate empty temporary was not created");
+            foreach (string target in new[] { guarded, absent })
+            {
+                bool blocked = false;
+                try { write.RenameWithVerifiedReplacement(emptyTemp, target, emptyRevision.ETag, true); }
+                catch (IOException) { blocked = true; }
+                if (!blocked)
+                    throw new IOException("Empty temporary became a workbook");
+            }
+            if (read.StatFresh(absent) is not null ||
+                !officeCheck.GetByteArrayAsync(write.Remote(guarded)).GetAwaiter().GetResult().SequenceEqual(originalBytes))
+                throw new IOException("Zero rename did not preserve the original");
+            var prior = read.StatFresh(guarded)!;
+            write.RenameNewDestination(guarded, oldTemp, prior.ETag);
+            if (read.StatFresh(guarded) is not null)
+                throw new IOException("Office backup rename was not exercised");
+            bool restored = false;
+            try { write.RenameNewDestination(emptyTemp, guarded, emptyRevision.ETag); }
+            catch (IOException) { restored = true; }
+            if (!restored || !officeCheck.GetByteArrayAsync(write.Remote(guarded))
+                .GetAwaiter().GetResult().SequenceEqual(originalBytes))
+                throw new IOException("Missing original was not safely restored after zero promotion");
+            Console.WriteLine("DIRECT_WEBDAV_ZERO_WORKBOOK_COMMIT_AND_RENAME_GUARD_PASS");
+
             for (int round = 1; round <= 3; round++)
             {
                 using var h = write.Begin(workbook, create: round == 1);

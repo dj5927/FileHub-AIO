@@ -1067,6 +1067,8 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             // The session's local journal is retained. NEVER pretend that
             // failure to upload at Close means the NAS saved this document.
             Failure(ex, "Close");
+            _overlay.TryRemove(writer.Entry.Path, out _);
+            _backend.Invalidate(writer.Entry.Path);
             try { writer.Session.Dispose(); } catch (IOException) { }
         }
         finally
