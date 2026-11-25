@@ -49,7 +49,7 @@ jobs:
           Expand-Archive -LiteralPath $zip -DestinationPath candidate -Force
           $exe = (Resolve-Path candidate/FileHubAIO.exe).Path
           if ((Get-Item $exe).VersionInfo.FileVersion -ne '1.3.147.0') { throw 'Incorrect version' }
-          if ((Get-FileHash $exe).Hash -ne 'E7A0D6549932B9A94A1DBE75A25613265DC2DB62CC5038FDA93068AC2C9DF0A') { throw 'Application binary mismatch' }
+          if ((Get-FileHash $exe).Hash -ne 'E7A0D6549932B9A94A1DBE75A25613265DC2DB62CC5038FDFA93068AC2C9DF0A') { throw 'Application binary mismatch' }
           if ((Get-FileHash candidate/tools/NASMountLockBridge.dll).Hash -ne 'BD6FE60040170EAFF35FB70F69433D7BD98E6651233CFBC623A5ADCD6DFFFBC6') { throw 'Bridge binary mismatch' }
           $tests = [ordered]@{
             'google-direct-api-policy-test' = 'GOOGLE_BROWSER_COMPLETE_HEADERS_AND_RELOAD_WITHOUT_REEXCHANGE_PASS'
