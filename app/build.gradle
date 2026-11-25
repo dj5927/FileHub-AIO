@@ -77,10 +77,18 @@ def adApp = providers.gradleProperty('filehubAdMobAppId').getOrElse('')
 def adBanner = providers.gradleProperty('filehubAdMobBannerId').getOrElse('')
 def adInterstitial = providers.gradleProperty('filehubAdMobInterstitialId').getOrElse('')
 def billingKey = providers.gradleProperty('filehubPlayBillingPublicKey').getOrElse('')
+// An upload-signed bundle must explicitly be an internal test or a production
+// build. Default bundlePlayRelease remains an unsigned development candidate.
+def playInternal = providers.gradleProperty('filehubPlayInternalTest').getOrElse('false') == 'true'
+def playProduction = providers.gradleProperty('filehubPlayProduction').getOrElse('false') == 'true'
+if (playInternal && playProduction)
+    throw new GradleException('Choose exactly one Play distribution mode')
 def liveAds = [adApp, adBanner, adInterstitial].every { it != '' } &&
         (adApp ==~ /ca-app-pub-\d{16}~\d{10}/) &&
         ([adBanner, adInterstitial].every { it ==~ /ca-app-pub-\d{16}\/\d{10}/ }) &&
-        ![adApp,adBanner,adInterstitial].any { it.startsWith('ca-app-pub-3940256099942544') }
+        ![adApp,adBanner,adInterstitial].any { it.startsWith('ca-app-pub-3940256099942544') } &&
+        adBanner != adInterstitial &&
+        [adBanner,adInterstitial].every { it.split('/')[0] == adApp.split('~')[0] }
 if (billingKey && !(billingKey ==~ /[A-Za-z0-9+\/=]+/))
     throw new GradleException('Invalid Play billing public key format')
 def playSigningFile = rootProject.file(
@@ -90,16 +98,8 @@ def playSigning = new Properties()
 if (playSigningFile.exists())
     playSigningFile.withInputStream { stream -> playSigning.load(stream) }
 
-tasks.register('verifyPlayProductionConfiguration') {
+tasks.register('verifyPlayUploadSigning') {
     doLast {
-        if (!liveAds) throw new GradleException('Configure production AdMob app/banner/interstitial IDs')
-        if (!billingKey) throw new GradleException('Configure the Play app licensing public key')
-        try {
-            java.security.KeyFactory.getInstance('RSA').generatePublic(
-                    new java.security.spec.X509EncodedKeySpec(java.util.Base64.decoder.decode(billingKey)))
-        } catch (Exception ignored) {
-            throw new GradleException('Invalid Play app licensing public key')
-        }
         if (!playSigningFile.isFile() ||
                 !['storeFile','storePassword','keyAlias','keyPassword'].every { playSigning.getProperty(it) })
             throw new GradleException('Configure independent Play upload signing key')
@@ -111,7 +111,26 @@ tasks.register('verifyPlayProductionConfiguration') {
                 file(playSigning.getProperty('storeFile')).canonicalFile ==
                 file(releaseSigning.getProperty('storeFile')).canonicalFile)
             throw new GradleException('Do not reuse the Direct keystore')
+        println 'PLAY_INDEPENDENT_UPLOAD_SIGNING_CONFIGURATION_PASS'
     }
+}
+tasks.register('verifyPlayProductionConfiguration') {
+    dependsOn tasks.named('verifyPlayUploadSigning')
+    doLast {
+        if (!liveAds) throw new GradleException('Configure production AdMob app/banner/interstitial IDs')
+        if (!billingKey) throw new GradleException('Configure the Play app licensing public key')
+        try {
+            java.security.KeyFactory.getInstance('RSA').generatePublic(
+                    new java.security.spec.X509EncodedKeySpec(java.util.Base64.decoder.decode(billingKey)))
+        } catch (Exception ignored) {
+            throw new GradleException('Invalid Play app licensing public key')
+        }
+        println 'PLAY_PRODUCTION_CONFIGURATION_PASS'
+    }
+}
+tasks.matching { it.name == 'prePlayReleaseBuild' }.configureEach {
+    if (playProduction) dependsOn tasks.named('verifyPlayProductionConfiguration')
+    else if (playInternal) dependsOn tasks.named('verifyPlayUploadSigning')
 }
 
 android {
@@ -160,17 +179,19 @@ android {
             dimension 'distribution'
             applicationId 'com.filehubaio.mobile'
             targetSdk 36
-            versionCode 2
-            versionName '1.0.1'
+            versionCode 3
+            versionName '1.0.2'
             buildConfigField 'boolean', 'DIRECT_EDITION', 'false'
             buildConfigField 'String', 'PAIR_SCHEME', '"filehubaio-play"'
-            buildConfigField 'boolean', 'LIVE_ADS_CONFIGURED', liveAds.toString()
-            buildConfigField 'String', 'AD_BANNER_ID', '"' + (liveAds ? adBanner : '') + '"'
-            buildConfigField 'String', 'AD_INTERSTITIAL_ID', '"' + (liveAds ? adInterstitial : '') + '"'
+            buildConfigField 'boolean', 'PLAY_INTERNAL_TEST', playInternal.toString()
+            buildConfigField 'boolean', 'LIVE_ADS_CONFIGURED', (playProduction && liveAds).toString()
+            buildConfigField 'String', 'AD_BANNER_ID', '"' + (playProduction && liveAds ? adBanner : '') + '"'
+            buildConfigField 'String', 'AD_INTERSTITIAL_ID', '"' + (playProduction && liveAds ? adInterstitial : '') + '"'
             buildConfigField 'String', 'PLAY_BILLING_PUBLIC_KEY', '"' + billingKey + '"'
             manifestPlaceholders = [pairScheme: 'filehubaio-play',
-                adMobAppId: liveAds ? adApp : 'ca-app-pub-3940256099942544~3347511713']
-            if (playSigningFile.exists()) signingConfig signingConfigs.playUpload
+                adMobAppId: playProduction && liveAds ? adApp : 'ca-app-pub-3940256099942544~3347511713']
+            if ((playInternal || playProduction) && playSigningFile.exists())
+                signingConfig signingConfigs.playUpload
         }
     }
     buildTypes {

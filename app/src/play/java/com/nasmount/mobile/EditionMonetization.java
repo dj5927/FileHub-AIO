@@ -128,7 +128,8 @@ final class EditionMonetization implements Application.ActivityLifecycleCallback
         if(s==null){next.run();return;}
         s.showAtBreak(a,next);
     }
-    private boolean adsConfigured(){return BuildConfig.DEBUG||BuildConfig.LIVE_ADS_CONFIGURED;}
+    private boolean testAds(){return BuildConfig.DEBUG||BuildConfig.PLAY_INTERNAL_TEST;}
+    private boolean adsConfigured(){return testAds()||BuildConfig.LIVE_ADS_CONFIGURED;}
     private boolean adsAllowed(){return adsConfigured()&&billing.checked()&&!billing.full()&&
             !consentInProgress&&consent.canRequestAds()&&adsReady;}
     private boolean eligible(Activity a){
@@ -218,7 +219,7 @@ final class EditionMonetization implements Application.ActivityLifecycleCallback
         interstitial=null;
         if(now-lastInterstitialAttempt<30000)return;
         lastInterstitialAttempt=now;interstitialLoading=true;
-        InterstitialAd.load(app,BuildConfig.DEBUG?TEST_INTERSTITIAL:BuildConfig.AD_INTERSTITIAL_ID,
+        InterstitialAd.load(app,testAds()?TEST_INTERSTITIAL:BuildConfig.AD_INTERSTITIAL_ID,
                 new AdRequest.Builder().build(),new InterstitialAdLoadCallback(){
                     @Override public void onAdLoaded(InterstitialAd ad){
                         interstitialLoading=false;
@@ -327,7 +328,7 @@ final class EditionMonetization implements Application.ActivityLifecycleCallback
             if(width==dp&&now-attempted<30000)return;
             attempted=now;width=dp;
             final AdView candidate=new AdView(activity);ad=candidate;loaded=false;
-            candidate.setAdUnitId(BuildConfig.DEBUG?TEST_BANNER:BuildConfig.AD_BANNER_ID);
+            candidate.setAdUnitId(owner.testAds()?TEST_BANNER:BuildConfig.AD_BANNER_ID);
             candidate.setAdSize(AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(activity,dp));
             slot.addView(candidate,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));
             candidate.setAdListener(new AdListener(){
