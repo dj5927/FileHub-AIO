@@ -38,7 +38,7 @@ import java.util.LinkedHashMap;
 /** Extendable, categorized settings screen for the Android file manager. */
 public final class SettingsActivity extends Activity {
     static final String EXTRA_CURRENT_SCOPE = "current_folder_scope";
-    private static final int PICK_CODECS = 701;
+    static final int PICK_CODECS = 701;
     private static final int PICK_HIDE_FOLDER = 702;
     private static final int PICK_TTF = 703;
     private int DARK = 0xFF202326;
@@ -83,10 +83,10 @@ public final class SettingsActivity extends Activity {
         root.addView(toolbar, new LinearLayout.LayoutParams(-1, dp(56)));
         TextView back = label("‹", 30, Color.WHITE);
         back.setGravity(Gravity.CENTER);
-        back.setContentDescription("설정 닫기");
+        back.setContentDescription(L10n.t("설정 닫기"));
         toolbar.addView(back, new LinearLayout.LayoutParams(dp(52), -1));
         back.setOnClickListener(v -> finish());
-        TextView title = label("설정", 19, Color.WHITE);
+        TextView title = label(L10n.t("설정"), 19, Color.WHITE);
         title.setTypeface(null, android.graphics.Typeface.BOLD);
         toolbar.addView(title);
         HorizontalScrollView categories = new HorizontalScrollView(this);
@@ -133,10 +133,10 @@ public final class SettingsActivity extends Activity {
                     Gravity.CENTER_VERTICAL);
     }
 
-    private int dp(int value) {
+    int dp(int value) {
         return Math.round(getResources().getDisplayMetrics().density * value);
     }
-    private TextView label(String value, float size, int color) {
+    TextView label(String value, float size, int color) {
         TextView view = new TextView(this);
         view.setText(value);
         view.setTextColor(color);
@@ -144,7 +144,7 @@ public final class SettingsActivity extends Activity {
         view.setGravity(Gravity.CENTER_VERTICAL);
         return view;
     }
-    private void section(String title, String info) {
+    void section(String title, String info) {
         TextView heading = label(title, 17, FOREGROUND);
         heading.setTypeface(null, android.graphics.Typeface.BOLD);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(44));
@@ -158,7 +158,7 @@ public final class SettingsActivity extends Activity {
             final int selected=i;
             String category=SETTING_TABS[i];
             boolean active=i==selectedTab;
-            TextView item = label(category, 13, active?Color.WHITE:TEAL);
+            TextView item = label(L10n.t(category), 13, active?Color.WHITE:TEAL);
             item.setGravity(Gravity.CENTER);
             item.setPadding(dp(14), 0, dp(14), 0);
             item.setTypeface(null,active?android.graphics.Typeface.BOLD:
@@ -179,12 +179,12 @@ public final class SettingsActivity extends Activity {
             });
         }
     }
-    private void note(String value) {
+    void note(String value) {
         TextView hint = label(value, 12, MUTED);
         hint.setPadding(dp(3), dp(3), dp(3), dp(9));
         content.addView(hint, new LinearLayout.LayoutParams(-1, -2));
     }
-    private void action(String title, String description, Runnable handler) {
+    void action(String title, String description, Runnable handler) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(14), dp(9), dp(14), dp(9));
@@ -204,42 +204,44 @@ public final class SettingsActivity extends Activity {
     private void select(String title, String[] options, int current,
                         java.util.function.IntConsumer changed) {
         String currentValue = options[Math.min(Math.max(current, 0), options.length - 1)];
-        action(title, currentValue, () -> new AlertDialog.Builder(this)
-                .setTitle(title)
-                .setSingleChoiceItems(options, current, (dialog, which) -> {
+        action(L10n.t(title), L10n.t(currentValue), () -> new AlertDialog.Builder(this)
+                .setTitle(L10n.t(title))
+                .setSingleChoiceItems(L10n.labels(options), current, (dialog, which) -> {
                     changed.accept(which);
                     dialog.dismiss();
                     render();
                 })
-                .setNegativeButton("취소", null).show());
+                .setNegativeButton(L10n.t("취소"), null).show());
     }
-    private void render() {
+    void render() {
         content.removeAllViews();
         categoryAnchors.clear();
         buildCategoryTabs();
         if(selectedTab==2){renderComicDefaults();return;}
         if(selectedTab==3){renderTextDefaults();return;}
         if(selectedTab==0){
-        section("인터페이스", "FileHub AIO 파일관리자와 설정 화면의 밝기 및 색상 테마를 선택합니다.");
-        action("화면 테마", AppearanceSettings.LABELS[AppearanceSettings.mode(this)],
+        section(L10n.t("인터페이스"), "FileHub AIO 파일관리자와 설정 화면의 밝기 및 색상 테마를 선택합니다.");
+        action(L10n.t("화면 테마"), AppearanceSettings.LABELS[AppearanceSettings.mode(this)],
                 () -> new AlertDialog.Builder(this)
                         .setTitle("인터페이스 · 화면 테마")
-                        .setSingleChoiceItems(AppearanceSettings.LABELS,
+                        .setSingleChoiceItems(L10n.labels(AppearanceSettings.LABELS),
                                 AppearanceSettings.mode(this), (dialog, which) -> {
                                     dialog.dismiss();
                                     AppearanceSettings.choose(this, which);
                                     recreate();
-                                }).setNegativeButton("취소", null).show());
-        note("시스템 설정에 맞춤을 선택하면 Android의 라이트/다크 설정을 따릅니다.");
-        action("현재 앱","FileHub AIO v0.1.104",
+                                }).setNegativeButton(L10n.t("취소"), null).show());
+        note(L10n.t("시스템 설정에 맞춤을 선택하면 Android의 라이트/다크 설정을 따릅니다."));
+        action(L10n.t("현재 앱"),"FileHub AIO v"+BuildConfig.VERSION_NAME+
+                (BuildConfig.DIRECT_EDITION?" · Direct":" · Play"),
                 ()->new AlertDialog.Builder(this).setTitle("FileHub AIO")
                         .setMessage("개별 폴더 설정과 기존 원격 저장소 연결 정보는 유지됩니다.")
-                        .setPositiveButton("확인",null).show());
+                        .setPositiveButton(L10n.t("확인"),null).show());
+        EditionUpdateSettings.render(this);
         note("일반 설정은 새로운 공통 기능이 추가될 때 이 탭에 확장됩니다.");
         return;
         }
 
-        section("동영상 플레이어 · 기본값", "해당 폴더에서 별도로 지정하지 않은 영상에 적용합니다.");
+        section(L10n.t("동영상 플레이어 · 기본값"), "해당 폴더에서 별도로 지정하지 않은 영상에 적용합니다.");
         select("화면 비율", new String[]{
                 "비율 유지 · 영상 전체 표시", "비율 유지 · 꽉 채우기 (일부 잘림)",
                 "화면 강제 채우기 (비율 변형)"
@@ -255,7 +257,7 @@ public final class SettingsActivity extends Activity {
                 .putInt(PlayerSettings.SKIP_SECONDS, seconds[index]).apply());
         note("가로·세로 영상에 맞춰 자동 회전하며, 수동 전환도 가능합니다. 화면을 2초 누르거나 자물쇠 버튼으로 터치를 잠그고 해제합니다. 영상 왼쪽 세로 스와이프는 화면 밝기, 오른쪽 세로 스와이프는 미디어 볼륨을 조절합니다. 영상 종료 시 시청 위치를 저장하여 다음에 이어보기 여부를 묻습니다.");
 
-        section("자막 기본 설정", "영상 폴더별로 변경하지 않았다면 여기의 값이 적용됩니다.");
+        section(L10n.t("자막 기본 설정"), "영상 폴더별로 변경하지 않았다면 여기의 값이 적용됩니다.");
         int[] defaultSizes = PlayerSettings.SUBTITLE_SIZES;
         String[] sizeChoices = new String[defaultSizes.length];
         int defaultIndex = 0;
@@ -284,56 +286,29 @@ public final class SettingsActivity extends Activity {
                         PlayerSettings.prefs(this).edit()
                                 .putInt(PlayerSettings.DEFAULT_SUBTITLE_SOURCE,index)
                                 .apply());
-        section("자막 글꼴", "PC에서 받은 TTF 글꼴을 이 앱의 전용 저장소로 가져옵니다.");
-        action("TTF 글꼴 가져오기", "휴대폰에서 .ttf 파일 선택 · 최대 16MB",
+        section(L10n.t("자막 글꼴"), "PC에서 받은 TTF 글꼴을 이 앱의 전용 저장소로 가져옵니다.");
+        action(L10n.t("TTF 글꼴 가져오기"), L10n.t("휴대폰에서 .ttf 파일 선택 · 최대 16MB"),
                 () -> chooseDocument(PICK_TTF));
         String activeFont = SubtitleFonts.current(this);
-        action("기본 Android 글꼴" + (activeFont.isEmpty() ? "  ✓" : ""),
-                "등록 글꼴 대신 시스템 글꼴 사용", () -> {
+        action(L10n.t("기본 Android 글꼴") + (activeFont.isEmpty() ? "  ✓" : ""),
+                L10n.t("등록 글꼴 대신 시스템 글꼴 사용"), () -> {
             SubtitleFonts.choose(this, "");
             render();
         });
         for (String name : SubtitleFonts.installed(this)) {
             action(name + (name.equals(activeFont) ? "  ✓" : ""),
-                    "선택하면 동영상 자막에 적용", () -> {
+                    L10n.t("선택하면 동영상 자막에 적용"), () -> {
                 SubtitleFonts.choose(this, name);
                 render();
             });
         }
-        TextView sample = label("자막 미리보기: 안녕하세요! Hello 123",
+        TextView sample = label(L10n.t("자막 미리보기: 안녕하세요! Hello 123"),
                 15, FOREGROUND);
         sample.setGravity(Gravity.CENTER);
         sample.setTypeface(SubtitleFonts.selectedTypeface(this));
         content.addView(sample, new LinearLayout.LayoutParams(-1, dp(54)));
 
-        section("코덱 · 호환성", "Media3 FFmpeg 확장 디코더가 APK에 포함됩니다. 기기 기본 디코더가 지원하지 않는 코덱은 FFmpeg를 자동으로 사용합니다.");
-        String abi = Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : "알 수 없음";
-        String codecFolder = PlayerSettings.prefs(this).getString(
-                PlayerSettings.CODEC_TREE_LABEL, "미지정");
-        action("외부 코덱 폴더 가져오기", codecFolder +
-                "\n선택하면 .aar / .so / .zip을 NAS Mount 전용 폴더로 이동합니다.",
-                () -> chooseFolder(PICK_CODECS));
-        note("기기 CPU: " + abi +
-                "\n기본 탑재: Media3 1.11.1 + NextLib FFmpeg 1.11.1-0.18.0" +
-                "\n내장 FFmpeg 코덱: AC3, E-AC3, DTS, TrueHD, FLAC, ALAC, AAC 등" +
-                "\nNAS Mount 보관 위치: " +
-                CodecAddonManager.codecDirectory(this).getAbsolutePath() +
-                "\n" + CodecAddonManager.inventory(this));
-        note("기기 E-AC3 디코더: " + detectNativeDecoder("audio/eac3") +
-                "\n기기 Dolby TrueHD 디코더: " + detectNativeDecoder("audio/true-hd") +
-                "\nMX Player 전용 파일을 가져오더라도 해당 파일을 실행하지 않습니다. 자동 재생에 쓰이는 FFmpeg는 검증된 APK 내장 모듈입니다. 선택 폴더의 파일은 복사 후 SHA256 검증을 거쳐 이동하고, 삭제 권한이 없으면 원본은 유지합니다.");
-
-        section("동영상 코덱 라이선스", "동영상 플레이어에 포함된 확장 코덱의 라이선스입니다.");
-        action("오픈소스 FFmpeg · NextLib 라이선스",
-                "NextLib FFmpeg 1.11.1-0.18.0 · GPLv3",
-                () -> new AlertDialog.Builder(this).setTitle("FFmpeg 오픈소스 고지")
-                        .setMessage("NAS Mount의 확장 디코더는 NextLib GPLv3 기반입니다.\n\n" +
-                                "프로젝트: https://github.com/anilbeesetti/nextlib\n\n" +
-                                "라이선스: GNU General Public License version 3\n\n" +
-                                "이 코덱이 포함된 앱을 다른 사람에게 배포할 때는 " +
-                                "GPLv3의 소스 제공 및 저작권 고지 의무를 확인해야 합니다. " +
-                                "네이티브 의존성의 라이선스도 APK에 포함되어 있습니다.")
-                        .setPositiveButton("확인", null).show());
+        EditionCodecSettings.render(this);
     }
 
     private void defaultNumber(String category,String key,int value){
@@ -357,7 +332,7 @@ public final class SettingsActivity extends Activity {
         action(title,choices[safe],()->{
             LinearLayout pane=Ui.vertical(this);
             pane.setPadding(dp(18),dp(10),dp(18),dp(12));
-            TextView instruction=label("값을 선택하면 아래 예시가 바로 바뀝니다.",12,MUTED);
+            TextView instruction=label(L10n.t("값을 선택하면 아래 예시가 바로 바뀝니다."),12,MUTED);
             pane.addView(instruction,new LinearLayout.LayoutParams(-1,dp(34)));
             Spinner picker=new Spinner(this);
             picker.setAdapter(new ArrayAdapter<>(this,
@@ -383,8 +358,8 @@ public final class SettingsActivity extends Activity {
             scroll.setFillViewport(false);
             scroll.addView(pane);
             new AlertDialog.Builder(this).setTitle(title)
-                    .setView(scroll).setNegativeButton("취소",null)
-                    .setPositiveButton("적용",(dialog,which)->{
+                    .setView(scroll).setNegativeButton(L10n.t("취소"),null)
+                    .setPositiveButton(L10n.t("적용"),(dialog,which)->{
                         changed.accept(picker.getSelectedItemPosition());
                         render();
                     }).show();
@@ -400,12 +375,12 @@ public final class SettingsActivity extends Activity {
                         java.util.function.Consumer<Boolean> changed){
         action(title,description+" · "+(current?"켜짐":"꺼짐"),()->
                 new AlertDialog.Builder(this).setTitle(title)
-                        .setSingleChoiceItems(new String[]{"사용","사용 안 함"},
+                        .setSingleChoiceItems(new String[]{L10n.t("사용"),L10n.t("사용 안 함")},
                                 current?0:1,(dialog,index)->{
                                     changed.accept(index==0);
                                     dialog.dismiss();
                                     render();
-                                }).setNegativeButton("취소",null).show());
+                                }).setNegativeButton(L10n.t("취소"),null).show());
     }
     private void number(String title,String suffix,int min,int max,
                         int current,String category,String key,
@@ -443,8 +418,8 @@ public final class SettingsActivity extends Activity {
             ScrollView scroll=new ScrollView(this);
             scroll.addView(pane);
             new AlertDialog.Builder(this).setTitle(title)
-                    .setView(scroll).setNegativeButton("취소",null)
-                    .setPositiveButton("적용",(dialog,index)->{
+                    .setView(scroll).setNegativeButton(L10n.t("취소"),null)
+                    .setPositiveButton(L10n.t("적용"),(dialog,index)->{
                         changed.accept(min+bar.getProgress());
                         render();
                     }).show();
@@ -468,7 +443,7 @@ public final class SettingsActivity extends Activity {
     }
     private void renderComicDefaults(){
         String category=FolderMediaSettings.COMIC;
-        section("만화책 뷰어 · 기본값",
+        section(L10n.t("만화책 뷰어 · 기본값"),
                 "책이나 폴더에서 따로 설정하지 않은 만화책에만 적용됩니다.");
         appendReaderPreview(category);
         readerSelect("기본 읽기 방향",
@@ -483,15 +458,15 @@ public final class SettingsActivity extends Activity {
                         "double_page_split",ComicPageLayout.AUTO),
                 category,"double_page_split",
                 value->defaultNumber(category,"double_page_split",value));
-        readerToggle("폴드 펼침 두 페이지 보기","펼친 화면에서 좌우 두 쪽",
+        readerToggle(L10n.t("폴드 펼침 두 페이지 보기"),L10n.t("펼친 화면에서 좌우 두 쪽"),
                 ReaderDefaultSettings.bool(this,category,"fold_two_pages",true),
                 category,"fold_two_pages",
                 value->defaultBoolean(category,"fold_two_pages",value));
-        readerToggle("기본 가로 폭 맞춤","원본 페이지가 화면 너비에 맞게 확대됨",
+        readerToggle(L10n.t("기본 가로 폭 맞춤"),L10n.t("원본 페이지가 화면 너비에 맞게 확대됨"),
                 ReaderDefaultSettings.bool(this,category,"fit_width",false),
                 category,"fit_width",
                 value->defaultBoolean(category,"fit_width",value));
-        readerToggle("기본 흑백 모드","색상 대신 흑백으로 표시",
+        readerToggle(L10n.t("기본 흑백 모드"),L10n.t("색상 대신 흑백으로 표시"),
                 ReaderDefaultSettings.bool(this,category,"grayscale",false),
                 category,"grayscale",
                 value->defaultBoolean(category,"grayscale",value));
@@ -509,7 +484,7 @@ public final class SettingsActivity extends Activity {
     }
     private void renderTextDefaults(){
         String category=FolderMediaSettings.TEXT;
-        section("TXT 텍스트뷰어 · 기본값",
+        section(L10n.t("TXT 텍스트뷰어 · 기본값"),
                 "TXT 소설의 기본 글꼴·줄간격·여백·독서 모드입니다.");
         appendReaderPreview(category);
         note("TXT 빈 줄 자동 정리: 기본 적용 · 규칙적으로 늘어난 줄바꿈만 감지해 "+
@@ -541,14 +516,14 @@ public final class SettingsActivity extends Activity {
                 ReaderDefaultSettings.integer(this,category,"theme",0),
                 category,"theme",
                 value->defaultNumber(category,"theme",value));
-        readerToggle("TXT 폴드 두 페이지 보기","펼침 화면에서 좌우로 나누어 읽기",
+        readerToggle(L10n.t("TXT 폴드 두 페이지 보기"),L10n.t("펼침 화면에서 좌우로 나누어 읽기"),
                 ReaderDefaultSettings.bool(this,category,"fold_columns",true),
                 category,"fold_columns",
                 value->defaultBoolean(category,"fold_columns",value));
         readerTurnDefaults(category);
 
         // EPUB has its own defaults, independent of TXT within this tab.
-        section("EPUB 전자책 · 기본값",
+        section(L10n.t("EPUB 전자책 · 기본값"),
                 "같은 텍스트뷰어 탭에서 EPUB의 읽기 방식과 본문 설정도 관리합니다.");
         appendReaderPreview(FolderMediaSettings.EPUB);
         readerSelect("EPUB 기본 읽기 방식",
@@ -581,7 +556,7 @@ public final class SettingsActivity extends Activity {
         readerTurnDefaults(FolderMediaSettings.EPUB);
         note("위 설정은 새 폴더에 적용되는 기본값입니다. 책 안의 Aa 설정을 "+
                 "변경하면 해당 소설이 들어 있는 폴더의 TXT 또는 EPUB에만 적용됩니다.");
-        section("PDF 문서 · 책 뷰어",
+        section(L10n.t("PDF 문서 · 책 뷰어"),
                 "PDF도 FileHub 안에서 바로 열 수 있습니다. 로컬·SD/USB·NAS 파일을 지원합니다.");
         note("PDF는 원본 문서의 글과 그림 위치를 유지합니다. 읽는 중 상단 +/−로 "+
                 "확대하고 하단에서 페이지를 이동할 수 있으며, 읽던 위치를 저장합니다.");
@@ -591,7 +566,7 @@ public final class SettingsActivity extends Activity {
         return detectNativeDecoder("audio/eac3");
     }
 
-    private String detectNativeDecoder(String mimeType) {
+    String detectNativeDecoder(String mimeType) {
         try {
             for (MediaCodecInfo codec :
                     new MediaCodecList(MediaCodecList.REGULAR_CODECS).getCodecInfos()) {
@@ -629,52 +604,13 @@ public final class SettingsActivity extends Activity {
             return "코덱 폴더를 읽을 수 없습니다.";
         }
     }
-    private void chooseFolder(int code) {
+    void chooseFolder(int code) {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION |
                 Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         if (code == PICK_CODECS)
             intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
         startActivityForResult(intent, code);
-    }
-    private void importCodecFolder(Uri folderUri) {
-        TextView progress = label("선택 폴더의 코덱 파일을 확인 중...", 13, FOREGROUND);
-        progress.setPadding(dp(24), dp(24), dp(24), dp(24));
-        AlertDialog progressDialog = new AlertDialog.Builder(this)
-                .setTitle("NAS Mount로 코덱 파일 가져오기")
-                .setView(progress)
-                .setCancelable(false)
-                .create();
-        progressDialog.show();
-        Thread worker = new Thread(() -> {
-            try {
-                CodecAddonManager.Result outcome = CodecAddonManager.importFromFolder(
-                        getApplicationContext(), folderUri, (filename, index, total) ->
-                                runOnUiThread(() -> progress.setText(
-                                        index + "번째 파일 확인 중: " + filename)));
-                runOnUiThread(() -> {
-                    if (isFinishing() || isDestroyed()) {
-                        return;
-                    }
-                    progressDialog.dismiss();
-                    render();
-                    new AlertDialog.Builder(this).setTitle("코덱 가져오기 결과")
-                            .setMessage(outcome.summary())
-                            .setPositiveButton("확인", null).show();
-                });
-            } catch (Exception error) {
-                runOnUiThread(() -> {
-                    if (isFinishing() || isDestroyed()) {
-                        return;
-                    }
-                    progressDialog.dismiss();
-                    new AlertDialog.Builder(this).setTitle("코덱 가져오기 실패")
-                            .setMessage(error.getMessage())
-                            .setPositiveButton("확인", null).show();
-                });
-            }
-        }, "nas-codec-import");
-        worker.start();
     }
     private void chooseDocument(int code) {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -694,10 +630,10 @@ public final class SettingsActivity extends Activity {
     private void chooseRemoteFolder() {
         try {
             List<Models.RemoteProfile> saved = new SecureStore(this).activeRemotes();
-            if (saved.isEmpty()) { toast("등록된 원격 저장소가 없습니다."); return; }
+            if (saved.isEmpty()) { toast(L10n.t("등록된 원격 저장소가 없습니다.")); return; }
             String[] names = new String[saved.size()];
             for (int i=0;i<names.length;i++) names[i] = saved.get(i).label();
-            new AlertDialog.Builder(this).setTitle("네트워크 저장소")
+            new AlertDialog.Builder(this).setTitle(L10n.t("네트워크 저장소"))
                     .setItems(names, (d, which) -> {
                         Models.RemoteProfile profile = saved.get(which);
                         EditText path = new EditText(this);
@@ -706,8 +642,8 @@ public final class SettingsActivity extends Activity {
                         path.setHint("/영화/해외영화");
                         new AlertDialog.Builder(this).setTitle(profile.label() + " 폴더 경로")
                                 .setView(path)
-                                .setNegativeButton("취소", null)
-                                .setPositiveButton("등록", (dialog, action) -> {
+                                .setNegativeButton(L10n.t("취소"), null)
+                                .setPositiveButton(L10n.t("등록"), (dialog, action) -> {
                                     try {
                                         String route = RemoteProvider.relativePath(
                                                 path.getText().toString());
@@ -729,13 +665,14 @@ public final class SettingsActivity extends Activity {
                 String imported = SubtitleFonts.importTtf(this, uri, name);
                 SubtitleFonts.choose(this, imported);
                 render();
-                toast("폰트를 등록하고 선택했습니다.");
+                toast(L10n.t("폰트를 등록하고 선택했습니다."));
             } catch (Exception problem) {
-                new AlertDialog.Builder(this).setTitle("폰트 가져오기 실패")
+                new AlertDialog.Builder(this).setTitle(L10n.t("폰트 가져오기 실패"))
                         .setMessage(problem.getMessage())
-                        .setPositiveButton("확인", null).show();
+                        .setPositiveButton(L10n.t("확인"), null).show();
             }
         } else if (code == PICK_CODECS || code == PICK_HIDE_FOLDER) {
+            if (code == PICK_CODECS && !BuildConfig.DIRECT_EDITION) return;
             try {
                 if ((data.getFlags() & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0) {
                     getContentResolver().takePersistableUriPermission(uri,
@@ -751,7 +688,7 @@ public final class SettingsActivity extends Activity {
                     PlayerSettings.prefs(this).edit()
                             .putString(PlayerSettings.CODEC_TREE, uri.toString())
                             .putString(PlayerSettings.CODEC_TREE_LABEL, folder).apply();
-                    importCodecFolder(uri);
+                    EditionCodecSettings.importFolder(this, uri);
                 } else {
                     String documentId = DocumentsContract.getTreeDocumentId(uri);
                     PlayerSettings.addHiddenFolder(this, "storage:" + documentId);

@@ -111,7 +111,7 @@ public final class TextEditorActivity extends Activity {
         title.setEllipsize(TextUtils.TruncateAt.MIDDLE);
         toolbar.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
 
-        saveButton = Ui.text(this, "저장", 16, 0xFF4CC8B8, true);
+        saveButton = Ui.text(this, L10n.t("저장"), 16, 0xFF4CC8B8, true);
         saveButton.setGravity(Gravity.CENTER);
         saveButton.setContentDescription("문서 저장");
         saveButton.setEnabled(false);
@@ -157,7 +157,7 @@ public final class TextEditorActivity extends Activity {
 
     private void showFailure(String message) {
         new AlertDialog.Builder(this).setTitle("문서 편집")
-                .setMessage(message).setPositiveButton("확인", null).show();
+                .setMessage(message).setPositiveButton(L10n.t("확인"), null).show();
     }
 
     private boolean dirty() {
@@ -201,7 +201,7 @@ public final class TextEditorActivity extends Activity {
                 spinner.setVisibility(View.GONE);
                 if (ready == null) {
                     showFailure(errorMessage);
-                    status.setText("문서를 열지 못했습니다.");
+                    status.setText(L10n.t("문서를 열지 못했습니다."));
                     return;
                 }
                 document = ready;
@@ -285,9 +285,9 @@ public final class TextEditorActivity extends Activity {
         if (dirty()) {
             new AlertDialog.Builder(this).setTitle("저장하지 않은 변경사항")
                     .setMessage("문서를 수정했지만 아직 저장하지 않았습니다.")
-                    .setNegativeButton("계속 편집", null)
+                    .setNegativeButton(L10n.t("계속 편집"), null)
                     .setNeutralButton("저장하지 않고 닫기", (d, w) -> finish())
-                    .setPositiveButton("저장", (d, w) -> saveDocument()).show();
+                    .setPositiveButton(L10n.t("저장"), (d, w) -> saveDocument()).show();
             return;
         }
         super.onBackPressed();

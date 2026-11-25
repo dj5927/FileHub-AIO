@@ -77,11 +77,8 @@ android {
     compileSdk 37
 
     defaultConfig {
-        applicationId 'com.nasmount.mobile'
         minSdk 26
         targetSdk 35
-        versionCode 119
-        versionName '0.1.118'
     }
     signingConfigs {
         release {
@@ -93,10 +90,34 @@ android {
             }
         }
     }
+    buildFeatures { buildConfig = true }
+    flavorDimensions += 'distribution'
+    productFlavors {
+        direct {
+            dimension 'distribution'
+            applicationId 'com.nasmount.mobile'
+            targetSdk 35
+            versionCode 120
+            versionName '0.1.119'
+            buildConfigField 'boolean', 'DIRECT_EDITION', 'true'
+            buildConfigField 'String', 'PAIR_SCHEME', '"filehubaio"'
+            manifestPlaceholders = [pairScheme: 'filehubaio']
+            if (releaseSigningFile.exists()) signingConfig signingConfigs.release
+        }
+        play {
+            dimension 'distribution'
+            applicationId 'com.filehubaio.mobile'
+            targetSdk 36
+            versionCode 1
+            versionName '1.0.0'
+            buildConfigField 'boolean', 'DIRECT_EDITION', 'false'
+            buildConfigField 'String', 'PAIR_SCHEME', '"filehubaio-play"'
+            manifestPlaceholders = [pairScheme: 'filehubaio-play']
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig signingConfigs.release
         }
     }
     compileOptions {
@@ -125,7 +146,7 @@ dependencies {
     // NextLib is built for this exact Media3 version. It bundles the FFmpeg
     // renderer + ABI-matched native codecs for AC3/EAC3/DTS/MLP/TrueHD/etc.
     // GPL-3.0: redistribution of this combined build requires compliance.
-    implementation "io.github.anilbeesetti:nextlib-media3ext:1.11.1-0.19.0"
+    directImplementation "io.github.anilbeesetti:nextlib-media3ext:1.11.1-0.19.0"
     implementation 'androidx.documentfile:documentfile:1.1.0'
     implementation 'androidx.core:core:1.19.1'
     implementation 'com.squareup.okhttp3:okhttp:5.5.1'
@@ -135,7 +156,7 @@ dependencies {
     // ZIP / 7z read-write; RAR extraction only (RAR encoding is proprietary).
     implementation 'org.apache.commons:commons-compress:1.28.0'
     implementation 'org.tukaani:xz:1.12'
-    implementation 'com.github.junrar:junrar:8.1.2'
+    directImplementation 'com.github.junrar:junrar:8.1.2'
     // Bring the already-transitive AndroidX/media utility graph onto verified
     // stable security/bugfix versions. Constraints do not add new modules.
     constraints {

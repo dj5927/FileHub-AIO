@@ -68,9 +68,6 @@ import androidx.media3.ui.PlayerView;
 import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.CaptionStyleCompat;
 import androidx.media3.ui.SubtitleView;
-import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory;
-import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegSubtitleExtractorsFactory;
-import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegSubtitleSourceKt;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -137,6 +134,7 @@ public final class VideoPlayerActivity extends Activity {
     private long[] episodeSizes;
     private int episodeIndex = -1;
     private boolean nextEpisodePromptShown;
+    private boolean externalPlaybackPromptShown;
     private View previousEpisodeButton;
     private View nextEpisodeButton;
     private LinearLayout leftToolsBar;
@@ -315,7 +313,7 @@ public final class VideoPlayerActivity extends Activity {
         topBar.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
         TextView more = button("⋯", 26);
         more.setGravity(Gravity.CENTER);
-        more.setContentDescription("동영상 재생 추가 설정");
+        more.setContentDescription(L10n.t("동영상 재생 추가 설정"));
         topBar.addView(more, new LinearLayout.LayoutParams(dp(48), -1));
         more.setOnClickListener(v -> showPlayerQuickMenu());
 
@@ -356,7 +354,7 @@ public final class VideoPlayerActivity extends Activity {
         lockBackground.setColor(0xD020252B);
         lockBackground.setCornerRadius(dp(12));
         lockButton.setBackground(lockBackground);
-        lockButton.setContentDescription("동영상 터치 잠금 또는 해제");
+        lockButton.setContentDescription(L10n.t("동영상 터치 잠금 또는 해제"));
         FrameLayout.LayoutParams buttonParams = new FrameLayout.LayoutParams(
                 dp(46), dp(46), Gravity.START | Gravity.BOTTOM);
         buttonParams.leftMargin = dp(14);
@@ -397,7 +395,7 @@ public final class VideoPlayerActivity extends Activity {
         }
         unlockButton = button("🔓 잠금 해제", 15);
         unlockButton.setGravity(Gravity.CENTER);
-        unlockButton.setContentDescription("화면 잠금 해제");
+        unlockButton.setContentDescription(L10n.t("화면 잠금 해제"));
         unlockButton.setPadding(dp(14), 0, dp(14), 0);
         unlockButton.setBackground(lockBackground.getConstantState().newDrawable().mutate());
         unlockButton.setVisibility(View.GONE);
@@ -445,7 +443,7 @@ public final class VideoPlayerActivity extends Activity {
                         new SecureStore(this).activeRemotes()) {
                     if (id.equals(candidate.id)) { profile = candidate; break; }
                 }
-                if (profile == null) throw new IOException("원격 연결을 찾을 수 없습니다.");
+                if (profile == null) throw new IOException(L10n.t("원격 연결을 찾을 수 없습니다."));
                 remotePath = RemoteProvider.relativePath(
                         getIntent().getStringExtra(EXTRA_REMOTE_PATH));
                 long size = getIntent().getLongExtra(EXTRA_REMOTE_SIZE, C.LENGTH_UNSET);
@@ -466,20 +464,7 @@ public final class VideoPlayerActivity extends Activity {
             subtitleSourceMode = PlayerSettings.videoSubtitleSource(
                     this, progressId,folderSettingsScope);
             applySubtitleTypeface();
-            // Hardware decoding first, bundled FFmpeg if no system decoder is
-            // able to render this codec (E-AC3, TrueHD, DTS, etc).
-            NextRenderersFactory renderers = new NextRenderersFactory(this);
-            renderers.setExtensionRendererMode(
-                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON);
-            DefaultMediaSourceFactory mediaSources =
-                    new DefaultMediaSourceFactory(
-                            this, new FfmpegSubtitleExtractorsFactory())
-                            .setDataSourceFactory(dataFactory);
-            MediaSource.Factory subtitlesAndMedia =
-                    FfmpegSubtitleSourceKt.withFfmpegSubtitles(mediaSources, dataFactory);
-            player = new ExoPlayer.Builder(this, renderers)
-                    .setMediaSourceFactory(subtitlesAndMedia)
-                    .build();
+            player = EditionVideoEngine.create(this, dataFactory);
             player.setTrackSelectionParameters(player.getTrackSelectionParameters()
                     .buildUpon()
                     .setPreferredTextLanguage(PlayerSettings.defaultSubtitleLanguage(this))
@@ -578,6 +563,17 @@ public final class VideoPlayerActivity extends Activity {
                         setRequestedOrientation(needed);
                 }
                 @Override public void onPlayerError(PlaybackException problem) {
+                    if (!BuildConfig.DIRECT_EDITION && !externalPlaybackPromptShown &&
+                            problem.errorCode >= 4000 && problem.errorCode < 5000) {
+                        externalPlaybackPromptShown=true;
+                        new AlertDialog.Builder(VideoPlayerActivity.this)
+                                .setTitle(L10n.t("지원하지 않는 코덱"))
+                                .setMessage(L10n.t("기기 기본 디코더에서 재생하지 못했습니다. 설치된 외부 플레이어로 열 수 있습니다."))
+                                .setNegativeButton(L10n.t("닫기"),null)
+                                .setPositiveButton(L10n.t("외부 플레이어로 재생"),(d,w)->openExternalPlayer())
+                                .show();
+                        return;
+                    }
                     Toast.makeText(VideoPlayerActivity.this,
                             "재생 실패: 네트워크 또는 지원하지 않는 코덱 (" +
                                     problem.getErrorCodeName() + ")", Toast.LENGTH_LONG).show();
@@ -592,9 +588,9 @@ public final class VideoPlayerActivity extends Activity {
             if (profile != null) autoSubtitleRemote();
             else autoSubtitleLocal();
         } catch (Exception problem) {
-            new AlertDialog.Builder(this).setTitle("동영상 재생 오류")
+            new AlertDialog.Builder(this).setTitle(L10n.t("동영상 재생 오류"))
                     .setMessage(problem.getMessage())
-                    .setPositiveButton("닫기", (d, w) -> finish()).show();
+                    .setPositiveButton(L10n.t("닫기"), (d, w) -> finish()).show();
         }
     }
 
@@ -733,7 +729,7 @@ public final class VideoPlayerActivity extends Activity {
                 .setTitle("다음 편을 재생할까요?")
                 .setMessage("현재 영상이 끝났습니다.\n\n다음 영상:\n" +
                         nextName + "\n\n계속 재생하시겠습니까?")
-                .setNegativeButton("아니요", null)
+                .setNegativeButton(L10n.t("아니요"), null)
                 .setPositiveButton("다음 편 재생", (dialog, which) ->
                         playAdjacentEpisode(1))
                 .show();
@@ -1066,7 +1062,7 @@ public final class VideoPlayerActivity extends Activity {
                         Toast.makeText(this,"권한 설정을 열 수 없습니다.",
                                 Toast.LENGTH_SHORT).show();
                     }
-                }).setNegativeButton("나중에",null).show();
+                }).setNegativeButton(L10n.t("나중에"),null).show();
     }
 
     private void offerPermissionSetupOnce(){
@@ -1166,7 +1162,7 @@ public final class VideoPlayerActivity extends Activity {
         card.setElevation(dp(10));
 
         TextView heading=new TextView(context);
-        heading.setText("팝업 재생");
+        heading.setText(L10n.t("팝업 재생"));
         heading.setTextColor(Color.WHITE);
         heading.setTextSize(TypedValue.COMPLEX_UNIT_SP,20);
         heading.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
@@ -1198,7 +1194,7 @@ public final class VideoPlayerActivity extends Activity {
             finish();
         });
         TextView continuePlayback=new TextView(context);
-        continuePlayback.setText("팝업 재생");
+        continuePlayback.setText(L10n.t("팝업 재생"));
         continuePlayback.setTextColor(0xFF4BC2B8);
         continuePlayback.setTextSize(TypedValue.COMPLEX_UNIT_SP,14);
         continuePlayback.setGravity(Gravity.CENTER);
@@ -1270,13 +1266,14 @@ public final class VideoPlayerActivity extends Activity {
     }
 
     private void showPlayerQuickMenu() {
-        new AlertDialog.Builder(this).setTitle("재생 설정")
+        new AlertDialog.Builder(this).setTitle(L10n.t("재생 설정"))
                 .setItems(new String[]{
-                        "자막 설정", "오디오 트랙 및 정보",
-                        "화면 회전 · " + PlaybackControlPolicy.orientationLabel(orientationMode),
-                        "재생 속도 초기화 (1.0×)", "화면 맞춤 / 확대",
-                        "홈 버튼 확인창 권한 설정",
-                        "이 폴더 개별 설정 초기화 (기본값 사용)"
+                        L10n.t("자막 설정"), L10n.t("오디오 트랙 및 정보"),
+                        L10n.t("화면 회전 · ") + PlaybackControlPolicy.orientationLabel(orientationMode),
+                        L10n.t("재생 속도 초기화 (1.0×)"), L10n.t("화면 맞춤 / 확대"),
+                        L10n.t("홈 버튼 확인창 권한 설정"),
+                        L10n.t("이 폴더 개별 설정 초기화 (기본값 사용)"),
+                        L10n.t("외부 플레이어로 재생")
                 }, (dialog, which) -> {
                     if (which == 0) chooseSubtitle();
                     else if (which == 1) showAudioSettings();
@@ -1285,14 +1282,30 @@ public final class VideoPlayerActivity extends Activity {
                     else if (which == 4) toggleVideoFit();
                     else if (which == 5) showHomeConfirmationPermissionSetup();
                     else if (which == 6) resetVideoFolderOverrides();
+                    else if (which == 7) openExternalPlayer();
                 }).show();
+    }
+
+    private void openExternalPlayer() {
+        try {
+            Uri share=profile==null ? video : ExternalMediaProvider.issue(this,
+                    profile,remotePath,displayName,
+                    getIntent().getLongExtra(EXTRA_REMOTE_SIZE,-1));
+            if(share==null) throw new IOException("Video URI unavailable");
+            if(ExternalApps.openVideo(this,share) && player!=null)player.pause();
+        } catch (Exception error) {
+            new AlertDialog.Builder(this)
+                    .setTitle(L10n.t("외부 플레이어 연결 실패"))
+                    .setMessage(error.getMessage())
+                    .setPositiveButton(L10n.t("확인"),null).show();
+        }
     }
 
     private void resetVideoFolderOverrides(){
         new AlertDialog.Builder(this).setTitle("이 폴더의 동영상 설정 초기화")
                 .setMessage("이 폴더에서 변경한 영상 화면비율·자막 크기·자막 소스·자막 글꼴 설정을 해제하고 메인 기본값을 사용합니다.\n"+
                         "영상 파일과 시청 기록은 삭제하지 않습니다.")
-                .setNegativeButton("취소",null)
+                .setNegativeButton(L10n.t("취소"),null)
                 .setPositiveButton("기본값 사용",(dialog,which)->{
                     FolderMediaSettings.clear(this,FolderMediaSettings.VIDEO,
                             folderSettingsScope,PlayerSettings.RATIO,
@@ -1521,7 +1534,7 @@ public final class VideoPlayerActivity extends Activity {
         // CenteredPlayerTool paints the symbol geometrically; adding a font
         // glyph here would reintroduce its asymmetric font side bearings.
         String label = PlaybackControlPolicy.orientationLabel(orientationMode);
-        rotateButton.setContentDescription("화면 회전 · " + label);
+        rotateButton.setContentDescription(L10n.t("화면 회전 · ") + label);
         if (rotateModeLabel != null) rotateModeLabel.setText(label);
     }
     @Override public void onConfigurationChanged(Configuration configuration) {
@@ -1948,7 +1961,7 @@ public final class VideoPlayerActivity extends Activity {
 
     private void chooseSubtitle() {
         if (player == null) return;
-        new AlertDialog.Builder(this).setTitle("자막 설정")
+        new AlertDialog.Builder(this).setTitle(L10n.t("자막 설정"))
                 .setItems(new String[]{
                         "자막 소스 선택 · " + SubtitleSourcePolicy.LABELS[subtitleSourceMode],
                         "내장 자막 언어 / 트랙 선택",
@@ -2031,7 +2044,7 @@ public final class VideoPlayerActivity extends Activity {
                             which==1?"":installed.get(which-2));
                     applySubtitleTypeface();
                     dialog.dismiss();
-                }).setNegativeButton("취소",null).show();
+                }).setNegativeButton(L10n.t("취소"),null).show();
     }
     private void chooseSubtitleSource() {
         if (player == null) return;
@@ -2063,7 +2076,7 @@ public final class VideoPlayerActivity extends Activity {
                                         "선택 가능한 내장 자막이 없습니다. 하드섭 영상일 수도 있어요.",
                                         Toast.LENGTH_LONG).show();
                             }
-                        }).setNegativeButton("취소", null).show();
+                        }).setNegativeButton(L10n.t("취소"), null).show();
     }
 
     private void chooseEmbeddedSubtitle() {
@@ -2094,10 +2107,10 @@ public final class VideoPlayerActivity extends Activity {
             }
         }
         if (options.size() == 1) {
-            new AlertDialog.Builder(this).setTitle("내장 자막")
+            new AlertDialog.Builder(this).setTitle(L10n.t("내장 자막"))
                     .setMessage("현재 플레이어에서 선택 가능한 자막 트랙이 없습니다.\n" +
                             "영상에 자막이 없거나 디코더가 지원하지 않는 형식일 수 있습니다.")
-                    .setPositiveButton("확인", null).show();
+                    .setPositiveButton(L10n.t("확인"), null).show();
             return;
         }
         new AlertDialog.Builder(this).setTitle("내장 자막 언어 / 트랙")
@@ -2113,7 +2126,7 @@ public final class VideoPlayerActivity extends Activity {
                             setSubtitleSourceMode(SubtitleSourcePolicy.EMBEDDED);
                             dialog.dismiss();
                         })
-                .setNegativeButton("취소", null).show();
+                .setNegativeButton(L10n.t("취소"), null).show();
     }
 
     private void chooseSubtitleSize() {
@@ -2140,7 +2153,7 @@ public final class VideoPlayerActivity extends Activity {
                     }
                     applySubtitleTypeface();
                     dialog.dismiss();
-                }).setNegativeButton("취소", null).show();
+                }).setNegativeButton(L10n.t("취소"), null).show();
     }
     @Override protected void onActivityResult(int code, int result, Intent data) {
         super.onActivityResult(code, result, data);
@@ -2334,7 +2347,7 @@ public final class VideoPlayerActivity extends Activity {
         if (names.size() == 1) {
             new AlertDialog.Builder(this).setTitle("오디오 트랙")
                     .setMessage("현재 재생기에서 선택 가능한 오디오 트랙이 없습니다.")
-                    .setPositiveButton("확인", null).show();
+                    .setPositiveButton(L10n.t("확인"), null).show();
             return;
         }
         new AlertDialog.Builder(this).setTitle("오디오 소스 / 언어")
@@ -2353,7 +2366,7 @@ public final class VideoPlayerActivity extends Activity {
                             player.setTrackSelectionParameters(builder.build());
                             dialog.dismiss();
                             updateAudioCodecButton();
-                        }).setNegativeButton("취소", null).show();
+                        }).setNegativeButton(L10n.t("취소"), null).show();
     }
 
     private void showAudioInfo() {
@@ -2391,7 +2404,7 @@ public final class VideoPlayerActivity extends Activity {
         info.append("FFmpeg가 APK에 설치되어 있다는 이유만으로 FFmpeg 사용 중이라고 표시하지 않습니다.");
         new AlertDialog.Builder(this).setTitle("현재 영상 오디오 정보")
                 .setMessage(info.toString())
-                .setPositiveButton("확인", null).show();
+                .setPositiveButton(L10n.t("확인"), null).show();
     }
     @Override protected void onResume() {
         super.onResume();

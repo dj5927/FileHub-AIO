@@ -38,13 +38,13 @@ final class TvPairingCodec {
     }
 
     static String pairingUri(String host, int port, byte[] key) {
-        return "filehubaio://pair?host=" + host + "&port=" + port +
+        return BuildConfig.PAIR_SCHEME + "://pair?host=" + host + "&port=" + port +
                 "&key=" + Base64.getUrlEncoder().withoutPadding().encodeToString(key);
     }
 
     static Destination parseUri(String value) throws Exception {
         URI uri = new URI(value.trim());
-        if (!"filehubaio".equalsIgnoreCase(uri.getScheme()) ||
+        if (!BuildConfig.PAIR_SCHEME.equalsIgnoreCase(uri.getScheme()) ||
                 !"pair".equalsIgnoreCase(uri.getHost()) || uri.getRawQuery()==null)
             throw new IllegalArgumentException("FileHub TV QR 주소가 아닙니다.");
         String host="",port="",token="";

@@ -73,7 +73,6 @@ public class MainActivity extends Activity {
     private static final int REQ_FOLDER = 504;
     private static final int REQ_SETTINGS = 505;
     private static final int REQ_TEXT_EDITOR = 506;
-    private static final int REQ_APK_INSTALL_AUTH = 507;
     private static final int REQ_OFFICE_EDITOR = 508;
     private static final int REQ_MUSIC_NOTIFICATIONS = 509;
     private static final int REQ_TRANSFER_NOTIFICATIONS = 510;
@@ -179,7 +178,7 @@ public class MainActivity extends Activity {
     private LinearLayout selectionToolbar;
     private LinearLayout operationBottomBar;
     private ToolbarIconView toolbarFavorite;
-    private File pendingApkInstall;
+    private final EditionApkInstaller apkInstaller = new EditionApkInstaller(this);
     private LinearLayout miniPlayerBar;
     private TextView miniTitle,miniToggle;
     private SeekBar miniProgress;
@@ -238,11 +237,7 @@ public class MainActivity extends Activity {
         readerFolders = new ReaderFolders(this);
         if (state != null) {
             sdPermissionRequestPending = state.getBoolean("sd_permission_pending", false);
-            String queued = state.getString("pending_apk_install", "");
-            if (!queued.isEmpty() &&
-                    queued.startsWith(new File(getCacheDir(), "apk_install").getAbsolutePath() +
-                            File.separator))
-                pendingApkInstall = new File(queued);
+            apkInstaller.restore(state);
         }
         android.content.SharedPreferences drawerPrefs = getSharedPreferences(
                 DrawerSectionState.PREFS_NAME, MODE_PRIVATE);
@@ -279,14 +274,16 @@ public class MainActivity extends Activity {
         });
         setContentView(container);
         showHome();
-        otaUpdater = new OtaUpdater(this);
-        otaUpdater.startupCheck();
+        if (BuildConfig.DIRECT_EDITION) {
+            otaUpdater = new OtaUpdater(this);
+            otaUpdater.startupCheck();
+        }
         handleTvPairIntent(getIntent());
     }
 
     private void handleTvPairIntent(Intent intent) {
         if (intent == null || intent.getData() == null ||
-                !"filehubaio".equalsIgnoreCase(intent.getData().getScheme())) return;
+                !BuildConfig.PAIR_SCHEME.equalsIgnoreCase(intent.getData().getScheme())) return;
         String host=intent.getData().getHost();
         String value = intent.getData().toString();
         intent.setData(null);
@@ -299,9 +296,7 @@ public class MainActivity extends Activity {
     @Override protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
         outState.putBoolean("sd_permission_pending", sdPermissionRequestPending);
-        if (pendingApkInstall != null)
-            outState.putString("pending_apk_install",
-                    pendingApkInstall.getAbsolutePath());
+        apkInstaller.save(outState);
     }
 
     @Override public void onConfigurationChanged(Configuration newConfig) {
@@ -359,10 +354,10 @@ public class MainActivity extends Activity {
     }
 
     private int dp(int n) { return Ui.dp(this, n); }
-    private void toast(String value) {
+    void toast(String value) {
         Toast.makeText(this, value, Toast.LENGTH_SHORT).show();
     }
-    private String safeError(Throwable error) {
+    String safeError(Throwable error) {
         // Never hide manufacturer-specific diagnostic codes under a generic IOException.
         for (Throwable cause = error; cause != null; cause = cause.getCause()) {
             if (cause instanceof NasShareApi.Failure)
@@ -463,7 +458,7 @@ public class MainActivity extends Activity {
                 new AlertDialog.Builder(this).setTitle("SFTP 서버 신뢰 확인")
                         .setMessage("처음 접속한 서버입니다. 관리자에게 아래 키 지문을 확인하세요.\n\n" +
                                 fp + "\n\n확인 후 이 키를 저장하고 연결할까요?")
-                        .setNegativeButton("취소", null)
+                        .setNegativeButton(L10n.t("취소"), null)
                         .setPositiveButton("확인하고 연결", (dialog, which) -> {
                             remote.fingerprint = fp;
                             try {
@@ -478,12 +473,12 @@ public class MainActivity extends Activity {
         }
         showError(safeError(error));
     }
-    private void showError(String message) {
+    void showError(String message) {
         new AlertDialog.Builder(this).setTitle("FileHub AIO")
-                .setMessage(message).setPositiveButton("확인", null).show();
+                .setMessage(message).setPositiveButton(L10n.t("확인"), null).show();
     }
     interface Job<T> { T execute() throws Exception; }
-    private <T> void runJob(String label, Job<T> operation, Consumer<T> onSuccess) {
+    <T> void runJob(String label, Job<T> operation, Consumer<T> onSuccess) {
         LinearLayout box = Ui.horizontal(this);
         box.setPadding(dp(24), dp(20), dp(24), dp(20));
         ProgressBar wheel = new ProgressBar(this);
@@ -548,7 +543,7 @@ public class MainActivity extends Activity {
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("DSM 2단계 인증")
                 .setView(panel)
-                .setNegativeButton("취소", null)
+                .setNegativeButton(L10n.t("취소"), null)
                 .setPositiveButton("인증하고 계속", null)
                 .create();
         dialog.setOnShowListener(ignored ->
@@ -1073,7 +1068,7 @@ public class MainActivity extends Activity {
         }
         List<FileTransferEngine.Item> sources = new ArrayList<>(stagedFiles);
         boolean moving = stagedMove;
-        runJob("대상 폴더에서 같은 이름 확인 중...",
+        runJob(L10n.t("대상 폴더에서 같은 이름 확인 중..."),
                 () -> FileTransferEngine.conflictingNames(sources, dest, moving),
                 conflicts -> {
                     if (conflicts.isEmpty()) {
@@ -1092,8 +1087,8 @@ public class MainActivity extends Activity {
                             .setMessage(names + "\n\n기존 파일을 덮어쓸까요? " +
                                     "폴더가 포함된 경우 하위 동일 이름의 파일도 교체됩니다. " +
                                     "원본 파일은 덮어쓰기 전에 백업해 두는 것이 안전합니다.")
-                            .setNegativeButton("취소", null)
-                            .setPositiveButton("덮어쓰기", (dialog, which) ->
+                            .setNegativeButton(L10n.t("취소"), null)
+                            .setPositiveButton(L10n.t("덮어쓰기"), (dialog, which) ->
                                     commitStagedPaste(sources, dest, moving, true))
                             .show();
                 });
@@ -1148,7 +1143,7 @@ public class MainActivity extends Activity {
                 17, Ui.TEXT, true);
         box.addView(title, Ui.lp(this, -1, 30));
         Ui.gap(box, this, 10);
-        transferName = Ui.text(this, "전송 준비 중...", 13, Ui.MUTED, false);
+        transferName = Ui.text(this, L10n.t("전송 준비 중..."), 13, Ui.MUTED, false);
         transferName.setSingleLine(true);
         transferName.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         box.addView(transferName, Ui.lp(this, -1, 25));
@@ -1174,7 +1169,7 @@ public class MainActivity extends Activity {
         AlertDialog dialog = new AlertDialog.Builder(this).setView(box)
                 .setCancelable(false)
                 .setNegativeButton("숨기기", null)
-                .setPositiveButton("취소", null)
+                .setPositiveButton(L10n.t("취소"), null)
                 .create();
         transferDialog = dialog;
         dialog.setOnShowListener(ignored -> {
@@ -1272,15 +1267,15 @@ public class MainActivity extends Activity {
         List<FileTransferEngine.Item> sources = selection.snapshot();
         if (sources.isEmpty()) return;
         for (FileTransferEngine.Item item : sources) if (!item.writable()) {
-            showError("읽기 전용 파일은 삭제할 수 없습니다.");
+            showError(L10n.t("읽기 전용 파일은 삭제할 수 없습니다."));
             return;
         }
         new AlertDialog.Builder(this).setTitle(sources.size() + "개 항목 삭제")
                 .setMessage("선택한 파일과 폴더를 삭제하시겠습니까? 폴더 안의 파일도 삭제되며 " +
                         "SD·일반 NAS는 휴지통 없이 삭제될 수 있습니다. " +
                         "네이버 MYBOX 파일은 MYBOX 휴지통으로 이동합니다.")
-                .setNegativeButton("취소", null)
-                .setPositiveButton("삭제", (dialog, which) ->
+                .setNegativeButton(L10n.t("취소"), null)
+                .setPositiveButton(L10n.t("삭제"), (dialog, which) ->
                         runJob("선택 항목 삭제 중...",
                                 () -> FileTransferEngine.delete(this, sources),
                                 count -> {
@@ -1452,10 +1447,10 @@ public class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this);
         scroll.addView(form);
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("리눅스 파일 권한 변경 (chmod)")
+                .setTitle(L10n.t("리눅스 파일 권한 변경 (chmod)"))
                 .setView(scroll)
-                .setNegativeButton("취소", null)
-                .setPositiveButton("적용", null)
+                .setNegativeButton(L10n.t("취소"), null)
+                .setPositiveButton(L10n.t("적용"), null)
                 .create();
         dialog.setOnShowListener(ignored ->
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
@@ -1489,8 +1484,8 @@ public class MainActivity extends Activity {
                                 .setTitle("폴더 접근 권한 주의")
                                 .setMessage("폴더 소유자의 실행(x) 권한을 제거하면 " +
                                         "이 폴더에 다시 들어가지 못할 수 있습니다. 적용할까요?")
-                                .setNegativeButton("취소", null)
-                                .setPositiveButton("적용", (d, w) -> apply.run())
+                                .setNegativeButton(L10n.t("취소"), null)
+                                .setPositiveButton(L10n.t("적용"), (d, w) -> apply.run())
                                 .show();
                     } else apply.run();
                 }));
@@ -1510,7 +1505,7 @@ public class MainActivity extends Activity {
         }
         new AlertDialog.Builder(this)
                 .setTitle("선택한 " + sources.size() + "개 항목 압축하기")
-                .setItems(new String[]{"ZIP 만들기", "7z 만들기"}, (dialog, formatIndex) -> {
+                .setItems(new String[]{L10n.t("ZIP 만들기"), L10n.t("7z 만들기")}, (dialog, formatIndex) -> {
                     String format = formatIndex == 0 ? "zip" : "7z";
                     EditText name = new EditText(this);
                     name.setSingleLine(true);
@@ -1522,7 +1517,7 @@ public class MainActivity extends Activity {
                             .setView(name)
                             .setMessage("압축파일은 현재 폴더에 만들어집니다. " +
                                     "암호화 및 RAR 생성은 지원하지 않습니다.")
-                            .setNegativeButton("취소", null)
+                            .setNegativeButton(L10n.t("취소"), null)
                             .setPositiveButton("압축하기", (d, w) -> {
                                 String outputName = name.getText().toString().trim();
                                 if (outputName.isEmpty()) {
@@ -1559,15 +1554,15 @@ public class MainActivity extends Activity {
         }
         String newFolder = ArchiveCodec.baseFolder(archive.name);
         new AlertDialog.Builder(this)
-                .setTitle("압축 파일 해제")
+                .setTitle(L10n.t("압축 파일 해제"))
                 .setMessage(archive.name + "\n\n현재 폴더에 '" + newFolder +
                         "' 폴더를 만들고 압축을 풉니다.\n" +
                         "같은 이름이 이미 있으면 '" + newFolder +
                         " (1)', '" + newFolder + " (2)'처럼 자동으로 이름을 붙입니다. " +
                         "기존 파일이나 폴더를 덮어쓰지 않습니다. " +
                         "임시 저장 공간과 추출 용량에 제한이 있습니다.")
-                .setNegativeButton("취소", null)
-                .setPositiveButton("압축 해제", (d, which) ->
+                .setNegativeButton(L10n.t("취소"), null)
+                .setPositiveButton(L10n.t("압축 해제"), (d, which) ->
                         runJob("압축 해제·파일 업로드 중...", () ->
                                 ArchiveWorkflows.extract(this, archive, destination),
                                 result -> {
@@ -1708,28 +1703,28 @@ public class MainActivity extends Activity {
         LinearLayout r1 = Ui.horizontal(this);
         page.addView(r1, Ui.lp(this, -1, expandedLayout() ? 195 : 158));
         boolean sdPresent = hasSd();
-        tile(r1, "메인 저장소", "drive", Ui.TEAL,
+        tile(r1, L10n.t("메인 저장소"), "drive", Ui.TEAL,
                 capacity(), () -> browseLocal(Environment.getExternalStorageDirectory()));
         if (sdPresent)
-            tile(r1, "SD 저장소", "sd", 0xFF6B8CBE,
+            tile(r1, L10n.t("SD 저장소"), "sd", 0xFF6B8CBE,
                     "외장 메모리", this::openSd);
         else
-            tile(r1, "다운로드", "download", ICON_BLUE, "",
+            tile(r1, L10n.t("다운로드"), "download", ICON_BLUE, "",
                     () -> browseLocal(Environment.getExternalStoragePublicDirectory(
                             Environment.DIRECTORY_DOWNLOADS)));
         if (sdPresent)
-            tile(r1, "다운로드", "download", ICON_BLUE, "",
+            tile(r1, L10n.t("다운로드"), "download", ICON_BLUE, "",
                     () -> browseLocal(Environment.getExternalStoragePublicDirectory(
                             Environment.DIRECTORY_DOWNLOADS)));
-        else tile(r1, "이미지", "image", 0xFFA66BC4, "",
+        else tile(r1, L10n.t("이미지"), "image", 0xFFA66BC4, "",
                 () -> openMedia("image"));
         Ui.gap(page, this, 10);
         LinearLayout r2 = Ui.horizontal(this);
         page.addView(r2, Ui.lp(this, -1, expandedLayout() ? 195 : 158));
-        if (sdPresent) tile(r2, "이미지", "image", 0xFFA66BC4, "",
+        if (sdPresent) tile(r2, L10n.t("이미지"), "image", 0xFFA66BC4, "",
                 () -> openMedia("image"));
-        tile(r2, "오디오", "audio", 0xFF159E90, "", () -> openMedia("audio"));
-        tile(r2, "동영상", "video", 0xFFDD7662, "", () -> openMedia("video"));
+        tile(r2, L10n.t("오디오"), "audio", 0xFF159E90, "", () -> openMedia("audio"));
+        tile(r2, L10n.t("동영상"), "video", 0xFFDD7662, "", () -> openMedia("video"));
         if (!sdPresent) tileEmpty(r2);
         Ui.gap(page, this, 18);
         // Storage shortcuts above are preserved, including removable/SD
@@ -1744,11 +1739,11 @@ public class MainActivity extends Activity {
         heading("추가기능", 17);
         LinearLayout features=Ui.horizontal(this);
         page.addView(features,Ui.lp(this,-1,expandedLayout()?195:158));
-        tile(features,"동영상","video",0xFFDD7662,"",
+        tile(features,L10n.t("동영상"),"video",0xFFDD7662,"",
                 ()->showAssignedFolders(AssignedFolderCatalog.VIDEO));
-        tile(features,"만화책","comic",0xFFA66BC4,"",
+        tile(features,L10n.t("만화책"),"comic",0xFFA66BC4,"",
                 ()->showAssignedFolders(AssignedFolderCatalog.COMIC));
-        tile(features,"소설책","book",0xFF6B99C2,"",
+        tile(features,L10n.t("소설책"),"book",0xFF6B99C2,"",
                 ()->showAssignedFolders(AssignedFolderCatalog.TEXT));
         Ui.gap(page,this,14);
         heading("원격 저장소", 15);
@@ -1762,7 +1757,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams w = new LinearLayout.LayoutParams(0, -2, 1);
         w.leftMargin = dp(12);
         remoteEntry.addView(text, w);
-        text.addView(Ui.text(this, "네트워크 폴더", 16, Ui.TEXT, true));
+        text.addView(Ui.text(this, L10n.t("네트워크 폴더"), 16, Ui.TEXT, true));
         try {
             int count = store.activeRemotes().size();
             text.addView(Ui.text(this, count == 0 ? "연결 추가하기" :
@@ -1905,7 +1900,7 @@ public class MainActivity extends Activity {
                         " 폴더 용도 지정을 해제할까요?\n"+
                         "상위 폴더에서 상속된 지정도 이 폴더부터 적용되지 않습니다."+
                         "\n파일이나 폴더 자체는 삭제되지 않습니다.")
-                .setNegativeButton("취소",null)
+                .setNegativeButton(L10n.t("취소"),null)
                 .setPositiveButton("제외하기",(dialog,which)->{
                     try{
                         if(AssignedFolderCatalog.VIDEO.equals(mode)){
@@ -2060,7 +2055,7 @@ public class MainActivity extends Activity {
             dialog=new AlertDialog.Builder(MainActivity.this)
                     .setTitle("폴더 추가 · 탐색기")
                     .setView(panel)
-                    .setNegativeButton("취소",null)
+                    .setNegativeButton(L10n.t("취소"),null)
                     .setPositiveButton("현재 폴더 지정",null)
                     .create();
             dialog.setOnDismissListener(ignored->generation++);
@@ -2260,7 +2255,7 @@ public class MainActivity extends Activity {
                 openAssignedDocumentId(folder.path);
                 rememberAssignedEntryBoundary(folder, configuredRoot);
                 return;
-            default:showError("지원하지 않는 폴더입니다.");
+            default:showError(L10n.t("지원하지 않는 폴더입니다."));
         }
     }
 
@@ -2433,7 +2428,7 @@ public class MainActivity extends Activity {
         col.setOnClickListener(v -> click.run());
     }
     private void menu() {
-        new AlertDialog.Builder(this).setItems(OverflowMenuItems.labels(), (d, i) -> {
+        new AlertDialog.Builder(this).setItems(L10n.labels(OverflowMenuItems.labelsForEdition(BuildConfig.DIRECT_EDITION)), (d, i) -> {
             switch (i) {
                 case OverflowMenuItems.FAVORITES: showFavorites(); break;
                 case OverflowMenuItems.REMOTES: showRemoteList(); break;
@@ -2544,7 +2539,7 @@ public class MainActivity extends Activity {
                                 expandedLayout(), currentScreenWidthDp())), 22);
         brandTitleBounds.leftMargin=0;
         branding.addView(logoText, brandTitleBounds);
-        drawerLink(inside, "홈", "drive", () -> showHome());
+        drawerLink(inside, L10n.t("홈"), "drive", () -> showHome());
 
         LinearLayout favoriteEntries = drawerSection(inside,
                 "즐겨찾기", "star", DrawerSectionState.FAVORITES);
@@ -2575,7 +2570,7 @@ public class MainActivity extends Activity {
                 this::showRemoteList);
 
         inside.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
-        drawerLink(inside, "설정", "settings", this::openSettings);
+        drawerLink(inside, L10n.t("설정"), "settings", this::openSettings);
         Ui.gap(inside, this, 12);
         shade.animate().alpha(1f).setDuration(220).start();
         scroller.animate().translationX(0).setDuration(250)
@@ -2802,7 +2797,7 @@ public class MainActivity extends Activity {
     private void showFavoriteActions(Models.Favorite favorite) {
         new AlertDialog.Builder(this)
                 .setTitle(favorite.displayTitle())
-                .setItems(new String[]{"즐겨찾기 이름 변경", "즐겨찾기 삭제"},
+                .setItems(new String[]{L10n.t("즐겨찾기 이름 변경"), L10n.t("즐겨찾기 삭제")},
                         (dialog, selected) -> {
                             if (selected == 0) editFavoriteName(favorite);
                             else confirmRemoveFavorite(favorite);
@@ -2811,11 +2806,11 @@ public class MainActivity extends Activity {
 
     private void confirmRemoveFavorite(Models.Favorite favorite) {
         new AlertDialog.Builder(this)
-                .setTitle("즐겨찾기 삭제")
+                .setTitle(L10n.t("즐겨찾기 삭제"))
                 .setMessage(favorite.displayTitle() +
                         " 즐겨찾기를 삭제할까요?\n원본 폴더는 삭제되지 않습니다.")
-                .setNegativeButton("취소", null)
-                .setPositiveButton("삭제", (dialog, which) -> {
+                .setNegativeButton(L10n.t("취소"), null)
+                .setPositiveButton(L10n.t("삭제"), (dialog, which) -> {
                     try {
                         if (store.isFavorite(favorite)) store.toggleFavorite(favorite);
                         refreshFavoriteSurfaces();
@@ -2847,11 +2842,11 @@ public class MainActivity extends Activity {
                 11, Ui.MUTED, false);
         content.addView(note, Ui.lp(this, -1, -2));
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("즐겨찾기 이름 변경")
+                .setTitle(L10n.t("즐겨찾기 이름 변경"))
                 .setView(content)
-                .setNegativeButton("취소", null)
+                .setNegativeButton(L10n.t("취소"), null)
                 .setNeutralButton("원래 이름", null)
-                .setPositiveButton("저장", null)
+                .setPositiveButton(L10n.t("저장"), null)
                 .create();
         dialog.setOnShowListener(ignored -> {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
@@ -3477,7 +3472,7 @@ public class MainActivity extends Activity {
                 12,Ui.MUTED,false);
         form.addView(sortHint,Ui.lp(this,-1,-2));
         Ui.gap(form, this, 8);
-        form.addView(Ui.text(this, "기타", 15, Ui.TEAL, true));
+        form.addView(Ui.text(this, L10n.t("기타"), 15, Ui.TEAL, true));
         CheckBox hidden = new CheckBox(this);
         hidden.setText("숨겨진 파일 표시");
         hidden.setChecked(showHidden);
@@ -3500,8 +3495,8 @@ public class MainActivity extends Activity {
         content.addView(form);
         new AlertDialog.Builder(this).setTitle("보기 및 정렬")
                 .setView(content)
-                .setNegativeButton("취소", null)
-                .setPositiveButton("적용", (d, which) -> {
+                .setNegativeButton(L10n.t("취소"), null)
+                .setPositiveButton(L10n.t("적용"), (d, which) -> {
                     for (int i=0; i<layoutIds.length; i++)
                         if (layouts.getCheckedRadioButtonId() == layoutIds[i])
                             layoutMode = i;
@@ -3545,7 +3540,7 @@ public class MainActivity extends Activity {
         recursive.setEnabled(canRecurse);
         recursive.setChecked(false);
         content.addView(recursive,Ui.lp(this,-1,49));
-        TextView searchButton=Ui.action(this,"하위 폴더까지 검색 시작");
+        TextView searchButton=Ui.action(this,L10n.t("하위 폴더까지 검색 시작"));
         searchButton.setGravity(Gravity.CENTER);
         searchButton.setVisibility(View.GONE);
         content.addView(searchButton,Ui.lp(this,-1,46));
@@ -3556,7 +3551,7 @@ public class MainActivity extends Activity {
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("검색")
                 .setView(content)
-                .setNegativeButton("닫기", null).create();
+                .setNegativeButton(L10n.t("닫기"), null).create();
         Runnable update = () -> {
             results.removeAllViews();
             String keyword = query.getText().toString().trim();
@@ -3862,7 +3857,7 @@ public class MainActivity extends Activity {
             return;
         }
         new AlertDialog.Builder(this).setTitle("폴더 용도 설정 · " + item.name)
-                .setItems(new String[]{"동영상 폴더 설정/해제",
+                .setItems(new String[]{L10n.t("동영상 폴더 설정/해제"),
                         "독서용 폴더 설정/해제"},
                         (dialog, which) -> {
                             // Multi-selection hides the top menu; honor its
@@ -3873,10 +3868,10 @@ public class MainActivity extends Activity {
                             }
                             if (which == 0) {
                                 String scope = videoScopeForFolder(item);
-                                if (scope == null) toast("지원하지 않는 폴더입니다.");
+                                if (scope == null) toast(L10n.t("지원하지 않는 폴더입니다."));
                                 else configureVideoFolder(scope, item.name);
                             } else showReaderFolderOptions(item);
-                        }).setNegativeButton("취소", null).show();
+                        }).setNegativeButton(L10n.t("취소"), null).show();
     }
 
     private void showReaderFolderOptions(FileTransferEngine.Item folder) {
@@ -3905,7 +3900,7 @@ public class MainActivity extends Activity {
                                 (enabled?" 폴더 지정 완료":" 폴더 지정 해제"));
                         refreshCurrent();
                     }catch(Exception e){failure(e);}
-                }).setNegativeButton("취소",null).show();
+                }).setNegativeButton(L10n.t("취소"),null).show();
     }
 
     private void fileActionsForCurrent() {
@@ -3965,8 +3960,8 @@ public class MainActivity extends Activity {
             showError("클라우드 베타 연결은 읽기 전용입니다.");
             return;
         }
-        new AlertDialog.Builder(this).setTitle("새로 만들기")
-                .setItems(new String[]{"새 파일", "새 폴더"}, (d, index) ->
+        new AlertDialog.Builder(this).setTitle(L10n.t("새로 만들기"))
+                .setItems(new String[]{L10n.t("새 파일"), L10n.t("새 폴더")}, (d, index) ->
                         createEntry(index == 1)).show();
     }
     private void createEntry(boolean directory) {
@@ -3976,8 +3971,8 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle(directory ? "새 폴더 만들기" : "새 파일 만들기")
                 .setView(input)
-                .setNegativeButton("취소", null)
-                .setPositiveButton("만들기", (dialog, button) -> {
+                .setNegativeButton(L10n.t("취소"), null)
+                .setPositiveButton(L10n.t("만들기"), (dialog, button) -> {
                     try {
                         String name = input.getText().toString().trim();
                         RemoteProvider.child("/", name);
@@ -3992,12 +3987,12 @@ public class MainActivity extends Activity {
                         runJob(directory ? "폴더 생성 중..." : "파일 생성 중...", () -> {
                             if (localTarget != null) {
                                 File file = new File(localTarget, name);
-                                if (file.exists()) throw new IOException("같은 이름이 이미 존재합니다.");
+                                if (file.exists()) throw new IOException(L10n.t("같은 이름이 이미 존재합니다."));
                                 boolean ok = directory ? file.mkdir() : file.createNewFile();
                                 if (!ok) throw new IOException("새 항목을 만들 수 없습니다.");
                             } else if (safTarget != null) {
                                 if (safTarget.findFile(name) != null)
-                                    throw new IOException("같은 이름이 이미 존재합니다.");
+                                    throw new IOException(L10n.t("같은 이름이 이미 존재합니다."));
                                 DocumentFile made = directory ?
                                         safTarget.createDirectory(name) :
                                         safTarget.createFile(mime(name), name);
@@ -4031,9 +4026,9 @@ public class MainActivity extends Activity {
                 toast("이미 저장소 접근 권한이 허용되어 있습니다.");
                 return;
             }
-            new AlertDialog.Builder(this).setTitle("저장소 접근 권한")
+            new AlertDialog.Builder(this).setTitle(L10n.t("저장소 접근 권한"))
                     .setMessage("메인 저장소와 다운로드의 모든 폴더를 탐색하려면 파일관리자 접근 권한이 필요합니다. 보호된 시스템·앱 개인 폴더는 제외됩니다.")
-                    .setNegativeButton("취소", null)
+                    .setNegativeButton(L10n.t("취소"), null)
                     .setNeutralButton("폴더 직접 선택", (d,w) -> pickTree(REQ_FOLDER))
                     .setPositiveButton("설정에서 허용", (d,w) -> {
                         try {
@@ -4171,16 +4166,16 @@ public class MainActivity extends Activity {
             return;
         }
         if (Build.VERSION.SDK_INT < 30) {
-            new AlertDialog.Builder(this).setTitle("SD카드 접근 설정")
+            new AlertDialog.Builder(this).setTitle(L10n.t("SD카드 접근 설정"))
                     .setMessage("SD카드의 원하는 폴더를 선택하고 접근을 허용해 주세요. " +
                             "선택한 폴더와 하위 폴더를 사용할 수 있습니다.")
-                    .setNegativeButton("취소", null)
-                    .setPositiveButton("SD 폴더 선택", (d,w) -> pickTree(REQ_SD))
+                    .setNegativeButton(L10n.t("취소"), null)
+                    .setPositiveButton(L10n.t("SD 폴더 선택"), (d,w) -> pickTree(REQ_SD))
                     .show();
             return;
         }
         boolean full = Environment.isExternalStorageManager();
-        new AlertDialog.Builder(this).setTitle("SD카드 접근 설정")
+        new AlertDialog.Builder(this).setTitle(L10n.t("SD카드 접근 설정"))
                 .setMessage((full ? "전체 파일 관리 권한이 허용되어 있습니다.\n\n" :
                         "SD카드 전체를 이용하려면 '전체 파일 접근' 권한이 필요합니다.\n\n") +
                         "Android 11 이상에서는 SD카드 최상위 폴더의 " +
@@ -4190,8 +4185,8 @@ public class MainActivity extends Activity {
                         "'모든 파일에 대한 접근 허용'을 켜세요.\n" +
                         "② 폴더 접근: SD카드 안의 하위 폴더를 선택하세요. " +
                         "그 폴더 밖은 사용할 수 없습니다.")
-                .setNegativeButton("취소", null)
-                .setNeutralButton("SD 폴더 선택", (d,w) -> pickTree(REQ_SD))
+                .setNegativeButton(L10n.t("취소"), null)
+                .setNeutralButton(L10n.t("SD 폴더 선택"), (d,w) -> pickTree(REQ_SD))
                 .setPositiveButton("전체 접근 설정", (d,w) -> openSdAllFilesSettings())
                 .show();
     }
@@ -4590,6 +4585,10 @@ public class MainActivity extends Activity {
         return m == null ? "application/octet-stream" : m;
     }
     private void openFile(File f) {
+        if (!BuildConfig.DIRECT_EDITION && ExternalApps.rar(f.getName())) {
+            ExternalApps.openArchive(this, Uri.fromFile(f), f.getName());
+            return;
+        }
         if (MediaFileTypes.isAudio(f.getName())) {
             playMusic(Uri.fromFile(f),f.getName());
             return;
@@ -4646,6 +4645,10 @@ public class MainActivity extends Activity {
         } catch (Exception e) { failure(e); }
     }
     private void openNamedUri(Uri uri, String name) {
+        if (!BuildConfig.DIRECT_EDITION && ExternalApps.rar(name)) {
+            ExternalApps.openArchive(this, uri, name);
+            return;
+        }
         if (ComicArchive.supports(name) &&
                 readerFolders.allowed(ReaderFolders.COMIC,"saf",
                         activeTreeUri,safRelative)) {
@@ -4667,7 +4670,7 @@ public class MainActivity extends Activity {
         } else if (ArchiveCodec.isArchive(name)) {
             DocumentFile document = DocumentFile.fromSingleUri(this, uri);
             if (document == null) {
-                showError("압축 파일을 읽을 수 없습니다.");
+                showError(L10n.t("압축 파일을 읽을 수 없습니다."));
                 return;
             }
             offerExtractArchive(FileTransferEngine.saf(document,
@@ -4740,9 +4743,9 @@ public class MainActivity extends Activity {
             Intent i = new Intent(Intent.ACTION_VIEW);
             i.setDataAndType(uri, type);
             i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            startActivity(Intent.createChooser(i, "파일 열기"));
+            startActivity(Intent.createChooser(i, L10n.t("파일 열기")));
         } catch (ActivityNotFoundException e) {
-            toast("이 형식의 파일을 열 수 있는 앱이 없습니다.");
+            toast(L10n.t("이 형식의 파일을 열 수 있는 앱이 없습니다."));
         }
     }
     private void favoriteHere(String kind, String path, String title, String id) {
@@ -4770,7 +4773,7 @@ public class MainActivity extends Activity {
             new AlertDialog.Builder(this).setTitle("동영상 폴더")
                     .setMessage("이 폴더는 이미 상위 폴더의 동영상 폴더 설정을 적용받고 있어요. " +
                             "상위 폴더의 설정을 해제하면 하위 폴더도 함께 해제됩니다.")
-                    .setPositiveButton("확인", null).show();
+                    .setPositiveButton(L10n.t("확인"), null).show();
             return;
         }
         new AlertDialog.Builder(this)
@@ -4781,7 +4784,7 @@ public class MainActivity extends Activity {
                         "이 폴더와 모든 하위 폴더의 SRT·SMI·ASS·VTT·SUB·SUP·IDX·TXT·NFO " +
                                 "파일을 탐색기 목록에서 숨깁니다. 실제 파일은 삭제하지 않으며 " +
                                 "동영상 목록의 외부 자막 표시는 계속 유지됩니다."))
-                .setNegativeButton("취소", null)
+                .setNegativeButton(L10n.t("취소"), null)
                 .setPositiveButton(directlySelected ? "해제" : "설정", (d, w) -> {
                     if (directlySelected) {
                         PlayerSettings.removeHiddenFolder(this, normalized);
@@ -4801,9 +4804,9 @@ public class MainActivity extends Activity {
         input.setSingleLine();
         input.setText(oldName);
         input.selectAll();
-        new AlertDialog.Builder(this).setTitle("이름 변경")
-                .setView(input).setNegativeButton("취소", null)
-                .setPositiveButton("변경", (d, i) -> {
+        new AlertDialog.Builder(this).setTitle(L10n.t("이름 변경"))
+                .setView(input).setNegativeButton(L10n.t("취소"), null)
+                .setPositiveButton(L10n.t("변경"), (d, i) -> {
                     String next = input.getText().toString().trim();
                     try {
                         RemoteProvider.child("/", next);
@@ -4850,11 +4853,11 @@ public class MainActivity extends Activity {
             showError("저장된 연결 설정을 읽을 수 없습니다. 암호화 키를 확인하세요.");
         }
         Ui.gap(page, this, 12);
-        TextView add = Ui.action(this, "+  원격 저장소 추가");
+        TextView add = Ui.action(this, L10n.t("+  원격 저장소 추가"));
         page.addView(add, Ui.lp(this, -1, 49));
         add.setOnClickListener(v -> remoteForm(null));
         Ui.gap(page,this,12);
-        TextView backup=Ui.action(this,"설정 파일 내보내기 · 가져오기");
+        TextView backup=Ui.action(this,L10n.t("설정 파일 내보내기 · 가져오기"));
         page.addView(backup,Ui.lp(this,-1,52));
         backup.setOnClickListener(v -> settingsBackupUi().show());
     }
@@ -4905,8 +4908,8 @@ public class MainActivity extends Activity {
         layout.addView(hint, Ui.lp(this, -1, -2));
         ScrollView scroll = new ScrollView(this);
         scroll.addView(layout);
-        new AlertDialog.Builder(this).setTitle("공유 링크 생성")
-                .setView(scroll).setNegativeButton("닫기", null)
+        new AlertDialog.Builder(this).setTitle(L10n.t("공유 링크 생성"))
+                .setView(scroll).setNegativeButton(L10n.t("닫기"), null)
                 .setPositiveButton("링크 생성", (d, w) -> {
                     int[] days = {1, 3, 7, 30, 0, -1};
                     int selected = days[expiry.getSelectedItemPosition()];
@@ -4937,13 +4940,13 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("다운로드 링크 생성 완료")
                 .setMessage(link.url + "\n\n이 링크를 받은 사람은 파일을 다운로드할 수 있습니다. " +
                         "외부에서 접속되는지 확인한 뒤 전달하세요.")
-                .setNegativeButton("닫기", null)
-                .setNeutralButton("링크 복사", (d, w) -> {
+                .setNegativeButton(L10n.t("닫기"), null)
+                .setNeutralButton(L10n.t("링크 복사"), (d, w) -> {
                     android.content.ClipboardManager clipboard =
                             (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
                     clipboard.setPrimaryClip(android.content.ClipData.newPlainText(
                             "NAS 다운로드 공유 링크", link.url));
-                    toast("공유 링크를 복사했습니다.");
+                    toast(L10n.t("공유 링크를 복사했습니다."));
                 })
                 .setPositiveButton("공유하기", (d, w) -> shareNasUrl(link.url))
                 .show();
@@ -4953,9 +4956,9 @@ public class MainActivity extends Activity {
         if (!NasSharePolicy.supported(p)) return;
         runJob("NAS 공유 링크 목록 확인 중...", () -> new NasShareApi(p).list(), links -> {
             if (links.isEmpty()) {
-                new AlertDialog.Builder(this).setTitle("NAS 공유 링크")
+                new AlertDialog.Builder(this).setTitle(L10n.t("NAS 공유 링크"))
                         .setMessage("현재 설정한 공유 폴더에 발급된 링크가 없습니다.")
-                        .setPositiveButton("확인", null).show();
+                        .setPositiveButton(L10n.t("확인"), null).show();
                 return;
             }
             String[] labels = new String[links.size()];
@@ -4974,8 +4977,8 @@ public class MainActivity extends Activity {
                     13, Ui.MUTED, false);
             heading.addView(selectionCount, Ui.lp(this, -1, 25));
             LinearLayout controls = Ui.horizontal(this);
-            TextView all = Ui.action(this, "전체 선택");
-            TextView clear = Ui.action(this, "선택 해제");
+            TextView all = Ui.action(this, L10n.t("전체 선택"));
+            TextView clear = Ui.action(this, L10n.t("선택 해제"));
             all.setGravity(Gravity.CENTER);
             clear.setGravity(Gravity.CENTER);
             controls.addView(all, new LinearLayout.LayoutParams(0, dp(44), 1f));
@@ -4988,8 +4991,8 @@ public class MainActivity extends Activity {
                         checked[index] = selected;
                         updateNasLinkSelectionCount(selectionCount, checked);
                     })
-                    .setNegativeButton("닫기", null)
-                    .setNeutralButton("링크 복사", null)
+                    .setNegativeButton(L10n.t("닫기"), null)
+                    .setNeutralButton(L10n.t("링크 복사"), null)
                     .setPositiveButton("선택 링크 해제", null)
                     .create();
             manager.setOnShowListener(unused -> {
@@ -5017,19 +5020,19 @@ public class MainActivity extends Activity {
                             (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
                     clipboard.setPrimaryClip(android.content.ClipData.newPlainText(
                             "NAS 공유 링크", selected.get(0).url));
-                    toast("공유 링크를 복사했습니다.");
+                    toast(L10n.t("공유 링크를 복사했습니다."));
                 });
                 manager.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
                     List<NasShareApi.Link> selected = selectedNasLinks(links, checked);
                     if (selected.isEmpty()) {
-                        toast("해제할 공유 링크를 선택하세요.");
+                        toast(L10n.t("해제할 공유 링크를 선택하세요."));
                         return;
                     }
                     new AlertDialog.Builder(this)
                             .setTitle(selected.size() + "개 공유 링크를 해제할까요?")
                             .setMessage("선택한 다운로드 공유 주소만 무효화합니다. " +
                                     "NAS에 저장된 원본 파일과 폴더는 삭제되지 않습니다.")
-                            .setNegativeButton("취소", null)
+                            .setNegativeButton(L10n.t("취소"), null)
                             .setPositiveButton("공유 링크 해제", (dialog, which) -> {
                                 manager.dismiss();
                                 runJob("선택한 NAS 공유 링크 해제 중...",
@@ -5071,7 +5074,7 @@ public class MainActivity extends Activity {
         }
         new AlertDialog.Builder(this).setTitle("공유 링크 일괄 해제 결과")
                 .setMessage(text.toString())
-                .setNegativeButton("닫기", null)
+                .setNegativeButton(L10n.t("닫기"), null)
                 .setPositiveButton("목록 새로고침", (dialog, which) -> showNasShareList(profile))
                 .show();
     }
@@ -5106,16 +5109,16 @@ public class MainActivity extends Activity {
                             return;
                         }
                         new AlertDialog.Builder(this).setTitle(selected.name)
-                                .setItems(new String[]{"폴더 열기", "이 폴더 공유 링크 만들기"},
+                                .setItems(new String[]{L10n.t("폴더 열기"), L10n.t("이 폴더 공유 링크 만들기")},
                                         (dialog, option) -> {
                                             if (option == 0)
                                                 showNasShareBrowser(p, selected.path);
                                             else
                                                 showNasShareCreateForPath(p, selected.path,
                                                         selected.name, true);
-                                        }).setNegativeButton("닫기", null).show();
+                                        }).setNegativeButton(L10n.t("닫기"), null).show();
                     })
-                    .setPositiveButton("닫기", null);
+                    .setPositiveButton(L10n.t("닫기"), null);
             if (!"/".equals(current)) {
                 String parent = RemoteProvider.parent(current);
                 if (!NasSharePolicy.inAllowedRoot(p, parent)) parent = "/";
@@ -5123,7 +5126,7 @@ public class MainActivity extends Activity {
                 builder.setNegativeButton("상위 폴더", (d, w) ->
                         showNasShareBrowser(p, back));
             }
-            if (entries.isEmpty()) builder.setMessage("이 폴더는 비어 있습니다.");
+            if (entries.isEmpty()) builder.setMessage(L10n.t("이 폴더는 비어 있습니다."));
             builder.show();
         });
     }
@@ -5231,7 +5234,7 @@ public class MainActivity extends Activity {
                                     .setTitle("링크 공유를 허용할 NAS 폴더")
                                     .setMultiChoiceItems(names, chosen,
                                             (dialog, index, isChecked) -> chosen[index] = isChecked)
-                                    .setNegativeButton("닫기", null)
+                                    .setNegativeButton(L10n.t("닫기"), null)
                                     .setPositiveButton("선택 완료", (dialog, which) -> {
                                         checkedNasRoots.clear();
                                         for (int i = 0; i < chosen.length; i++)
@@ -5271,10 +5274,10 @@ public class MainActivity extends Activity {
         panel.addView(warning, Ui.lp(this, -1, -2));
         ScrollView scrolling = new ScrollView(this);
         scrolling.addView(panel);
-        new AlertDialog.Builder(this).setTitle("NAS 공유 링크 설정")
+        new AlertDialog.Builder(this).setTitle(L10n.t("NAS 공유 링크 설정"))
                 .setView(scrolling)
-                .setNegativeButton("닫기", null)
-                .setNeutralButton("연결 해제", (d, w) -> {
+                .setNegativeButton(L10n.t("닫기"), null)
+                .setNeutralButton(L10n.t("연결 해제"), (d, w) -> {
                     p.nasVendor = "";
                     p.nasApiBase = "";
                     p.nasApiUser = "";
@@ -5373,8 +5376,8 @@ public class MainActivity extends Activity {
                                     .setTitle("원격 연결 삭제")
                                     .setMessage("저장한 ‘" + p.label() +
                                             "’ 연결 정보만 삭제합니다. 서버 파일은 변경되지 않습니다.")
-                                    .setNegativeButton("취소", null)
-                                    .setPositiveButton("삭제", (d2, j) -> {
+                                    .setNegativeButton(L10n.t("취소"), null)
+                                    .setPositiveButton(L10n.t("삭제"), (d2, j) -> {
                                         try { store.deleteRemote(p.id); showRemoteList(); }
                                         catch (Exception e) { failure(e); }
                                     }).show();
@@ -5411,7 +5414,7 @@ public class MainActivity extends Activity {
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("QNAP CloudLink · 포트 개방 불필요")
                 .setView(box)
-                .setNegativeButton("닫기", null)
+                .setNegativeButton(L10n.t("닫기"), null)
                 .setNeutralButton("공식 포털 열기", (d, w) ->
                         openQnapOfficialSite(QnapCloudLinkPolicy.PORTAL))
                 .setPositiveButton("SmartURL 저장 후 열기", null)
@@ -5518,7 +5521,7 @@ public class MainActivity extends Activity {
                         "Google 계정 인증은 세션을 가져올 수 없어 지원하지 않습니다. " +
                         "그 경우 PC에서 ndus 값을 확인해 입력하세요.")
                 .setView(web)
-                .setNegativeButton("닫기", null)
+                .setNegativeButton(L10n.t("닫기"), null)
                 .setNeutralButton("PC 웹 새로고침", null)
                 .setPositiveButton("세션 가져오기", null).create();
         dialog.setOnShowListener(ignored -> {
@@ -5746,9 +5749,9 @@ public class MainActivity extends Activity {
         scroll.addView(form);
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(original == null ? "원격 저장소 추가" : "원격 저장소 수정")
-                .setView(scroll).setNegativeButton("취소", null)
-                .setNeutralButton("PC에서 가져오는 방법", null)
-                .setPositiveButton("저장", null).create();
+                .setView(scroll).setNegativeButton(L10n.t("취소"), null)
+                .setNeutralButton(L10n.t("PC에서 가져오는 방법"), null)
+                .setPositiveButton(L10n.t("저장"), null).create();
         dialog.setOnShowListener(ignore -> {
             pcHelpButton[0] = dialog.getButton(AlertDialog.BUTTON_NEUTRAL);
             pcHelpButton[0].setAllCaps(false);
@@ -5838,7 +5841,7 @@ public class MainActivity extends Activity {
                         "※ ndus는 계정에 접근 가능한 민감한 세션 키입니다. " +
                         "스크린샷이나 채팅에 올리지 말고, 타인과 공유하지 마세요. " +
                         "세션이 만료되면 다시 가져와야 할 수 있습니다.")
-                .setPositiveButton("확인", null).show();
+                .setPositiveButton(L10n.t("확인"), null).show();
     }
 
     private void showMyBoxPatHelp() {
@@ -5852,7 +5855,7 @@ public class MainActivity extends Activity {
                         "⑤ 생성된 토큰을 복사해 FileHub AIO의 [PAT] 입력칸에 붙여넣고 저장하세요.\n\n" +
                         "※ PAT는 비밀번호처럼 중요한 로그인 정보입니다. " +
                         "스크린샷이나 채팅으로 다른 사람에게 공유하지 마세요.")
-                .setPositiveButton("확인", null)
+                .setPositiveButton(L10n.t("확인"), null)
                 .show();
     }
 
@@ -6096,8 +6099,8 @@ public class MainActivity extends Activity {
         if (remote == null) return;
         if (isReadOnlyCloud(remote)) {
             new AlertDialog.Builder(this).setTitle("클라우드 폴더")
-                    .setItems(new String[]{"즐겨찾기 추가/해제", "새로고침",
-                                    "폴더 용도 설정"},
+                    .setItems(new String[]{L10n.t("즐겨찾기 추가/해제"), L10n.t("새로고침"),
+                                    L10n.t("폴더 용도 설정")},
                             (dialog, which) -> {
                                 if (which == 0) favoriteHere("remote", remoteFolder,
                                         remoteFolder.equals("/") ? remote.label() :
@@ -6108,9 +6111,9 @@ public class MainActivity extends Activity {
                             }).show();
             return;
         }
-        new AlertDialog.Builder(this).setTitle("폴더 작업")
-                .setItems(new String[]{"파일 업로드", "새로 만들기", "즐겨찾기 추가/해제",
-                        "새로고침", "폴더 용도 설정"}, (dialog, which) -> {
+        new AlertDialog.Builder(this).setTitle(L10n.t("폴더 작업"))
+                .setItems(new String[]{L10n.t("파일 업로드"), L10n.t("새로 만들기"), L10n.t("즐겨찾기 추가/해제"),
+                        L10n.t("새로고침"), L10n.t("폴더 용도 설정")}, (dialog, which) -> {
                     if (which == 0) pickUpload();
                     if (which == 1) chooseNewEntry();
                     if (which == 2) favoriteHere("remote", remoteFolder,
@@ -6125,21 +6128,33 @@ public class MainActivity extends Activity {
         if (remote == null) return;
         EditText name = new EditText(this);
         name.setSingleLine();
-        name.setHint("새 폴더 이름");
-        new AlertDialog.Builder(this).setTitle("새 폴더")
-                .setView(name).setNegativeButton("취소", null)
-                .setPositiveButton("만들기", (d, i) -> {
+        name.setHint(L10n.t("새 폴더 이름"));
+        new AlertDialog.Builder(this).setTitle(L10n.t("새 폴더"))
+                .setView(name).setNegativeButton(L10n.t("취소"), null)
+                .setPositiveButton(L10n.t("만들기"), (d, i) -> {
                     try {
                         String path = RemoteProvider.child(remoteFolder,
                                 name.getText().toString().trim());
                         Models.RemoteProfile target = remote;
-                        runJob("폴더 생성 중...", () -> {
+                        runJob(L10n.t("폴더 생성 중..."), () -> {
                             RemoteProvider.mkdir(target, path); return true;
                         }, ignored -> refreshRemote(target, remoteFolder));
                     } catch (Exception e) { failure(e); }
                 }).show();
     }
     private void openRemoteFile(Models.RemoteProfile p, Models.Entry entry) {
+        if (!BuildConfig.DIRECT_EDITION && ExternalApps.rar(entry.name)) {
+            new AlertDialog.Builder(this)
+                    .setTitle(L10n.t("외부 압축 앱으로 열기"))
+                    .setMessage(L10n.t("원격 압축 파일을 임시로 내려받은 뒤 외부 앱에서 엽니다."))
+                    .setNegativeButton(L10n.t("취소"),null)
+                    .setPositiveButton(L10n.t("열기"),(d,w) ->
+                        runJob(L10n.t("파일을 여는 중..."),
+                                () -> ExternalApps.stageArchive(this,p,entry),
+                                local -> ExternalApps.openArchive(this,Uri.fromFile(local),entry.name)))
+                    .show();
+            return;
+        }
         if (ComicArchive.supports(entry.name) &&
                 readerFolders.allowed(ReaderFolders.COMIC,"remote",p.id,
                         RemoteProvider.parent(entry.path))) {
@@ -6191,7 +6206,7 @@ public class MainActivity extends Activity {
                     () -> RemoteProvider.openStream(p, entry.path, 0));
             return;
         }
-        runJob("파일을 여는 중...", () -> {
+        runJob(L10n.t("파일을 여는 중..."), () -> {
             File dir = new File(getCacheDir(), "shared_files");
             if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("캐시 폴더 접근 실패");
             String safe = entry.name.replaceAll("[\\\\/:*?\"<>|]", "_");
@@ -6202,90 +6217,8 @@ public class MainActivity extends Activity {
             return output;
         }, this::openFile);
     }
-    /**
-     * Stages local, SAF and NAS APK bytes in private cache, then delegates
-     * user-approved installation to Android's system package installer.
-     */
-    private void stageApkAndOfferInstall(String name, Job<InputStream> openSource) {
-        runJob("설치 패키지 준비 중...", () -> {
-            try (InputStream input = openSource.execute()) {
-                if (input == null) throw new IOException("APK 파일을 열 수 없습니다.");
-                return ApkInstallStaging.stage(input, getCacheDir());
-            }
-        }, staged -> {
-            android.content.pm.PackageInfo pkg =
-                    getPackageManager().getPackageArchiveInfo(staged.getAbsolutePath(), 0);
-            if (pkg == null || pkg.packageName == null || pkg.packageName.isEmpty()) {
-                showError("Android 패키지 정보를 확인할 수 없습니다. " +
-                        "단독 APK 설치 파일인지 확인해 주세요.");
-                return;
-            }
-            new AlertDialog.Builder(this)
-                    .setTitle("APK 설치")
-                    .setMessage("파일: " + name +
-                            "\n패키지: " + pkg.packageName +
-                            "\n버전: " + pkg.versionName +
-                            "\n크기: " + android.text.format.Formatter.formatFileSize(
-                                    this, staged.length()) +
-                            "\n\n신뢰할 수 있는 APK만 설치하세요. " +
-                            "최종 설치 여부는 Android 설치 관리자에서 결정합니다.")
-                    .setNegativeButton("취소", null)
-                    .setPositiveButton("설치 화면 열기",
-                            (dialog, which) -> requestPackageInstall(staged))
-                    .show();
-        });
-    }
-
-    private void requestPackageInstall(File staged) {
-        pendingApkInstall = staged;
-        if (!getPackageManager().canRequestPackageInstalls()) {
-            new AlertDialog.Builder(this)
-                    .setTitle("NAS Mount의 APK 설치 권한")
-                    .setMessage("Android 설정에서 '이 출처의 앱 허용'을 켜야 " +
-                            "APK 설치 화면을 열 수 있습니다. 설정에서 돌아오면 계속합니다.")
-                    .setNegativeButton("취소", (d, w) -> pendingApkInstall = null)
-                    .setPositiveButton("설정 열기", (d, w) -> {
-                        try {
-                            Intent settings = new Intent(
-                                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                                    Uri.parse("package:" + getPackageName()));
-                            startActivityForResult(settings, REQ_APK_INSTALL_AUTH);
-                        } catch (ActivityNotFoundException unavailable) {
-                            showError("이 기기의 앱 설치 허용 화면을 열 수 없습니다.");
-                        }
-                    }).show();
-            return;
-        }
-        launchSystemApkInstaller(staged);
-    }
-
-    private void launchSystemApkInstaller(File staged) {
-        if (staged == null || !staged.isFile()) {
-            pendingApkInstall = null;
-            showError("APK 파일이 사라졌습니다. 다시 선택해 주세요.");
-            return;
-        }
-        try {
-            ApkInstallStaging.verifyArchive(staged);
-            Uri share = FileProvider.getUriForFile(this,
-                    getPackageName() + ".files", staged);
-            Intent install = new Intent(Intent.ACTION_INSTALL_PACKAGE);
-            install.setDataAndType(share, "application/vnd.android.package-archive");
-            install.setClipData(android.content.ClipData.newUri(
-                    getContentResolver(), "APK 설치 파일", share));
-            install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            try {
-                startActivity(install);
-            } catch (ActivityNotFoundException oldInstaller) {
-                install.setAction(Intent.ACTION_VIEW);
-                startActivity(install);
-            }
-            pendingApkInstall = null;
-        } catch (ActivityNotFoundException missing) {
-            showError("시스템 패키지 설치 관리자를 찾지 못했습니다.");
-        } catch (Exception failure) {
-            showError("APK 설치 준비 오류: " + safeError(failure));
-        }
+    private void stageApkAndOfferInstall(String name, Job<InputStream> source) {
+        apkInstaller.stage(name, source);
     }
 
     private void downloadRemoteEntry(Models.RemoteProfile profile, Models.Entry file,
@@ -6293,7 +6226,7 @@ public class MainActivity extends Activity {
         RemoteProvider.download(profile, file.path, output);
     }
     private void downloadRemote(Models.RemoteProfile p, Models.Entry entry) {
-        runJob("다운로드 중...", () -> {
+        runJob(L10n.t("다운로드 중..."), () -> {
             MediaIndexing.Category category = MediaIndexing.category(entry.name);
             if (Build.VERSION.SDK_INT >= 29) {
                 ContentValues values = new ContentValues();
@@ -6335,9 +6268,9 @@ public class MainActivity extends Activity {
         name.setSingleLine();
         name.setText(entry.name);
         name.selectAll();
-        new AlertDialog.Builder(this).setTitle("이름 변경")
-                .setView(name).setNegativeButton("취소", null)
-                .setPositiveButton("변경", (d, i) -> {
+        new AlertDialog.Builder(this).setTitle(L10n.t("이름 변경"))
+                .setView(name).setNegativeButton(L10n.t("취소"), null)
+                .setPositiveButton(L10n.t("변경"), (d, i) -> {
                     try {
                         String newPath = RemoteProvider.child(
                                 RemoteProvider.parent(entry.path),
@@ -6353,8 +6286,8 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("삭제 확인")
                 .setMessage("서버의 ‘" + entry.name + "’을(를) 삭제할까요?\\n" +
                         "이 작업은 되돌릴 수 없을 수 있습니다.")
-                .setNegativeButton("취소", null)
-                .setPositiveButton("삭제", (d, i) ->
+                .setNegativeButton(L10n.t("취소"), null)
+                .setPositiveButton(L10n.t("삭제"), (d, i) ->
                         runJob("네트워크 파일 삭제 중...", () -> {
                             RemoteProvider.delete(p, entry.path, entry.directory);
                             return true;
@@ -6383,17 +6316,7 @@ public class MainActivity extends Activity {
             settingsBackupUi().handleResult(requestCode,resultCode,data);
             return;
         }
-        if (requestCode == REQ_APK_INSTALL_AUTH) {
-            if (pendingApkInstall != null) {
-                if (getPackageManager().canRequestPackageInstalls())
-                    launchSystemApkInstaller(pendingApkInstall);
-                else {
-                    pendingApkInstall = null;
-                    toast("APK 설치 권한이 허용되지 않아 취소했습니다.");
-                }
-            }
-            return;
-        }
+        if (apkInstaller.handleResult(requestCode)) return;
         if (requestCode == REQ_TEXT_EDITOR || requestCode == REQ_OFFICE_EDITOR) {
             if (resultCode == RESULT_OK) {
                 if (remote != null) folderCache.invalidateProfile(remote);
@@ -6472,7 +6395,7 @@ public class MainActivity extends Activity {
             final String destination = remoteFolder;
             final String display = documentName(chosen);
             final long byteLength = documentSize(chosen);
-            runJob("대상 폴더에서 같은 이름 확인 중...", () -> {
+            runJob(L10n.t("대상 폴더에서 같은 이름 확인 중..."), () -> {
                 for (Models.Entry entry : RemoteProvider.list(target, destination))
                     if (entry.name.equalsIgnoreCase(display)) {
                         if (entry.directory)
@@ -6491,8 +6414,8 @@ public class MainActivity extends Activity {
                         .setMessage("대상 폴더에 '" + display + "' 파일이 이미 있습니다.\n\n" +
                                 "기존 파일을 새 파일로 덮어쓸까요? " +
                                 "취소하면 기존 파일을 그대로 유지합니다.")
-                        .setNegativeButton("취소", null)
-                        .setPositiveButton("덮어쓰기", (dialog, which) ->
+                        .setNegativeButton(L10n.t("취소"), null)
+                        .setPositiveButton(L10n.t("덮어쓰기"), (dialog, which) ->
                                 uploadSelectedDocument(chosen, target, destination,
                                         display, byteLength, true))
                         .show();
@@ -6585,8 +6508,8 @@ public class MainActivity extends Activity {
                                 "'SD 폴더 선택'을 누르세요. " +
                                 "Android 11 이상에서는 SD카드 최상위 폴더를 " +
                                 "선택할 수 없습니다.")
-                        .setNegativeButton("닫기", null)
-                        .setPositiveButton("SD 폴더 선택",
+                        .setNegativeButton(L10n.t("닫기"), null)
+                        .setPositiveButton(L10n.t("SD 폴더 선택"),
                                 (dialog, which) -> pickTree(REQ_SD))
                         .show();
             }

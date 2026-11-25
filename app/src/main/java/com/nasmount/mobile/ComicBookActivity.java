@@ -113,14 +113,14 @@ public final class ComicBookActivity extends Activity {
         title.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         top.addView(title,new LinearLayout.LayoutParams(0,-1,1));
         TextView bookmark=button("☆",24);
-        bookmark.setContentDescription("책갈피 추가, 이동 또는 삭제");
+        bookmark.setContentDescription(L10n.t("책갈피 추가, 이동 또는 삭제"));
         top.addView(bookmark,Ui.lp(this,48,-1));
         bookmark.setOnClickListener(v->{
             if(logicalPages!=null)ReaderBookmarkDialog.show(this,historyId,page,
                     true,logicalPages.size(),this::openPage);
         });
         TextView options=button("⚙",23);
-        options.setContentDescription("만화책 보기 설정");
+        options.setContentDescription(L10n.t("만화책 보기 설정"));
         top.addView(options,Ui.lp(this,49,-1));
         options.setOnClickListener(v->showOptions());
         FrameLayout stage=new FrameLayout(this);
@@ -477,7 +477,7 @@ public final class ComicBookActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("다음 만화책 이어 보기")
                 .setMessage("현재 권을 끝까지 읽었습니다.\n\n"+
                         following.name+"\n\n다음 권을 바로 열까요?")
-                .setNegativeButton("아니요",(dialog,which)->endPromptVisible=false)
+                .setNegativeButton(L10n.t("아니요"),(dialog,which)->endPromptVisible=false)
                 .setPositiveButton("다음 권 보기",(dialog,which)->{
                     android.content.Intent next=BookSeriesQueue.nextIntent(
                             getIntent(),following);
@@ -531,21 +531,21 @@ public final class ComicBookActivity extends Activity {
         spreadMode.setText("폴드 펼침 화면에서 두 페이지 펼쳐 보기");
         spreadMode.setChecked(twoPage);
         form.addView(spreadMode);
-        form.addView(Ui.text(this,"좌우 합본 이미지 자동 분할",14,Ui.TEXT,true));
+        form.addView(Ui.text(this,L10n.t("좌우 합본 이미지 자동 분할"),14,Ui.TEXT,true));
         Spinner splitting=new Spinner(this);
         splitting.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
                 new String[]{"자동 감지 (권장)","분할하지 않음","민감하게 감지"}));
         splitting.setSelection(Math.max(0,Math.min(2,splitMode)));
         form.addView(splitting,Ui.lp(this,-1,48));
-        form.addView(Ui.text(this,"책 넘김 효과",14,Ui.TEXT,true));
+        form.addView(Ui.text(this,L10n.t("책 넘김 효과"),14,Ui.TEXT,true));
         Spinner turn=new Spinner(this);
         turn.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
                 ReaderTurnPreferences.STYLES));
         turn.setSelection(ReaderTurnPreferences.toIndex(turnStyle));
         form.addView(turn,Ui.lp(this,-1,48));
-        form.addView(Ui.text(this,"페이지 넘김 속도",14,Ui.TEXT,true));
+        form.addView(Ui.text(this,L10n.t("페이지 넘김 속도"),14,Ui.TEXT,true));
         Spinner speed=new Spinner(this);
         speed.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
@@ -554,9 +554,9 @@ public final class ComicBookActivity extends Activity {
         form.addView(speed,Ui.lp(this,-1,48));
         ScrollView optionsScroll=new ScrollView(this);
         optionsScroll.addView(form);
-        new AlertDialog.Builder(this).setTitle("만화책 보기 설정")
-                .setView(optionsScroll).setNegativeButton("취소",null)
-                .setPositiveButton("적용",(dialog,which)->{
+        new AlertDialog.Builder(this).setTitle(L10n.t("만화책 보기 설정"))
+                .setView(optionsScroll).setNegativeButton(L10n.t("취소"),null)
+                .setPositiveButton(L10n.t("적용"),(dialog,which)->{
                     pageTransitions.cancel();
                     boolean hadSpread=spreadEnabled();
                     boolean previousRtl=rtl;
@@ -601,7 +601,7 @@ public final class ComicBookActivity extends Activity {
                         openPage(page);
                     }
                     updatePageLabel();
-                }).setNeutralButton("폴더 설정 초기화",(dialog,which)->{
+                }).setNeutralButton(L10n.t("폴더 설정 초기화"),(dialog,which)->{
                     FolderMediaSettings.clear(this,FolderMediaSettings.COMIC,
                             folderSettingsScope,"rtl","contrast","brightness",
                             "grayscale","fit_width","fold_two_pages",

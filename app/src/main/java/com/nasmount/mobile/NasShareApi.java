@@ -539,7 +539,7 @@ final class NasShareApi {
 
     RevokeReport revokeMany(List<Link> selected) throws Exception {
         if (selected == null || selected.isEmpty())
-            throw new IllegalArgumentException("해제할 공유 링크를 선택하세요.");
+            throw new IllegalArgumentException(L10n.t("해제할 공유 링크를 선택하세요."));
         // Check every target before modifying anything on the remote NAS.
         java.util.LinkedHashMap<String, Link> unique = new java.util.LinkedHashMap<>();
         for (Link link : selected) {

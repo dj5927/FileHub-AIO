@@ -1,0 +1,279 @@
+# Korean	English	Japanese	Simplified Chinese
+취소	Cancel	キャンセル	取消
+확인	OK	OK	确定
+닫기	Close	閉じる	关闭
+적용	Apply	適用	应用
+저장	Save	保存	保存
+열기	Open	開く	打开
+설정	Settings	設定	设置
+설정 닫기	Close settings	設定を閉じる	关闭设置
+일반	General	一般	常规
+동영상·자막	Video & subtitles	動画・字幕	视频与字幕
+만화책	Comics	コミック	漫画
+텍스트뷰어	Text reader	テキストビューア	文本阅读器
+메인 저장소	Internal storage	内部ストレージ	内部存储
+SD 저장소	SD storage	SDストレージ	SD 卡存储
+SD 저장소 (읽기 전용)	SD storage (read-only)	SDストレージ（読み取り専用）	SD 卡存储（只读）
+SD 저장소 (선택 폴더)	SD storage (selected folder)	SDストレージ（選択フォルダー）	SD 卡存储（所选文件夹）
+다운로드	Downloads	ダウンロード	下载
+이미지	Images	画像	图片
+오디오	Audio	オーディオ	音频
+동영상	Videos	動画	视频
+소설책	Books	小説	小说
+텍스트책	Text books	テキストブック	文本书籍
+홈	Home	ホーム	主页
+즐겨찾기	Favorites	お気に入り	收藏
+원격 저장소	Remote storage	リモートストレージ	远程存储
+네트워크 저장소	Network storage	ネットワークストレージ	网络存储
+네트워크 폴더	Network folder	ネットワークフォルダー	网络文件夹
+즐겨찾기 보기	View favorites	お気に入りを表示	查看收藏
+원격 저장소 보기	View remote storage	リモートストレージを表示	查看远程存储
+저장소 접근 권한	Storage access	ストレージアクセス権限	存储访问权限
+업데이트 확인	Check for updates	更新を確認	检查更新
+새로고침	Refresh	更新	刷新
+새로 만들기	New	新規作成	新建
+새 파일	New file	新しいファイル	新建文件
+새 폴더	New folder	新しいフォルダー	新建文件夹
+새 폴더 이름	New folder name	新しいフォルダー名	新文件夹名称
+만들기	Create	作成	创建
+폴더 열기	Open folder	フォルダーを開く	打开文件夹
+파일 열기	Open file	ファイルを開く	打开文件
+이름 변경	Rename	名前を変更	重命名
+삭제	Delete	削除	删除
+이동	Move	移動	移动
+복사	Copy	コピー	复制
+붙여넣기	Paste	貼り付け	粘贴
+잘라내기	Cut	切り取り	剪切
+전체 선택	Select all	すべて選択	全选
+선택 해제	Deselect	選択解除	取消选择
+선택	Select	選択	选择
+파일 업로드	Upload file	ファイルをアップロード	上传文件
+파일 작업	File actions	ファイル操作	文件操作
+폴더 작업	Folder actions	フォルダー操作	文件夹操作
+폴더 용도 설정	Folder purpose	フォルダーの用途	文件夹用途
+즐겨찾기 추가/해제	Toggle favorite	お気に入りの追加・解除	添加或取消收藏
+즐겨찾기 이름 변경	Rename favorite	お気に入りの名前を変更	重命名收藏
+즐겨찾기 삭제	Remove favorite	お気に入りを削除	删除收藏
+즐겨찾기를 해제했습니다.	Favorite removed.	お気に入りを解除しました。	已取消收藏。
+즐겨찾기에 추가했습니다.	Added to favorites.	お気に入りに追加しました。	已添加到收藏。
+이 폴더는 비어 있습니다.	This folder is empty.	このフォルダーは空です。	此文件夹为空。
+전체 교체	Replace all	すべて置き換え	全部替换
+덮어쓰기	Overwrite	上書き	覆盖
+같은 이름의 파일이 이미 있습니다.	A file with that name already exists.	同名のファイルがすでに存在します。	同名文件已存在。
+같은 이름이 이미 존재합니다.	This name already exists.	同じ名前がすでに存在します。	同名项目已存在。
+정보 없음	No information	情報なし	无信息
+알 수 없음	Unknown	不明	未知
+항목 수 미확인	Item count unknown	項目数不明	项目数未知
+폴더 생성 중...	Creating folder...	フォルダーを作成中…	正在创建文件夹…
+파일을 여는 중...	Opening file...	ファイルを開いています…	正在打开文件…
+다운로드 중...	Downloading...	ダウンロード中…	正在下载…
+전송 준비 중...	Preparing transfer...	転送を準備中…	正在准备传输…
+전송 완료	Transfer complete	転送完了	传输完成
+대상 폴더에서 같은 이름 확인 중...	Checking for name conflicts...	同名項目を確認中…	正在检查同名项目…
+일시정지	Pause	一時停止	暂停
+재생	Play	再生	播放
+계속	Continue	続行	继续
+종료	Exit	終了	退出
+연결하기	Connect	接続	连接
+연결	Connect	接続	连接
+연결 해제	Disconnect	切断	断开连接
+연결 삭제	Remove connection	接続を削除	删除连接
+설정 수정	Edit settings	設定を編集	编辑设置
+변경	Change	変更	更改
+서버 기본	Server default	サーバー既定	服务器默认
+비밀번호	Password	パスワード	密码
+사용자 이름	Username	ユーザー名	用户名
+서버 주소	Server address	サーバーアドレス	服务器地址
+포트	Port	ポート	端口
+자동	Auto	自動	自动
+사용	Enabled	有効	启用
+사용 안 함	Disabled	無効	禁用
+켜짐	On	オン	开启
+꺼짐	Off	オフ	关闭
+기타	Other	その他	其他
+기본값	Default	既定値	默认值
+예	Yes	はい	是
+아니요	No	いいえ	否
+나중에	Later	後で	稍后
+등록	Register	登録	注册
+거절	Decline	拒否	拒绝
+설정 열기	Open settings	設定を開く	打开设置
+선택한 폴더	Selected folder	選択したフォルダー	所选文件夹
+SD 폴더 선택	Choose SD folder	SDフォルダーを選択	选择 SD 文件夹
+SD카드 접근 설정	SD card access settings	SDカードのアクセス設定	SD 卡访问设置
+SD카드 접근 권한 설정	SD card permissions	SDカードアクセス権限	SD 卡访问权限
+파일 백업 · 복원	Backup & restore	バックアップ・復元	备份与恢复
+설정 파일 내보내기 · 가져오기	Export / import settings	設定のエクスポート・インポート	导出或导入设置
+설정 내보내기	Export settings	設定をエクスポート	导出设置
+설정 가져오기	Import settings	設定をインポート	导入设置
+내보낼 위치 선택	Choose export location	保存先を選択	选择导出位置
+LAN QR 전송	LAN QR transfer	LAN QR転送	LAN 二维码传输
+공유 링크 생성	Create share link	共有リンクを作成	创建分享链接
+공유 링크 관리	Manage share links	共有リンク管理	管理分享链接
+NAS 공유 링크	NAS share links	NAS共有リンク	NAS 分享链接
+NAS 공유 링크 설정	NAS share settings	NAS共有リンク設定	NAS 分享设置
+링크 복사	Copy link	リンクをコピー	复制链接
+공유 링크를 복사했습니다.	Share link copied.	共有リンクをコピーしました。	已复制分享链接。
+해제할 공유 링크를 선택하세요.	Select links to revoke.	解除する共有リンクを選択してください。	选择要撤销的分享链接。
+NAS 공유 폴더 탐색	Browse NAS shares	NAS共有フォルダーを参照	浏览 NAS 共享文件夹
+선택된 공유 폴더 없음	No shares selected	共有フォルダー未選択	未选择共享文件夹
+PAT 발급 방법	How to create a PAT	PATの発行方法	如何创建 PAT
+PC에서 가져오는 방법	Import from PC	PCから取り込む方法	从电脑导入的方法
+리눅스 파일 권한 변경 (chmod)	Linux permissions (chmod)	Linuxファイル権限（chmod）	Linux 文件权限（chmod）
+압축 파일 해제	Extract archive	アーカイブを展開	解压文件
+압축 해제	Extract	展開	解压
+압축해제	Extract	展開	解压
+선택 파일 압축하기	Compress selected files	選択ファイルを圧縮	压缩所选文件
+ZIP 만들기	Create ZIP	ZIPを作成	创建 ZIP
+7z 만들기	Create 7z	7zを作成	创建 7z
+외부 압축 앱으로 열기	Open in archive app	外部解凍アプリで開く	使用外部解压应用打开
+외부 플레이어로 재생	Play in external player	外部プレーヤーで再生	使用外部播放器播放
+외부 플레이어 사용	Use external player	外部プレーヤーを使用	使用外部播放器
+외부 플레이어 연결 실패	Could not open external player	外部プレーヤーを開けません	无法打开外部播放器
+연결 앱 없음	No compatible app	対応アプリがありません	没有兼容的应用
+RAR 또는 CBR 파일을 열 수 있는 외부 앱을 설치하세요.	Install an app that can open RAR or CBR files.	RAR・CBRを開けるアプリをインストールしてください。	请安装可打开 RAR 或 CBR 文件的应用。
+이 영상을 재생할 수 있는 외부 플레이어를 설치하세요.	Install a player that supports this video.	この動画に対応するプレーヤーをインストールしてください。	请安装支持此视频的播放器。
+Google Play 열기	Open Google Play	Google Playを開く	打开 Google Play
+앱 스토어를 열 수 없습니다.	Could not open the app store.	アプリストアを開けません。	无法打开应用商店。
+원격 압축 파일을 임시로 내려받은 뒤 외부 앱에서 엽니다.	The remote archive will be temporarily downloaded and opened in another app.	リモートの圧縮ファイルを一時保存して外部アプリで開きます。	远程压缩文件将临时下载并在外部应用中打开。
+외부 앱용 임시 파일의 크기 제한을 넘었습니다.	The file exceeds the external app cache limit.	外部アプリ用一時ファイルの上限を超えています。	文件超出外部应用缓存大小限制。
+지원하지 않는 코덱	Unsupported codec	未対応のコーデック	不支持的编解码器
+기기 기본 디코더에서 재생하지 못했습니다. 설치된 외부 플레이어로 열 수 있습니다.	The device decoder could not play this file. You can open it in an installed external player.	端末のデコーダーで再生できません。インストール済みの外部プレーヤーで開けます。	设备解码器无法播放此文件。可以使用已安装的外部播放器打开。
+원격 영상 크기를 확인할 수 없습니다.	Remote video size is unavailable.	リモート動画のサイズを確認できません。	无法确认远程视频大小。
+Android 기기 기본 디코더만 사용합니다.	Uses the device's built-in Android decoders.	Android端末標準のデコーダーを使用します。	仅使用 Android 设备内置解码器。
+Google Play에서 별도 플레이어를 설치하고 동영상 재생 메뉴에서 선택합니다.	Install another player from Google Play and select it in the video menu.	Google Playからプレーヤーをインストールし、動画メニューで選択します。	从 Google Play 安装其他播放器，然后在视频菜单中选择。
+설치된 외부 플레이어로 동영상 재생 메뉴에서 연결할 수 있습니다.	Open videos in an installed player from the playback menu.	再生メニューからインストール済みプレーヤーで開けます。	在播放菜单中使用已安装的外部播放器。
+Play 버전에서는 APK 설치 기능을 제공하지 않습니다.	APK installation is not available in the Play edition.	Play版ではAPKのインストール機能を提供しません。	Play 版不提供 APK 安装功能。
+코덱 · 호환성	Codecs & compatibility	コーデック・互換性	编解码器与兼容性
+외부 코덱 폴더 가져오기	Import external codec folder	外部コーデックフォルダーを取り込む	导入外部编解码器文件夹
+동영상 코덱 라이선스	Video codec licenses	動画コーデックライセンス	视频编解码器许可证
+오픈소스 FFmpeg · NextLib 라이선스	FFmpeg & NextLib open-source licenses	FFmpeg・NextLib オープンソースライセンス	FFmpeg 与 NextLib 开源许可证
+오픈소스 라이선스	Open-source licenses	オープンソースライセンス	开源许可证
+인터페이스	Interface	インターフェース	界面
+화면 테마	Theme	画面テーマ	主题
+시스템 설정에 맞춤을 선택하면 Android의 라이트/다크 설정을 따릅니다.	Use system settings to follow Android light or dark mode.	システム設定を選ぶとAndroidのライト・ダーク設定に従います。	选择系统设置以跟随 Android 浅色或深色模式。
+현재 앱	Current app	現在のアプリ	当前应用
+동영상 플레이어 · 기본값	Video player defaults	動画プレーヤーの既定値	视频播放器默认设置
+자막 기본 설정	Subtitle defaults	字幕の既定値	字幕默认设置
+자막 설정	Subtitles	字幕設定	字幕设置
+자막 글꼴	Subtitle font	字幕フォント	字幕字体
+TTF 글꼴 가져오기	Import TTF font	TTFフォントを取り込む	导入 TTF 字体
+휴대폰에서 .ttf 파일 선택 · 최대 16MB	Choose a .ttf file · up to 16 MB	.ttfファイルを選択・最大16MB	选择 .ttf 文件（最大 16 MB）
+기본 Android 글꼴	Default Android font	Android標準フォント	Android 默认字体
+등록 글꼴 대신 시스템 글꼴 사용	Use the system font	システムフォントを使用	使用系统字体
+선택하면 동영상 자막에 적용	Apply to video subtitles	動画の字幕に適用	应用于视频字幕
+자막 미리보기: 안녕하세요! Hello 123	Subtitle preview: Hello 123	字幕プレビュー：こんにちは！ Hello 123	字幕预览：你好！Hello 123
+재생 설정	Playback settings	再生設定	播放设置
+오디오 트랙 및 정보	Audio tracks & info	音声トラック・情報	音轨与信息
+화면 회전 · 	Rotation · 	画面回転・	屏幕旋转 · 
+재생 속도 초기화 (1.0×)	Reset speed (1.0×)	再生速度をリセット（1.0×）	重置播放速度（1.0×）
+화면 맞춤 / 확대	Fit / zoom	画面に合わせる・拡大	适应屏幕或缩放
+홈 버튼 확인창 권한 설정	Home button prompt permissions	ホームボタン確認の権限	主页按钮确认权限
+이 폴더 개별 설정 초기화 (기본값 사용)	Reset folder settings (use defaults)	フォルダー設定をリセット（既定値）	重置文件夹设置（使用默认值）
+동영상 재생 오류	Video playback error	動画再生エラー	视频播放错误
+동영상 재생 추가 설정	More video settings	動画の詳細設定	更多视频设置
+동영상 터치 잠금 또는 해제	Lock or unlock video controls	動画操作のロック・解除	锁定或解锁视频控件
+화면 잠금 해제	Unlock screen	画面ロック解除	解锁屏幕
+팝업 재생	Popup playback	ポップアップ再生	悬浮播放
+내장 자막	Embedded subtitles	内蔵字幕	内嵌字幕
+내장	Built-in	内蔵	内置
+외부	External	外部	外部
+오디오 없음	No audio	音声なし	无音频
+언어 정보 없음	Language unknown	言語不明	语言未知
+한국어	Korean	韓国語	韩语
+영어	English	英語	英语
+일본어	Japanese	日本語	日语
+중국어	Chinese	中国語	中文
+값을 선택하면 아래 예시가 바로 바뀝니다.	The preview updates when you select a value.	値を選択するとプレビューが更新されます。	选择数值后，下方预览会立即更新。
+만화책 뷰어 · 기본값	Comic reader defaults	コミックビューアの既定値	漫画阅读器默认设置
+만화책 보기 설정	Comic reader settings	コミック表示設定	漫画阅读设置
+TXT 텍스트뷰어 · 기본값	TXT reader defaults	TXTビューアの既定値	TXT 阅读器默认设置
+EPUB 전자책 · 기본값	EPUB reader defaults	EPUBリーダーの既定値	EPUB 阅读器默认设置
+PDF 문서 · 책 뷰어	PDF book viewer	PDFブックビューア	PDF 书籍阅读器
+읽기 방식	Reading mode	読み方	阅读方式
+좌우 페이지 넘김	Horizontal pages	左右ページ送り	左右翻页
+세로 연속 스크롤	Continuous vertical scroll	縦スクロール	连续纵向滚动
+페이지 넘김 속도	Page turn speed	ページ送り速度	翻页速度
+책 넘김 효과	Page turn effect	ページめくり効果	翻页效果
+좌우 합본 이미지 자동 분할	Auto-split double-page scans	見開き画像を自動分割	自动拆分双页图片
+분할하지 않음	Do not split	分割しない	不拆分
+자동 감지 (권장)	Auto detect (recommended)	自動検出（推奨）	自动检测（推荐）
+민감하게 감지	Sensitive detection	高感度検出	灵敏检测
+폴드 펼침 두 페이지 보기	Two pages when unfolded	折りたたみ端末の見開き表示	折叠屏展开时双页显示
+기본 가로 폭 맞춤	Fit width by default	既定で幅に合わせる	默认适应宽度
+기본 흑백 모드	Grayscale by default	既定で白黒表示	默认黑白模式
+TXT 폴드 두 페이지 보기	TXT two-page view when unfolded	TXTの見開き表示	TXT 展开时双页显示
+펼친 화면에서 좌우 두 쪽	Two pages on the unfolded display	展開時に左右2ページ	展开屏幕时显示左右两页
+펼침 화면에서 좌우로 나누어 읽기	Read in two columns when unfolded	展開時に左右に分けて読む	展开时分为左右两栏阅读
+원본 페이지가 화면 너비에 맞게 확대됨	Scale the original page to screen width	元のページを画面幅に合わせる	将原始页面缩放至屏幕宽度
+색상 대신 흑백으로 표시	Display in grayscale	白黒で表示	以黑白方式显示
+자연스럽게	Natural	自然	自然
+천천히	Slow	ゆっくり	慢速
+고정폭	Monospace	等幅	等宽
+고딕 · 선명한 글씨	Sans serif · clear	ゴシック・読みやすい	无衬线 · 清晰
+명조 · 책 본문	Serif · book text	明朝・本文	衬线 · 正文
+흰 종이	White paper	白い紙	白纸
+아이보리 종이	Ivory paper	アイボリーの紙	象牙色纸张
+오래된 세피아 종이	Aged sepia paper	古いセピア紙	复古棕褐色纸张
+야간 독서	Night reading	夜間読書	夜间阅读
+흰색	White	白	白色
+아이보리	Ivory	アイボリー	象牙色
+세피아	Sepia	セピア	棕褐色
+야간	Night	夜間	夜间
+책갈피 추가, 이동 또는 삭제	Add, move or delete bookmarks	しおりの追加・移動・削除	添加、移动或删除书签
+책을 모두 읽었습니다.	You've finished this book.	この本を読み終えました。	已读完此书。
+폴더 설정 초기화	Reset folder settings	フォルダー設定をリセット	重置文件夹设置
+이 폴더 미디어 재검색	Rescan folder media	フォルダーのメディアを再検索	重新扫描文件夹媒体
+지정	Assign	指定	指定
+지정 해제	Unassign	指定解除	取消指定
+계속 편집	Keep editing	編集を続ける	继续编辑
+오피스 문서	Office documents	Office文書	Office 文档
+문서를 열지 못했습니다.	Could not open document.	文書を開けません。	无法打开文档。
+문서를 읽을 수 없습니다.	Cannot read document.	文書を読み込めません。	无法读取文档。
+파일을 읽을 수 없습니다.	Cannot read file.	ファイルを読み込めません。	无法读取文件。
+이 형식의 파일을 열 수 있는 앱이 없습니다.	No app can open this file type.	この形式を開けるアプリがありません。	没有可打开此类型文件的应用。
+지원하지 않는 저장소	Unsupported storage	未対応のストレージ	不支持的存储
+지원하지 않는 폴더입니다.	Unsupported folder.	未対応のフォルダーです。	不支持的文件夹。
+등록된 원격 저장소가 없습니다.	No saved remote storage.	登録済みのリモートストレージがありません。	没有已保存的远程存储。
+원격 연결을 찾을 수 없습니다.	Remote connection not found.	リモート接続が見つかりません。	找不到远程连接。
+연결된 원격 저장소를 찾지 못했습니다.	Connected remote storage not found.	接続済みストレージが見つかりません。	找不到已连接的远程存储。
+읽기 전용 파일은 삭제할 수 없습니다.	Cannot delete a read-only file.	読み取り専用ファイルは削除できません。	无法删除只读文件。
+올바르지 않은 파일명입니다.	Invalid file name.	無効なファイル名です。	文件名无效。
+잘못된 파일 위치입니다.	Invalid file location.	無効なファイルの場所です。	文件位置无效。
+압축 파일을 읽을 수 없습니다.	Cannot read archive.	圧縮ファイルを読み込めません。	无法读取压缩文件。
+지원하지 않는 압축 형식입니다.	Unsupported archive format.	未対応の圧縮形式です。	不支持的压缩格式。
+지원되지 않는 압축 형식입니다.	Unsupported archive format.	未対応の圧縮形式です。	不支持的压缩格式。
+압축 대상 폴더가 없습니다.	Source folder not found.	圧縮対象のフォルダーがありません。	找不到压缩源文件夹。
+압축해제 폴더를 만들 수 없습니다.	Cannot create extraction folder.	展開先フォルダーを作成できません。	无法创建解压文件夹。
+압축해제 폴더를 만들지 못했습니다.	Cannot create extraction folder.	展開先フォルダーを作成できません。	无法创建解压文件夹。
+압축 폴더 생성 실패	Could not create archive folder.	展開先フォルダーの作成に失敗しました。	无法创建解压文件夹。
+이미지 크기 제한 초과	Image exceeds size limit.	画像サイズの上限を超えました。	图片超出大小限制。
+페이지를 찾지 못했습니다.	Page not found.	ページが見つかりません。	找不到页面。
+페이지가 압축파일 안에 없습니다.	Page not found in archive.	アーカイブ内にページがありません。	压缩文件中没有该页面。
+압축파일 안에 읽을 수 있는 그림이 없습니다.	No readable images in the archive.	読み込める画像がありません。	压缩文件中没有可读取的图片。
+등록되지 않은 폰트입니다.	Font is not registered.	未登録のフォントです。	字体未注册。
+폰트를 등록하고 선택했습니다.	Font imported and selected.	フォントを登録して選択しました。	已导入并选择字体。
+폰트 가져오기 실패	Font import failed	フォントの取り込みに失敗	字体导入失败
+설치 패키지 준비 중...	Preparing installation package...	インストールパッケージを準備中…	正在准备安装包…
+APK 설치	Install APK	APKをインストール	安装 APK
+설치 화면 열기	Open installer	インストール画面を開く	打开安装界面
+새 버전이 준비됐습니다.	A new version is available.	新しいバージョンがあります。	有新版本可用。
+업데이트	Update	更新	更新
+설치	Install	インストール	安装
+확인 중	Checking	確認中	正在检查
+암호화 전송	Encrypted transfer	暗号化転送	加密传输
++  원격 저장소 추가	+ Add remote storage	+ リモートストレージ追加	+ 添加远程存储
+하위 폴더까지 검색 시작	Search including subfolders	サブフォルダーも検索	搜索包括子文件夹
+이 폴더 공유 링크 만들기	Create link for this folder	このフォルダーの共有リンクを作成	创建此文件夹的分享链接
+동영상 폴더 설정/해제	Toggle video folder	動画フォルダーの指定・解除	设置或取消视频文件夹
+만화책 폴더 설정/해제	Toggle comic folder	コミックフォルダーの指定・解除	设置或取消漫画文件夹
+소설책 폴더 설정/해제	Toggle book folder	小説フォルダーの指定・解除	设置或取消小说文件夹
+폴더 용도 설정/해제	Toggle folder purpose	フォルダー用途の指定・解除	设置或取消文件夹用途
+Direct 업데이트	Direct updates	Direct アップデート	Direct 更新
+비공개 서버를 지정하면 공개 GitHub 대신 해당 서버에서만 업데이트합니다.	When a private server is configured, updates are downloaded only from that server.	非公開サーバーを指定すると、そのサーバーからのみ更新します。	配置私有服务器后，仅从该服务器更新。
+비공개 OTA 설정	Private OTA settings	非公開 OTA 設定	私有 OTA 设置
+비공개 업데이트 서버 사용 중	Private update server enabled	非公開更新サーバーを使用中	正在使用私有更新服务器
+기존 공개 OTA 사용 중	Public OTA currently enabled	公開 OTA を使用中	正在使用公开 OTA
+개인 접근 코드	Personal access code	個人アクセスコード	个人访问码
+공개 OTA 사용	Use public OTA	公開 OTA を使用	使用公开 OTA
+서버 주소 또는 접근 코드를 확인하세요.	Check the server address or access code.	サーバーアドレスまたはアクセスコードを確認してください。	请检查服务器地址或访问码。

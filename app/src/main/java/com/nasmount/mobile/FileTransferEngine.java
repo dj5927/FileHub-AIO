@@ -707,7 +707,7 @@ final class FileTransferEngine {
     private static void deleteOne(Item item, int[] budget, int depth)
             throws Exception {
         visit(budget, depth);
-        if (!item.writable()) throw new IOException("읽기 전용 파일은 삭제할 수 없습니다.");
+        if (!item.writable()) throw new IOException(L10n.t("읽기 전용 파일은 삭제할 수 없습니다."));
         if (SftpLinkPolicy.shouldDescendForDelete(item.directory, item.symbolicLink) &&
                 item.remote != null &&
                 !"MYBOX".equals(item.remote.protocol) &&

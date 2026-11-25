@@ -553,7 +553,7 @@ final class RemoteProvider {
                     copy(response.body().byteStream(), target);
                 }
                 return;
-            default: throw new IOException("지원하지 않는 저장소");
+            default: throw new IOException(L10n.t("지원하지 않는 저장소"));
         }
     }
 
@@ -563,7 +563,7 @@ final class RemoteProvider {
      */
     static InputStream openStream(Models.RemoteProfile p, String path, long position)
             throws Exception {
-        if (position < 0) throw new IOException("잘못된 파일 위치입니다.");
+        if (position < 0) throw new IOException(L10n.t("잘못된 파일 위치입니다."));
         if (CloudProvider.isCloud(p)) return CloudProvider.openStream(p, path, position);
         String normalized = relativePath(path);
         switch (p.protocol) {
@@ -868,7 +868,7 @@ final class RemoteProvider {
                     throw error;
                 }
                 return;
-            default: throw new IOException("지원하지 않는 저장소");
+            default: throw new IOException(L10n.t("지원하지 않는 저장소"));
         }
     }
 
@@ -904,7 +904,7 @@ final class RemoteProvider {
                     if (!resp.isSuccessful()) throw new IOException("MKCOL HTTP " +
                             resp.code());
                 } return;
-            default: throw new IOException("지원하지 않는 저장소");
+            default: throw new IOException(L10n.t("지원하지 않는 저장소"));
         }
     }
     static void rename(Models.RemoteProfile p, String source,
@@ -926,14 +926,14 @@ final class RemoteProvider {
                 try (SmbFile oldFile = new SmbFile(smbPath(p, source, directory),
                         smbContext(p)); SmbFile newFile = new SmbFile(
                         smbPath(p, destination, directory), smbContext(p))) {
-                    if (newFile.exists()) throw new IOException("같은 이름의 파일이 이미 있습니다.");
+                    if (newFile.exists()) throw new IOException(L10n.t("같은 이름의 파일이 이미 있습니다."));
                     oldFile.renameTo(newFile);
                 } return;
             case "FTP":
                 FTPClient ftp = ftp(p);
                 try {
                     if (ftp.listFiles(absolute(p, destination)).length > 0)
-                        throw new IOException("같은 이름의 파일이 이미 있습니다.");
+                        throw new IOException(L10n.t("같은 이름의 파일이 이미 있습니다."));
                     if (!ftp.rename(absolute(p, source), absolute(p, destination)))
                         throw new IOException("FTP 이름 변경 실패");
                 } finally { closeFtp(ftp); }
@@ -941,7 +941,7 @@ final class RemoteProvider {
             case "SFTP":
                 try (SSHClient ssh = ssh(p); SFTPClient sftp = ssh.newSFTPClient()) {
                     if (sftp.statExistence(absolute(p, destination)) != null)
-                        throw new IOException("같은 이름의 파일이 이미 있습니다.");
+                        throw new IOException(L10n.t("같은 이름의 파일이 이미 있습니다."));
                     sftp.rename(absolute(p, source), absolute(p, destination));
                 } return;
             case "WebDAV":
@@ -955,7 +955,7 @@ final class RemoteProvider {
                         throw new IOException("WebDAV 이름 변경 실패 (HTTP " +
                                 response.code() + ")");
                 } return;
-            default: throw new IOException("지원하지 않는 저장소");
+            default: throw new IOException(L10n.t("지원하지 않는 저장소"));
         }
     }
 
@@ -1001,7 +1001,7 @@ final class RemoteProvider {
                     if (!resp.isSuccessful())
                         throw new IOException("WebDAV DELETE HTTP " + resp.code());
                 } return;
-            default: throw new IOException("지원하지 않는 저장소");
+            default: throw new IOException(L10n.t("지원하지 않는 저장소"));
         }
     }
     private static void requireWritable(Models.RemoteProfile p) throws IOException {

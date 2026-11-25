@@ -43,7 +43,7 @@ final class SecureStore {
         return gen.generateKey();
     }
 
-    private static String encrypt(String plain) throws Exception {
+    static String encrypt(String plain) throws Exception {
         if (plain.isEmpty()) return "";
         Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
         c.init(Cipher.ENCRYPT_MODE, secretKey());
@@ -53,7 +53,7 @@ final class SecureStore {
                 Base64.encodeToString(bytes, Base64.NO_WRAP);
     }
 
-    private static String decrypt(String encrypted) throws Exception {
+    static String decrypt(String encrypted) throws Exception {
         if (encrypted.isEmpty()) return "";
         String[] pair = encrypted.split("\\.", -1);
         if (pair.length != 2) throw new IllegalStateException("Invalid encrypted secret");

@@ -46,7 +46,7 @@ final class SubtitleFonts {
 
     static void choose(Context context, String name) {
         if (!name.isEmpty() && !installed(context).contains(name))
-            throw new IllegalArgumentException("등록되지 않은 폰트입니다.");
+            throw new IllegalArgumentException(L10n.t("등록되지 않은 폰트입니다."));
         PlayerSettings.prefs(context).edit().putString(SELECTED, name).apply();
     }
 
@@ -73,7 +73,7 @@ final class SubtitleFonts {
     }
     static void setFolderFont(Context context,String folderScope,String name){
         if(name!=null&&!name.isEmpty()&&!installed(context).contains(name))
-            throw new IllegalArgumentException("등록되지 않은 폰트입니다.");
+            throw new IllegalArgumentException(L10n.t("등록되지 않은 폰트입니다."));
         FolderMediaSettings.stringSet(context,FolderMediaSettings.VIDEO,
                 folderScope,"subtitle_font",name);
     }

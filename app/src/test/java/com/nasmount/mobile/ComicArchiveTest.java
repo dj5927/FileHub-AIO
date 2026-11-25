@@ -15,7 +15,7 @@ public final class ComicArchiveTest {
         assertEquals("chapter/2.png",names.get(1));
         assertEquals("chapter/10.jpg",names.get(2));
         assertTrue(ComicArchive.supports("manga.CBZ"));
-        assertTrue(ComicArchive.supports("manga.CBR"));
+        assertEquals(BuildConfig.DIRECT_EDITION, ComicArchive.supports("manga.CBR"));
         assertTrue(ComicArchive.supports("manga.CB7"));
         assertFalse(ComicArchive.supports("report.docx"));
     }
@@ -67,7 +67,7 @@ public final class ComicArchiveTest {
     }
     @Test public void comicExtensionsAreNormalArchivesOutsideRegisteredFolder() {
         assertTrue(ArchiveCodec.isArchive("new.cbz"));
-        assertTrue(ArchiveCodec.isArchive("new.cbr"));
+        assertEquals(BuildConfig.DIRECT_EDITION, ArchiveCodec.isArchive("new.cbr"));
         assertTrue(ArchiveCodec.isArchive("new.cb7"));
     }
 }

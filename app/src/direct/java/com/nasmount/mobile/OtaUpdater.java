@@ -43,8 +43,7 @@ final class OtaUpdater {
     }
 
     void manualCheck() {
-        OtaReleasePolicy.Release cached=available;
-        if(cached!=null){showRelease(cached);return;}
+        available=null;
         check(true);
     }
 
@@ -55,8 +54,10 @@ final class OtaUpdater {
             OtaReleasePolicy.Release release=null;
             Exception error=null;
             try {
-                HttpURLConnection conn=(HttpURLConnection)new URL(OtaReleasePolicy.API)
-                        .openConnection();
+                PrivateOtaChannel channel=PrivateOtaChannel.load(activity);
+                HttpURLConnection conn=channel==null ?
+                        (HttpURLConnection)new URL(OtaReleasePolicy.API).openConnection() :
+                        channel.open(channel.base+"manifest.json");
                 conn.setConnectTimeout(6500);
                 conn.setReadTimeout(7500);
                 conn.setRequestProperty("Accept","application/vnd.github+json");
@@ -71,8 +72,8 @@ final class OtaUpdater {
                             if(data.size()+n>250_000)throw new java.io.IOException("Release metadata too large");
                             data.write(buffer,0,n);
                         }
-                        release=OtaReleasePolicy.parse(new JSONObject(
-                                data.toString("UTF-8")));
+                        JSONObject json=new JSONObject(data.toString("UTF-8"));
+                        release=channel==null?OtaReleasePolicy.parse(json):channel.parse(json);
                     }
                 }finally {conn.disconnect();}
             }catch(Exception e){error=e;}
@@ -111,7 +112,7 @@ final class OtaUpdater {
                 .setMessage((notes.isEmpty()?"새 버전을 사용할 수 있습니다.":notes)+
                         "\n\n다운로드 크기: "+String.format(Locale.KOREA,"%.1f MB",
                         release.size/1_000_000d))
-                .setNegativeButton("나중에",null)
+                .setNegativeButton(L10n.t("나중에"),null)
                 .setPositiveButton("다운로드 및 설치",(d,w)->download(release))
                 .show();
     }
@@ -134,9 +135,15 @@ final class OtaUpdater {
                 if(!folder.exists() && !folder.mkdirs())throw new java.io.IOException("Cache unavailable");
                 File target=new File(folder,"FileHub-AIO-update.apk");
                 MessageDigest digest=MessageDigest.getInstance("SHA-256");
-                HttpURLConnection connection=(HttpURLConnection)new URL(release.url)
-                        .openConnection();
-                connection.setInstanceFollowRedirects(true);
+                PrivateOtaChannel channel=PrivateOtaChannel.load(activity);
+                String publicUrl=OtaReleasePolicy.REPO+"/releases/download/v"+
+                        release.version+"/FileHub-AIO-v"+release.version+".apk";
+                if(channel==null && !publicUrl.equals(release.url))
+                    throw new SecurityException("Update channel changed; check again");
+                HttpURLConnection connection=channel==null?
+                        (HttpURLConnection)new URL(release.url).openConnection():
+                        channel.openDownload(release);
+                connection.setInstanceFollowRedirects(channel==null);
                 connection.setConnectTimeout(15000);
                 connection.setReadTimeout(25000);
                 connection.setRequestProperty("User-Agent","FileHub-AIO-Android-OTA");
@@ -175,7 +182,7 @@ final class OtaUpdater {
                 if(failure!=null){
                     new AlertDialog.Builder(activity).setTitle("업데이트 실패")
                             .setMessage("다운로드 또는 APK 검증에 실패했습니다. 다시 시도해 주세요.")
-                            .setPositiveButton("확인",null).show();
+                            .setPositiveButton(L10n.t("확인"),null).show();
                 }else{
                     verifiedApk=completed;
                     install(completed);
@@ -215,8 +222,8 @@ final class OtaUpdater {
                 new AlertDialog.Builder(activity).setTitle("APK 설치 허용 필요")
                         .setMessage("FileHub에서 다운로드한 업데이트를 설치하려면 " +
                                 "이 출처의 앱 설치를 허용해야 합니다. 허용 후 메뉴에서 업데이트를 다시 선택하세요.")
-                        .setNegativeButton("취소",null)
-                        .setPositiveButton("설정 열기",(d,w)->{
+                        .setNegativeButton(L10n.t("취소"),null)
+                        .setPositiveButton(L10n.t("설정 열기"),(d,w)->{
                             Intent settings=new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                                     Uri.parse("package:"+activity.getPackageName()));
                             activity.startActivity(settings);
@@ -232,7 +239,7 @@ final class OtaUpdater {
         }catch(Exception e){
             new AlertDialog.Builder(activity).setTitle("설치 화면 실행 실패")
                     .setMessage("APK 다운로드는 완료됐으나 설치 화면을 열지 못했습니다.")
-                    .setPositiveButton("확인",null).show();
+                    .setPositiveButton(L10n.t("확인"),null).show();
         }
     }
 

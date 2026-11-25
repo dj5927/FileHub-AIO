@@ -182,7 +182,7 @@ public final class BuiltInOfficeActivity extends Activity {
                         if (p.id.equals(profileId)) { profile = p; break; }
                     }
                     if (profile == null)
-                        throw new IOException("연결된 원격 저장소를 찾지 못했습니다.");
+                        throw new IOException(L10n.t("연결된 원격 저장소를 찾지 못했습니다."));
                     if (WebDavExcelLease.applies(profile, name))
                         excelLease = WebDavExcelLease.acquire(profile,
                                 RemoteProvider.relativePath(path));
@@ -429,13 +429,13 @@ public final class BuiltInOfficeActivity extends Activity {
         if (busy) {
             new AlertDialog.Builder(this).setTitle("저장 진행 중")
                     .setMessage("원본 저장이 완료된 뒤 닫으세요.")
-                    .setPositiveButton("확인", null).show();
+                    .setPositiveButton(L10n.t("확인"), null).show();
             return;
         }
         new AlertDialog.Builder(this).setTitle("문서 편집 종료")
                 .setMessage("저장하지 않은 변경 내용은 사라질 수 있습니다. 종료하시겠습니까?")
-                .setNegativeButton("계속 편집", null)
-                .setPositiveButton("종료", (dialog, which) -> finish()).show();
+                .setNegativeButton(L10n.t("계속 편집"), null)
+                .setPositiveButton(L10n.t("종료"), (dialog, which) -> finish()).show();
     }
 
     @Override public void onBackPressed() { askClose(); }

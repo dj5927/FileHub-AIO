@@ -46,7 +46,7 @@ final class TvPairingUi implements AutoCloseable {
                         .setTitle("TV 계정 연결 요청 · " + profiles.size() + "개")
                         .setMessage("이 TV에 다음 연결을 가져올까요?\n\n" + labels +
                                 "\n기존 연결은 유지됩니다.")
-                        .setNegativeButton("거절",null)
+                        .setNegativeButton(L10n.t("거절"),null)
                         .setPositiveButton("이 TV에 저장",(d,which)->importProfiles(profiles))
                         .show();
                 }catch(Exception ignored){error("TV로 받은 연결 정보 형식이 올바르지 않습니다.");}
@@ -76,7 +76,7 @@ final class TvPairingUi implements AutoCloseable {
             qrDialog=new AlertDialog.Builder(activity)
                     .setTitle("FileHub TV · QR로 로그인")
                     .setView(body)
-                    .setNegativeButton("취소",null).create();
+                    .setNegativeButton(L10n.t("취소"),null).create();
             TvPairingServer active=server;
             qrDialog.setOnDismissListener(d->{if(server==active)close();});
             qrDialog.show();
@@ -105,7 +105,7 @@ final class TvPairingUi implements AutoCloseable {
             new AlertDialog.Builder(activity).setTitle("TV 연결 저장 완료")
                     .setMessage(""+added+"개 연결을 암호화 저장했습니다.\n"+
                             "Synology DSM 2단계 인증은 이 TV에서 별도로 확인할 수 있습니다.")
-                    .setPositiveButton("확인",null).show();
+                    .setPositiveButton(L10n.t("확인"),null).show();
         }catch(Exception e){error("TV 저장에 실패했습니다. 저장소 접근 권한을 확인하세요.");}
     }
 
@@ -120,12 +120,12 @@ final class TvPairingUi implements AutoCloseable {
                         "병합: 현재 TV 설정 유지 + 휴대폰 설정 반영\n"+
                         "교체: TV 설정을 휴대폰 설정으로 변경\n\n"+
                         "SD 권한과 외부 코덱 파일은 TV에서 별도로 지정해야 합니다.")
-                .setNegativeButton("거절",null)
+                .setNegativeButton(L10n.t("거절"),null)
                 .setNeutralButton("병합",(d,w)->applyFullSettings(snapshot,false))
-                .setPositiveButton("전체 교체",(d,w)->new AlertDialog.Builder(activity)
+                .setPositiveButton(L10n.t("전체 교체"),(d,w)->new AlertDialog.Builder(activity)
                         .setTitle("TV 전체 설정 교체")
                         .setMessage("기존 설정을 교체할까요? 현재 설정은 사라질 수 있습니다.")
-                        .setNegativeButton("취소",null)
+                        .setNegativeButton(L10n.t("취소"),null)
                         .setPositiveButton("교체",(confirm,yes)->applyFullSettings(snapshot,true))
                         .show()).show();
     }
@@ -142,7 +142,7 @@ final class TvPairingUi implements AutoCloseable {
                         .setTitle(done?"TV 설정 복원 완료":"TV 설정 복원 실패")
                         .setMessage(done?"휴대폰 설정이 저장됐습니다. 앱을 다시 실행하면 반영됩니다.":
                                 "일부 설정을 저장하지 못했습니다. 현재 설정을 확인하세요.")
-                        .setPositiveButton("확인",null).show();
+                        .setPositiveButton(L10n.t("확인"),null).show();
             });
         },"filehub-tv-restore").start();
     }
@@ -163,7 +163,7 @@ final class TvPairingUi implements AutoCloseable {
         header.addView(notice,Ui.lp(activity,-1,-2));
         Ui.gap(header,activity,8);
         EditText uriInput=new EditText(activity);
-        uriInput.setHint("filehubaio://pair?...");
+        uriInput.setHint(BuildConfig.PAIR_SCHEME + "://pair?...");
         uriInput.setSingleLine(true);
         uriInput.setInputType(InputType.TYPE_CLASS_TEXT|
                 InputType.TYPE_TEXT_VARIATION_URI);
@@ -177,7 +177,7 @@ final class TvPairingUi implements AutoCloseable {
             labels[i]=available.get(i).label()+" · "+available.get(i).protocol;
         new AlertDialog.Builder(activity).setCustomTitle(header)
                 .setMultiChoiceItems(labels,chosen,(d,index,checked)->chosen[index]=checked)
-                .setNegativeButton("취소",null)
+                .setNegativeButton(L10n.t("취소"),null)
                 .setNeutralButton("전체 설정 TV로 보내기",(d,w)->{
                     final TvPairingCodec.Destination destination;
                     try{destination=TvPairingCodec.parseUri(uriInput.getText().toString());}
@@ -188,7 +188,7 @@ final class TvPairingUi implements AutoCloseable {
                                     "\n\n네트워크 연결·계정·즐겨찾기·콘텐츠 폴더·재생 및 독서 " +
                                     "설정을 일회용 QR 키로 암호화해 전송합니다. " +
                                     "TV에서 최종 승인해야 저장됩니다. 본인의 TV인지 확인하세요.")
-                            .setNegativeButton("취소",null)
+                            .setNegativeButton(L10n.t("취소"),null)
                             .setPositiveButton("전체 설정 전송",(confirm,ok)->{
                                 new Thread(()->{
                                     boolean success=false;
@@ -207,7 +207,7 @@ final class TvPairingUi implements AutoCloseable {
                                                 .setTitle(done?"TV로 전체 설정 전송 완료":"TV 전송 실패")
                                                 .setMessage(done?"TV에서 병합 또는 전체 교체를 선택하세요.":
                                                         "TV와 같은 Wi-Fi인지, QR이 유효한지 확인하세요.")
-                                                .setPositiveButton("확인",null).show();
+                                                .setPositiveButton(L10n.t("확인"),null).show();
                                     });
                                 },"filehub-tv-full-settings-send").start();
                             }).show();
@@ -227,8 +227,8 @@ final class TvPairingUi implements AutoCloseable {
                                     "\n선택한 연결 "+selected.size()+"개\n\n"+
                                     "NAS 비밀번호와 클라우드 세션이 포함될 수 있으며, " +
                                     "일회용 키로 암호화됩니다. 본인의 TV인지 확인하세요.")
-                            .setNegativeButton("취소",null)
-                            .setPositiveButton("암호화 전송",(confirm,ok)->{
+                            .setNegativeButton(L10n.t("취소"),null)
+                            .setPositiveButton(L10n.t("암호화 전송"),(confirm,ok)->{
                                 new Thread(()->{
                                     boolean success=false;
                                     try{TvPairingServer.send(destination,data);success=true;}
@@ -241,7 +241,7 @@ final class TvPairingUi implements AutoCloseable {
                                                 .setMessage(done ?
                                                         "TV 화면에서 가져올 연결을 확인하고 저장을 승인하세요." :
                                                         "같은 Wi-Fi인지, 2분 제한이 지났는지, TV QR 화면이 열려 있는지 확인하세요.")
-                                                .setPositiveButton("확인",null).show();
+                                                .setPositiveButton(L10n.t("확인"),null).show();
                                     });
                                 },"filehub-tv-send").start();
                             }).show();
@@ -252,7 +252,7 @@ final class TvPairingUi implements AutoCloseable {
     private void error(String msg){
         if(activity.isFinishing())return;
         new AlertDialog.Builder(activity).setTitle("FileHub TV")
-                .setMessage(msg).setPositiveButton("확인",null).show();
+                .setMessage(msg).setPositiveButton(L10n.t("확인"),null).show();
     }
 
     @Override public void close(){

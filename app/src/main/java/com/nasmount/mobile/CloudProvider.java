@@ -436,7 +436,7 @@ final class CloudProvider {
 
     static InputStream openStream(Models.RemoteProfile p, String path, long position)
             throws Exception {
-        if (position < 0) throw new IOException("잘못된 파일 위치입니다.");
+        if (position < 0) throw new IOException(L10n.t("잘못된 파일 위치입니다."));
         HttpUrl next = HttpUrl.parse(resolveDownload(p, path));
         boolean signedRetry = false;
         for (int redirect = 0; redirect < 8; redirect++) {

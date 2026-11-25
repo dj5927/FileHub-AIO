@@ -1,7 +1,5 @@
 package com.nasmount.mobile;
 
-import com.github.junrar.Archive;
-import com.github.junrar.rarfile.FileHeader;
 import org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry;
 import org.apache.commons.compress.archivers.sevenz.SevenZFile;
 import org.apache.commons.compress.archivers.sevenz.SevenZOutputFile;
@@ -26,8 +24,7 @@ final class ArchiveCodec {
         if (name == null) return false;
         String lower = name.toLowerCase(Locale.ROOT);
         return lower.endsWith(".zip") || lower.endsWith(".7z") ||
-                lower.endsWith(".rar") || lower.endsWith(".cbz") ||
-                lower.endsWith(".cb7") || lower.endsWith(".cbr");
+                lower.endsWith(".cbz") || lower.endsWith(".cb7");
     }
 
     static boolean canCreate(String format) {
@@ -45,7 +42,7 @@ final class ArchiveCodec {
         if (name == null || name.isEmpty() || name.equals(".") || name.equals("..") ||
                 name.contains("/") || name.contains("\\") || name.contains(":") ||
                 name.indexOf('\0') >= 0)
-            throw new IllegalArgumentException("올바르지 않은 파일명입니다.");
+            throw new IllegalArgumentException(L10n.t("올바르지 않은 파일명입니다."));
         return name;
     }
 
@@ -103,7 +100,7 @@ final class ArchiveCodec {
             throws IOException {
         File parent = target.getParentFile();
         if (!parent.isDirectory() && !parent.mkdirs())
-            throw new IOException("압축해제 폴더를 만들지 못했습니다.");
+            throw new IOException(L10n.t("압축해제 폴더를 만들지 못했습니다."));
         if (target.exists())
             throw new IOException("중복된 압축 파일 경로입니다.");
         try (OutputStream out = new BufferedOutputStream(new FileOutputStream(target))) {
@@ -134,7 +131,7 @@ final class ArchiveCodec {
         if (archive == null || !archive.isFile() || archive.length() > MAX_INPUT_BYTES)
             throw new IOException("압축 파일을 읽을 수 없거나 512MB 제한을 넘었습니다.");
         if (!outputDir.isDirectory() && !outputDir.mkdirs())
-            throw new IOException("압축해제 폴더를 만들 수 없습니다.");
+            throw new IOException(L10n.t("압축해제 폴더를 만들 수 없습니다."));
         Budget budget = new Budget();
         String name = archive.getName().toLowerCase(Locale.ROOT);
         if (name.endsWith(".zip")||name.endsWith(".cbz")) {
@@ -147,7 +144,7 @@ final class ArchiveCodec {
                     File target = resolve(outputDir, safe);
                     if (entry.isDirectory()) {
                         if (!target.isDirectory() && !target.mkdirs())
-                            throw new IOException("압축 폴더 생성 실패");
+                            throw new IOException(L10n.t("압축 폴더 생성 실패"));
                     } else {
                         writeEntry(zip, target, budget);
                     }
@@ -165,41 +162,19 @@ final class ArchiveCodec {
                         throw new IOException("7z 삭제 항목은 지원하지 않습니다.");
                     if (entry.isDirectory()) {
                         if (!target.isDirectory() && !target.mkdirs())
-                            throw new IOException("압축 폴더 생성 실패");
+                            throw new IOException(L10n.t("압축 폴더 생성 실패"));
                     } else {
                         writeSevenZ(seven, target, budget);
                     }
                 }
             }
-        } else if (name.endsWith(".rar")||name.endsWith(".cbr")) {
-            try (Archive rar = new Archive(archive)) {
-                if (rar.isEncrypted() || rar.isPasswordProtected())
-                    throw new IOException("암호화된 RAR은 아직 지원하지 않습니다.");
-                FileHeader header;
-                while ((header = rar.nextFileHeader()) != null) {
-                    String safe = normalizedEntry(header.getFileName());
-                    budget.register(safe);
-                    File target = resolve(outputDir, safe);
-                    if (header.isDirectory()) {
-                        if (!target.isDirectory() && !target.mkdirs())
-                            throw new IOException("압축 폴더 생성 실패");
-                    } else {
-                        if (header.getUnpSize() > MAX_OUTPUT_BYTES - budget.total)
-                            throw new IOException("압축해제 용량 제한을 넘었습니다.");
-                        try (InputStream in = rar.getInputStream(header)) {
-                            if (in == null) throw new IOException("RAR 파일을 읽지 못했습니다.");
-                            writeEntry(in, target, budget);
-                        }
-                    }
-                }
-            }
-        } else throw new IOException("지원하지 않는 압축 형식입니다.");
+        } else throw new IOException(L10n.t("지원하지 않는 압축 형식입니다."));
         return budget.entries;
     }
 
     static void create(File sourceFolder, File output, String format) throws Exception {
         if (!canCreate(format)) throw new IOException("RAR 압축 생성은 지원하지 않습니다.");
-        if (!sourceFolder.isDirectory()) throw new IOException("압축 대상 폴더가 없습니다.");
+        if (!sourceFolder.isDirectory()) throw new IOException(L10n.t("압축 대상 폴더가 없습니다."));
         Budget budget = new Budget();
         if ("zip".equalsIgnoreCase(format)) {
             try (ZipOutputStream zip = new ZipOutputStream(
@@ -231,7 +206,7 @@ final class ArchiveCodec {
             throw new IOException("심볼릭 링크는 압축하지 않습니다.");
         budget.register(normalizedEntry(path));
         if (file.isFile()) {
-            if (!file.canRead()) throw new IOException("파일을 읽을 수 없습니다.");
+            if (!file.canRead()) throw new IOException(L10n.t("파일을 읽을 수 없습니다."));
             if (budget.total + file.length() > MAX_OUTPUT_BYTES)
                 throw new IOException("압축할 원본 데이터가 1GB 제한을 넘었습니다.");
             budget.total += file.length();

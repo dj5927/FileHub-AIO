@@ -14,13 +14,19 @@
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED"/>
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <queries>
+        <intent><action android:name="android.intent.action.VIEW"/><data android:mimeType="video/*"/></intent>
+        <intent><action android:name="android.intent.action.VIEW"/><data android:mimeType="application/vnd.rar"/></intent>
+        <intent><action android:name="android.intent.action.VIEW"/><data android:mimeType="application/x-rar-compressed"/></intent>
+        <intent><action android:name="android.intent.action.VIEW"/><data android:mimeType="application/x-cbr"/></intent>
+    </queries>
     <application
+        android:name=".FileHubApplication"
         android:label="FileHub AIO"
         android:icon="@drawable/filehub_aio_icon"
         android:banner="@drawable/filehub_tv_banner"
@@ -90,7 +96,7 @@
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
-                <data android:scheme="filehubaio" android:host="pair"/>
+                <data android:scheme="${pairScheme}" android:host="pair"/>
             </intent-filter>
         </activity>
         <provider
@@ -101,5 +107,10 @@
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"/>
         </provider>
+        <provider
+            android:name=".ExternalMediaProvider"
+            android:authorities="${applicationId}.externalmedia"
+            android:exported="false"
+            android:grantUriPermissions="true"/>
     </application>
 </manifest>

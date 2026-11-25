@@ -46,8 +46,8 @@ final class ReaderQuickSeek {
         new AlertDialog.Builder(activity)
                 .setTitle(title+" 전체 빠른 이동")
                 .setView(sheet)
-                .setNegativeButton("취소",null)
-                .setPositiveButton("이동",(dialog,which)->
+                .setNegativeButton(L10n.t("취소"),null)
+                .setPositiveButton(L10n.t("이동"),(dialog,which)->
                         jump.accept(slider.getProgress()))
                 .show();
     }

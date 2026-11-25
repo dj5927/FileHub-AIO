@@ -24,7 +24,7 @@ final class ReaderSource {
             String raw=request.getStringExtra(URI);
             if(raw==null)throw new IOException("문서 URI가 없습니다.");
             InputStream in=activity.getContentResolver().openInputStream(Uri.parse(raw));
-            if(in==null)throw new IOException("문서를 읽을 수 없습니다.");
+            if(in==null)throw new IOException(L10n.t("문서를 읽을 수 없습니다."));
             return new BufferedInputStream(in);
         }
         if("remote".equals(kind)){
@@ -34,7 +34,7 @@ final class ReaderSource {
             for(Models.RemoteProfile p:new SecureStore(activity).activeRemotes())
                 if(id.equals(p.id))return new BufferedInputStream(
                         RemoteProvider.openStream(p,path,0));
-            throw new IOException("원격 연결을 찾을 수 없습니다.");
+            throw new IOException(L10n.t("원격 연결을 찾을 수 없습니다."));
         }
         throw new IOException("지원하지 않는 파일 출처입니다.");
     }

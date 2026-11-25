@@ -46,6 +46,6 @@ final class ReaderBookmarkDialog {
                                     progressPercentage);
                         }
                     }
-                }).setNegativeButton("닫기",null).show();
+                }).setNegativeButton(L10n.t("닫기"),null).show();
     }
 }

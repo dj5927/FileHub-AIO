@@ -87,7 +87,7 @@ public final class ArchiveCodecTest {
     @Test public void fileTypeRoutingAndRarWriteRestriction() throws Exception {
         assertTrue(ArchiveCodec.isArchive("사진.ZIP"));
         assertTrue(ArchiveCodec.isArchive("리스트.7Z"));
-        assertTrue(ArchiveCodec.isArchive("자료.rAr"));
+        assertEquals(BuildConfig.DIRECT_EDITION, ArchiveCodec.isArchive("자료.rAr"));
         assertFalse(ArchiveCodec.isArchive("사진.jpg"));
         assertEquals("문서", ArchiveCodec.baseFolder("문서.rar"));
         assertFalse(ArchiveCodec.canCreate("rar"));

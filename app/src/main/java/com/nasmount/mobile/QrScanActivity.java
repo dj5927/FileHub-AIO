@@ -68,7 +68,7 @@ public final class QrScanActivity extends Activity
         preview=new TextureView(this);
         preview.setSurfaceTextureListener(this);
         content.addView(preview,new LinearLayout.LayoutParams(-1,0,1));
-        TextView cancel=Ui.text(this,"취소",17,0xFF66D4C6,true);
+        TextView cancel=Ui.text(this,L10n.t("취소"),17,0xFF66D4C6,true);
         cancel.setGravity(Gravity.CENTER);
         cancel.setOnClickListener(v->finish());
         content.addView(cancel,Ui.lp(this,-1,62));
@@ -194,7 +194,7 @@ public final class QrScanActivity extends Activity
                     luminance[row*width+col]=bytes.get(start+col*pixelStride);
             }
             String value=QrCameraDecoder.decode(luminance,width,height);
-            if(value!=null && value.startsWith("filehubaio://pair?") &&
+            if(value!=null && value.startsWith(BuildConfig.PAIR_SCHEME + "://pair?") &&
                     found.compareAndSet(false,true)){
                 runOnUiThread(()->{
                     if(isFinishing())return;

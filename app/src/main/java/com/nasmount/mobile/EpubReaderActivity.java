@@ -507,8 +507,8 @@ public final class EpubReaderActivity extends Activity {
         if(target<0)return;
         if(target>=pdfPageCount){
             new AlertDialog.Builder(this)
-                    .setTitle("책을 모두 읽었습니다.")
-                    .setPositiveButton("확인",null).show();
+                    .setTitle(L10n.t("책을 모두 읽었습니다."))
+                    .setPositiveButton(L10n.t("확인"),null).show();
             return;
         }
         animatePageTurn(direction,()->loadPdfPage(target),true);
@@ -546,8 +546,8 @@ public final class EpubReaderActivity extends Activity {
         });
         new AlertDialog.Builder(this).setTitle("PDF 책 전체 이동")
                 .setView(sheet)
-                .setNegativeButton("취소",null)
-                .setPositiveButton("이동",(dialog,which)->
+                .setNegativeButton(L10n.t("취소"),null)
+                .setPositiveButton(L10n.t("이동"),(dialog,which)->
                         jumpToPdf(seek.getProgress())).show();
     }
 
@@ -558,14 +558,14 @@ public final class EpubReaderActivity extends Activity {
         controls.addView(Ui.text(this,
                 "PDF는 원본 페이지를 유지하며 EPUB과 같은 독서 화면으로 표시합니다.",
                 13,Ui.MUTED,false));
-        controls.addView(Ui.text(this,"책 넘김 효과",14,Ui.TEXT,true));
+        controls.addView(Ui.text(this,L10n.t("책 넘김 효과"),14,Ui.TEXT,true));
         Spinner effect=new Spinner(this);
         effect.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
                 ReaderTurnPreferences.STYLES));
         effect.setSelection(ReaderTurnPreferences.toIndex(pageEffect));
         controls.addView(effect,Ui.lp(this,-1,48));
-        controls.addView(Ui.text(this,"페이지 넘김 속도",14,Ui.TEXT,true));
+        controls.addView(Ui.text(this,L10n.t("페이지 넘김 속도"),14,Ui.TEXT,true));
         Spinner speed=new Spinner(this);
         speed.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
@@ -582,8 +582,8 @@ public final class EpubReaderActivity extends Activity {
         ScrollView scroll=new ScrollView(this);
         scroll.addView(controls);
         new AlertDialog.Builder(this).setTitle("PDF 독서 설정")
-                .setView(scroll).setNegativeButton("취소",null)
-                .setPositiveButton("적용",(dialog,which)->{
+                .setView(scroll).setNegativeButton(L10n.t("취소"),null)
+                .setPositiveButton(L10n.t("적용"),(dialog,which)->{
                     pageEffect=ReaderTurnPreferences.fromIndex(
                             effect.getSelectedItemPosition());
                     slowPageTurn=speed.getSelectedItemPosition()==1;
@@ -973,8 +973,8 @@ public final class EpubReaderActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle("EPUB 전체 빠른 이동")
                 .setView(sheet)
-                .setNegativeButton("취소",null)
-                .setPositiveButton("이동",(dialog,which)->{
+                .setNegativeButton(L10n.t("취소"),null)
+                .setPositiveButton(L10n.t("이동"),(dialog,which)->{
                     if(archive==null||progressMap==null)return;
                     int destination=progressMap.positionAt(seek.getProgress());
                     cancelPageTurn();
@@ -1217,8 +1217,8 @@ public final class EpubReaderActivity extends Activity {
             animatePageTurn(direction,
                     ()->openChapter(nextChapter,nextLocation),true);
         }else if(direction>0){
-            new AlertDialog.Builder(this).setTitle("책을 모두 읽었습니다.")
-                    .setPositiveButton("확인",null).show();
+            new AlertDialog.Builder(this).setTitle(L10n.t("책을 모두 읽었습니다."))
+                    .setPositiveButton(L10n.t("확인"),null).show();
             ReaderHistory.save(this,historyId,currentPosition(),
                     archive.chapters.size()*10000,archive.chapters.size()*10000);
         }
@@ -1251,7 +1251,7 @@ public final class EpubReaderActivity extends Activity {
         }
         LinearLayout settings=Ui.vertical(this);
         settings.setPadding(Ui.dp(this,18),Ui.dp(this,8),Ui.dp(this,18),0);
-        settings.addView(Ui.text(this,"읽기 방식",14,Ui.TEXT,true));
+        settings.addView(Ui.text(this,L10n.t("읽기 방식"),14,Ui.TEXT,true));
         Spinner readerMode=new Spinner(this);
         readerMode.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
@@ -1265,7 +1265,7 @@ public final class EpubReaderActivity extends Activity {
                 ReaderTurnPreferences.STYLES));
         turnEffect.setSelection(ReaderTurnPreferences.toIndex(pageEffect));
         settings.addView(turnEffect,Ui.lp(this,-1,45));
-        settings.addView(Ui.text(this,"페이지 넘김 속도",14,Ui.TEXT,true));
+        settings.addView(Ui.text(this,L10n.t("페이지 넘김 속도"),14,Ui.TEXT,true));
         Spinner turnSpeed=new Spinner(this);
         turnSpeed.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
@@ -1291,8 +1291,8 @@ public final class EpubReaderActivity extends Activity {
         ScrollView scroll=new ScrollView(this);
         scroll.addView(settings);
         new AlertDialog.Builder(this).setTitle("EPUB 독서 설정")
-                .setView(scroll).setNegativeButton("취소",null)
-                .setPositiveButton("적용",(dialog,which)->{
+                .setView(scroll).setNegativeButton(L10n.t("취소"),null)
+                .setPositiveButton(L10n.t("적용"),(dialog,which)->{
                     int keep=currentPosition();
                     cancelPageTurn();
                     int oldMode=mode,oldEffect=pageEffect,oldSize=fontSize;
@@ -1318,7 +1318,7 @@ public final class EpubReaderActivity extends Activity {
                     if(oldSlow!=slowPageTurn)
                         epubSave("slow_page_turn",slowPageTurn);
                     jumpTo(keep);
-                }).setNeutralButton("폴더 설정 초기화",(dialog,which)->{
+                }).setNeutralButton(L10n.t("폴더 설정 초기화"),(dialog,which)->{
                     FolderMediaSettings.clear(this,FolderMediaSettings.EPUB,
                             folderSettingsScope,"mode","font_size","line_spacing",
                             "side_margin","theme","page_turn_effect",

@@ -115,7 +115,7 @@ public final class BookTextActivity extends Activity {
         header.addView(name,new LinearLayout.LayoutParams(0,-1,1));
         TextView bookmark=Ui.text(this,"☆",24,foregrounds[themeIndex],false);
         bookmark.setGravity(Gravity.CENTER);
-        bookmark.setContentDescription("책갈피 추가, 이동 또는 삭제");
+        bookmark.setContentDescription(L10n.t("책갈피 추가, 이동 또는 삭제"));
         header.addView(bookmark,Ui.lp(this,48,-1));
         bookmark.setOnClickListener(v->{
             if(largeBook!=null){
@@ -884,7 +884,7 @@ public final class BookTextActivity extends Activity {
     private void showSettings(){
         LinearLayout form=Ui.vertical(this);
         form.setPadding(dp(18),dp(8),dp(18),0);
-        form.addView(Ui.text(this,"읽기 방식",14,Ui.TEXT,true));
+        form.addView(Ui.text(this,L10n.t("읽기 방식"),14,Ui.TEXT,true));
         Spinner readingMode=new Spinner(this);
         readingMode.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
@@ -898,7 +898,7 @@ public final class BookTextActivity extends Activity {
                 ReaderTurnPreferences.STYLES));
         animation.setSelection(ReaderTurnPreferences.toIndex(turnStyle));
         form.addView(animation,Ui.lp(this,-1,46));
-        form.addView(Ui.text(this,"페이지 넘김 속도",14,Ui.TEXT,true));
+        form.addView(Ui.text(this,L10n.t("페이지 넘김 속도"),14,Ui.TEXT,true));
         Spinner animationSpeed=new Spinner(this);
         animationSpeed.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
@@ -933,8 +933,8 @@ public final class BookTextActivity extends Activity {
         ScrollView optionsScroll=new ScrollView(this);
         optionsScroll.addView(form);
         new AlertDialog.Builder(this).setTitle("텍스트책 보기 설정")
-                .setView(optionsScroll).setNegativeButton("취소",null)
-                .setPositiveButton("적용",(dialog,which)->{
+                .setView(optionsScroll).setNegativeButton(L10n.t("취소"),null)
+                .setPositiveButton(L10n.t("적용"),(dialog,which)->{
                     pageTransitions.cancel();
                     int oldMode=displayMode,oldTurn=turnStyle,oldFont=fontIndex;
                     int oldSize=fontSize,oldSpacing=spacingPercent,oldMargin=margin;
@@ -966,7 +966,7 @@ public final class BookTextActivity extends Activity {
                         textSave("fold_columns",foldColumns);
                     applyStyle();
                     useReadingMode();
-                }).setNeutralButton("폴더 설정 초기화",(dialog,which)->{
+                }).setNeutralButton(L10n.t("폴더 설정 초기화"),(dialog,which)->{
                     FolderMediaSettings.clear(this,FolderMediaSettings.TEXT,
                             folderSettingsScope,"font","size","spacing",
                             "margin","theme","view_mode","turn_effect",

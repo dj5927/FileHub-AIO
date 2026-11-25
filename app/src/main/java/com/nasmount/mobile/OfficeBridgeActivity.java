@@ -91,7 +91,7 @@ public final class OfficeBridgeActivity extends Activity {
         editButton = action("1. 문서 편집기 열기", vertical, this::launchEditor);
         saveButton = action("2. 변경 내용을 원본에 저장", vertical, this::commitChanges);
         action("호환 편집기 설치 안내", vertical, this::showEditorInstructions);
-        action("닫기", vertical, this::confirmClose);
+        action(L10n.t("닫기"), vertical, this::confirmClose);
         TextView note = Ui.text(this,
                 "엑셀: LibreOffice 기반 Collabora Office 등 설치된 호환 편집기 사용\n" +
                 "한글: Android HWP/HWPX 편집 앱이 별도로 필요합니다.\n\n" +
@@ -128,8 +128,8 @@ public final class OfficeBridgeActivity extends Activity {
     }
 
     private void showError(String reason) {
-        new AlertDialog.Builder(this).setTitle("오피스 문서")
-                .setMessage(reason).setPositiveButton("확인", null).show();
+        new AlertDialog.Builder(this).setTitle(L10n.t("오피스 문서"))
+                .setMessage(reason).setPositiveButton(L10n.t("확인"), null).show();
     }
 
     private InputStream originalInput() throws Exception {
@@ -146,7 +146,7 @@ public final class OfficeBridgeActivity extends Activity {
                 if ("remote".equals(kind)) {
                     for (Models.RemoteProfile p : new SecureStore(this).activeRemotes())
                         if (p.id.equals(profileId)) { remote = p; break; }
-                    if (remote == null) throw new IOException("연결된 원격 저장소를 찾지 못했습니다.");
+                    if (remote == null) throw new IOException(L10n.t("연결된 원격 저장소를 찾지 못했습니다."));
                 }
                 if (WebDavExcelLease.applies(remote, filename))
                     excelLease = WebDavExcelLease.acquire(remote,
@@ -183,7 +183,7 @@ public final class OfficeBridgeActivity extends Activity {
                 loading = false;
                 updateButtons();
                 if (failure != null) {
-                    status.setText("문서를 열지 못했습니다.");
+                    status.setText(L10n.t("문서를 열지 못했습니다."));
                     showError(failure);
                 } else if (excelLease != null && excelLease.readOnly()) {
                     status.setText(excelLease.reason() +
@@ -334,7 +334,7 @@ public final class OfficeBridgeActivity extends Activity {
                 .setMessage(label + " 설치 페이지를 열까요?\n\n" +
                         "이 앱은 별도로 설치해야 하며, NAS Mount가 설치를 자동 진행하지 않습니다. " +
                         "편집기의 실제 파일 저장 지원 여부는 해당 앱 버전에 따라 다릅니다.")
-                .setNegativeButton("취소", null)
+                .setNegativeButton(L10n.t("취소"), null)
                 .setPositiveButton("페이지 열기", (d,w) -> {
                     try {
                         startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(website)));
@@ -348,8 +348,8 @@ public final class OfficeBridgeActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("편집 화면 닫기")
                 .setMessage("변경 내용이 있으면 '원본에 저장'을 눌러야 반영됩니다. " +
                         "저장하지 않고 닫으시겠습니까?")
-                .setNegativeButton("계속 편집", null)
-                .setPositiveButton("닫기", (d, w) -> finish()).show();
+                .setNegativeButton(L10n.t("계속 편집"), null)
+                .setPositiveButton(L10n.t("닫기"), (d, w) -> finish()).show();
     }
 
     @Override public void onBackPressed() { confirmClose(); }

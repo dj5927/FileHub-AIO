@@ -9,6 +9,11 @@ final class OverflowMenuItems {
 
     private OverflowMenuItems() {}
 
+    static String[] labelsForEdition(boolean direct) {
+        String[] labels=labels();
+        return direct ? labels : java.util.Arrays.copyOf(labels,3);
+    }
+
     static String[] labels() {
         return new String[] {
                 "즐겨찾기 보기",

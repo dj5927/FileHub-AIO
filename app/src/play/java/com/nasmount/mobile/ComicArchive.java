@@ -1,8 +1,6 @@
 package com.nasmount.mobile;
 
 import android.graphics.BitmapFactory;
-import com.github.junrar.Archive;
-import com.github.junrar.rarfile.FileHeader;
 import org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry;
 import org.apache.commons.compress.archivers.sevenz.SevenZFile;
 import java.io.*;
@@ -24,8 +22,7 @@ final class ComicArchive {
         if(filename==null)return false;
         String n=filename.toLowerCase(Locale.ROOT);
         return n.endsWith(".zip")||n.endsWith(".cbz")||
-                n.endsWith(".7z")||n.endsWith(".cb7")||
-                n.endsWith(".rar")||n.endsWith(".cbr");
+                n.endsWith(".7z")||n.endsWith(".cb7");
     }
     static boolean image(String filename){
         if(filename==null)return false;
@@ -96,22 +93,10 @@ final class ComicArchive {
                             seen.add(e.getName()))pages.add(e.getName());
                 }
             }
-        }else if(type.endsWith(".rar")||type.endsWith(".cbr")){
-            try(Archive rar=new Archive(archive)){
-                if(rar.isEncrypted()||rar.isPasswordProtected())
-                    throw new IOException("암호화된 RAR은 지원하지 않습니다.");
-                FileHeader h;int count=0;
-                while((h=rar.nextFileHeader())!=null){
-                    if(++count>MAX_ENTRIES)throw new IOException("압축 항목 수가 너무 많습니다.");
-                    if(!h.isDirectory()&&isSafePage(h.getFileName())&&
-                            h.getUnpSize()<=MAX_PAGE_BYTES &&
-                            seen.add(h.getFileName()))pages.add(h.getFileName());
-                }
-            }
         }else throw new IOException("지원되지 않는 만화책 압축 형식");
         pages.sort(ComicArchive::naturalCompare);
         if(pages.isEmpty())
-            throw new IOException("압축파일 안에 읽을 수 있는 그림이 없습니다.");
+            throw new IOException(L10n.t("압축파일 안에 읽을 수 있는 그림이 없습니다."));
         return pages;
     }
 
@@ -166,22 +151,6 @@ final class ComicArchive {
                         result.set(at,new int[]{options.outWidth,options.outHeight});
                     }
                 }
-            }else if(lower.endsWith(".rar")||lower.endsWith(".cbr")){
-                try(Archive rar=new Archive(archive)){
-                    FileHeader header;
-                    while((header=rar.nextFileHeader())!=null){
-                        if(Thread.currentThread().isInterrupted())
-                            throw new InterruptedIOException();
-                        Integer at=index.get(header.getFileName());
-                        if(at==null||header.isDirectory())continue;
-                        BitmapFactory.Options options=new BitmapFactory.Options();
-                        options.inJustDecodeBounds=true;
-                        try(InputStream in=rar.getInputStream(header)){
-                            if(in!=null)BitmapFactory.decodeStream(in,null,options);
-                        }catch(Exception invalid){}
-                        result.set(at,new int[]{options.outWidth,options.outHeight});
-                    }
-                }
             }
         }
         return result;
@@ -207,8 +176,8 @@ final class ComicArchive {
         if(type.endsWith(".zip")||type.endsWith(".cbz")){
             try(ZipFile zip=new ZipFile(archive)){
                 ZipEntry entry=zip.getEntry(path);
-                if(entry==null||entry.isDirectory())throw new IOException("페이지를 찾지 못했습니다.");
-                if(entry.getSize()>MAX_PAGE_BYTES)throw new IOException("이미지 크기 제한 초과");
+                if(entry==null||entry.isDirectory())throw new IOException(L10n.t("페이지를 찾지 못했습니다."));
+                if(entry.getSize()>MAX_PAGE_BYTES)throw new IOException(L10n.t("이미지 크기 제한 초과"));
                 try(InputStream in=zip.getInputStream(entry)){bounded(in,output);}
             }
         }else if(type.endsWith(".7z")||type.endsWith(".cb7")){
@@ -217,34 +186,19 @@ final class ComicArchive {
                 while((entry=seven.getNextEntry())!=null){
                     if(!path.equals(entry.getName()))continue;
                     if(entry.isDirectory())throw new IOException("페이지가 폴더입니다.");
-                    if(entry.getSize()>MAX_PAGE_BYTES)throw new IOException("이미지 크기 제한 초과");
+                    if(entry.getSize()>MAX_PAGE_BYTES)throw new IOException(L10n.t("이미지 크기 제한 초과"));
                     try(OutputStream dst=new BufferedOutputStream(new FileOutputStream(output))){
                         long count=0;byte[] block=new byte[65536];int len;
                         while((len=seven.read(block))!=-1){
                             count+=len;
-                            if(count>MAX_PAGE_BYTES)throw new IOException("이미지 크기 제한 초과");
+                            if(count>MAX_PAGE_BYTES)throw new IOException(L10n.t("이미지 크기 제한 초과"));
                             dst.write(block,0,len);
                         }
                     }catch(Exception e){output.delete();throw e;}
                     return;
                 }
-                throw new IOException("페이지가 압축파일 안에 없습니다.");
+                throw new IOException(L10n.t("페이지가 압축파일 안에 없습니다."));
             }
-        }else if(type.endsWith(".rar")||type.endsWith(".cbr")){
-            try(Archive rar=new Archive(archive)){
-                FileHeader header;
-                while((header=rar.nextFileHeader())!=null){
-                    if(!path.equals(header.getFileName()))continue;
-                    if(header.getUnpSize()>MAX_PAGE_BYTES)
-                        throw new IOException("이미지 크기 제한 초과");
-                    try(InputStream in=rar.getInputStream(header)){
-                        if(in==null)throw new IOException("RAR 이미지 읽기 실패");
-                        bounded(in,output);
-                    }
-                    return;
-                }
-                throw new IOException("페이지가 압축파일 안에 없습니다.");
-            }
-        }else throw new IOException("지원되지 않는 압축 형식입니다.");
+        }else throw new IOException(L10n.t("지원되지 않는 압축 형식입니다."));
     }
 }
