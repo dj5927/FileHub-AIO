@@ -1,0 +1,101 @@
+// Generate offline notices for each edition from exact resolved runtime artifacts.
+// Preserve upstream notice text without inventing license terms.
+['direct','play'].each { edition ->
+    def dest = layout.buildDirectory.dir('generated/filehubNotices/'+edition)
+    def cap = edition.capitalize()
+    def runtime = providers.provider { configurations.getByName(edition+'ReleaseRuntimeClasspath') }
+    def noticeTask = tasks.register('collect'+cap+'LicenseNotices') {
+        inputs.files(runtime)
+        inputs.file(rootProject.file('LICENSE'))
+        inputs.dir(rootProject.file('THIRD_PARTY_LICENSES'))
+        inputs.file(file('src/main/assets/office_hwp/THIRD_PARTY_LICENSES.md'))
+        outputs.dir(dest)
+        doLast {
+            def out = dest.get().asFile
+            delete out
+            def folder = new File(out,'licenses')
+            folder.mkdirs()
+            def copyNotice = { File source, String name ->
+                if(source.isFile()) java.nio.file.Files.copy(source.toPath(),
+                        new File(folder,name).toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            }
+            copyNotice(rootProject.file('LICENSE'),'00-FileHub-GPL-3.0.txt')
+            copyNotice(file('src/main/assets/office_hwp/THIRD_PARTY_LICENSES.md'),'01-rhwp-Third-Party-Licenses.md')
+            rootProject.file('THIRD_PARTY_LICENSES').listFiles().sort{it.name}.each { source ->
+                if(!source.isFile())return
+                if(source.name=='ARCHIVE_LIBRARIES_NOTICE_KR.md' || source.name.startsWith('zxing_core_'))return
+                if(edition=='play' && source.name.startsWith('NextLib'))return
+                copyNotice(source,'web-'+source.name)
+            }
+            def index = new StringBuilder("FileHub AIO "+edition+"\n\n")
+            index.append("Runtime dependencies resolved for this edition.\n")
+            index.append("Original license/notice files found in the artifacts are copied below.\n")
+            index.append("No embedded notice does not mean no license; consult the upstream project and its corresponding source.\n\n")
+            index.append("Source repository: https://github.com/dj5927/FileHub-AIO/tree/android/play\n\n")
+            def collectZip
+            collectZip = { java.io.InputStream stream, String prefix, Map notices, boolean nested ->
+                new java.util.zip.ZipInputStream(stream).withCloseable { zip ->
+                    java.util.zip.ZipEntry entry
+                    byte[] buf=new byte[8192]
+                    while((entry=zip.nextEntry)!=null){
+                        String name=entry.name
+                        if(!entry.directory && name ==~ /(?i)(?:.*\/)?(?:LICENSE|LICENCE|NOTICE|COPYING|COPYRIGHT)(?:[-_.].*)?/){
+                            ByteArrayOutputStream bytes=new ByteArrayOutputStream()
+                            int n
+                            while((n=zip.read(buf))>0){
+                                if(bytes.size()+n>4*1024*1024)throw new GradleException("Oversize notice in "+prefix)
+                                bytes.write(buf,0,n)
+                            }
+                            if(bytes.size()>0)notices[prefix+name]=bytes.toByteArray()
+                        }else if(nested && !entry.directory && (name=='classes.jar'||name.startsWith('libs/')&&name.endsWith('.jar'))){
+                            ByteArrayOutputStream jar=new ByteArrayOutputStream()
+                            int n
+                            while((n=zip.read(buf))>0){
+                                if(jar.size()+n>64*1024*1024)throw new GradleException("Oversize nested jar")
+                                jar.write(buf,0,n)
+                            }
+                            collectZip(new ByteArrayInputStream(jar.toByteArray()),prefix+name+'!/',notices,false)
+                        }
+                        zip.closeEntry()
+                    }
+                }
+            }
+            runtime.get().resolvedConfiguration.resolvedArtifacts.sort{
+                it.moduleVersion.id.toString()+':'+it.name
+            }.each { artifact ->
+                String id=artifact.moduleVersion.id.toString()
+                Map notices=new TreeMap()
+                if(artifact.file.name.endsWith('.aar')||artifact.file.name.endsWith('.jar')){
+                    artifact.file.withInputStream{ stream->collectZip(stream,'',notices,true) }
+                }
+                index.append(id).append(" | ").append(artifact.file.name)
+                        .append(" | embedded notice files: ").append(notices.size()).append("\n")
+                if(!notices.isEmpty()){
+                    def name=id.replaceAll(/[^A-Za-z0-9._-]/,'_')+'-notices.txt'
+                    def target=new File(folder,name)
+                    target.withOutputStream { sink ->
+                        notices.each{ path,bytes ->
+                            sink.write(("===== "+path+" =====\n").getBytes('UTF-8'))
+                            sink.write(bytes)
+                            sink.write("\n\n".getBytes('UTF-8'))
+                        }
+                    }
+                }
+            }
+            if(edition=='play'){
+                index.append("\nGoogle Play Billing, Mobile Ads and UMP are subject to their own Google SDK terms.\n")
+                index.append("https://developers.google.com/admob/android/terms\nhttps://developer.android.com/google/play/billing\n")
+            }else{
+                index.append("\nDirect edition includes NextLib and Junrar; see their original license notices and upstream source.\n")
+            }
+            new File(folder,'02-Dependency-inventory.txt').setText(index.toString(),'UTF-8')
+            println "FILEHUB_LICENSE_NOTICES "+edition+": "+folder.listFiles().length+" files"
+        }
+    }
+    android.sourceSets.getByName(edition).assets.srcDir(dest.get().asFile)
+    tasks.matching { it.name in ['pre'+cap+'DebugBuild','pre'+cap+'ReleaseBuild',
+            'merge'+cap+'DebugAssets','merge'+cap+'ReleaseAssets'] ||
+            (it.name.contains(cap) && it.name.toLowerCase(java.util.Locale.ROOT).contains('lint')) }.configureEach {
+        dependsOn noticeTask
+    }
+}

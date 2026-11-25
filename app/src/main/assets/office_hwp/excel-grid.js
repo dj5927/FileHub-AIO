@@ -1,3 +1,4 @@
+import { t } from '/office-locale.js';
 /**
  * Continuous two-dimensional, single-finger spreadsheet scrolling.
  * Pixel-coordinate virtualization means even 100k rows use a few hundred DOM
@@ -282,7 +283,7 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
          box.x+box.w<viewport.left || box.y+box.h<viewport.top)continue;
       const img=document.createElement('img');
       img.className='excel-drawing-image';
-      img.alt='엑셀 삽입 이미지';
+      img.alt=t('엑셀 삽입 이미지');
       img.draggable=false;
       img.src=pic.src;
       img.style.cssText='left:'+box.x+'px;top:'+box.y+'px;width:'+

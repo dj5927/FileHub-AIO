@@ -57,13 +57,13 @@ final class SettingsBackupUi {
                 Ui.dp(activity,16),Ui.dp(activity,10));
         scroll.addView(content);
         TextView help=Ui.text(activity,
-                "같은 네트워크에서 자동 검색 또는 QR 스캔으로 설정을 전송합니다.",
+                L10n.t("같은 네트워크에서 자동 검색 또는 QR 스캔으로 설정을 전송합니다."),
                 13,Ui.MUTED,false);
         content.addView(help,Ui.lp(activity,-1,-2));
         Ui.gap(content,activity,15);
 
         AlertDialog dialog=new AlertDialog.Builder(activity)
-                .setTitle("설정 이동 및 백업")
+                .setTitle(L10n.t("설정 이동 및 백업"))
                 .setView(scroll)
                 .setNegativeButton(L10n.t("닫기"),null).create();
 
@@ -137,7 +137,7 @@ final class SettingsBackupUi {
             panel.setPadding(Ui.dp(activity,14),Ui.dp(activity,8),
                     Ui.dp(activity,14),Ui.dp(activity,12));
             panel.addView(Ui.text(activity,
-                    "같은 Wi-Fi에 연결된 휴대폰에서 'QR로 전송하기'를 누른 뒤 이 코드를 스캔하세요.\n" +
+                    L10n.t("같은 Wi-Fi에 연결된 휴대폰에서 'QR로 전송하기'를 누른 뒤 이 코드를 스캔하세요.\n") +
                     "설정은 암호화되며 TV에서 병합·교체를 승인해야 저장됩니다.\n2분간 유효합니다.",
                     13,Ui.TEXT,false),Ui.lp(activity,-1,-2));
             Ui.gap(panel,activity,12);
@@ -151,12 +151,12 @@ final class SettingsBackupUi {
             panel.addView(image,lp);
             Ui.gap(panel,activity,8);
             TextView label=Ui.text(activity,
-                    "같은 내부망 전용 · 별도 서버 불필요",
+                    L10n.t("같은 내부망 전용 · 별도 서버 불필요"),
                     13,Ui.TEAL,true);
             label.setGravity(Gravity.CENTER);
             panel.addView(label,Ui.lp(activity,-1,-2));
             AlertDialog display=new AlertDialog.Builder(activity)
-                    .setTitle("LAN QR · 설정 받기")
+                    .setTitle(L10n.t("LAN QR · 설정 받기"))
                     .setView(panel)
                     .setNegativeButton(L10n.t("닫기"),(d,w)->stopLanQrReceive())
                     .create();
@@ -327,12 +327,12 @@ final class SettingsBackupUi {
                 if(lanDialog!=null && lanDialog.isShowing())lanDialog.dismiss();
             }));
             AlertDialog dialog=new AlertDialog.Builder(activity)
-                    .setTitle("설정 가져오기 대기 중")
-                    .setMessage("같은 Wi-Fi의 다른 FileHub에서 '설정 내보내기'를 선택하세요.\n\n"+
+                    .setTitle(L10n.t("설정 가져오기 대기 중"))
+                    .setMessage(L10n.t("같은 Wi-Fi의 다른 FileHub에서 '설정 내보내기'를 선택하세요.\n\n")+
                             "TV 또는 휴대폰이 자동으로 검색됩니다.\n"+
                             "2분 동안 대기하며, 수신 후 병합·교체를 직접 승인합니다.\n"+
                             "계정과 비밀번호를 포함하므로 신뢰하는 개인 네트워크에서만 사용하세요.")
-                    .setNegativeButton("수신 취소",null).create();
+                    .setNegativeButton(L10n.t("수신 취소"),null).create();
             lanDialog=dialog;
             LanSettingsTransfer.Receiver active=lanReceiver;
             dialog.setOnDismissListener(d->{
@@ -348,11 +348,11 @@ final class SettingsBackupUi {
         closeLan();
         final int currentSession=lanSession;
         AlertDialog dialog=new AlertDialog.Builder(activity)
-                .setTitle("설정 내보내기 · 기기 검색 중")
-                .setMessage("같은 네트워크에서 '설정 가져오기 대기' 중인 FileHub를 찾고 있습니다.\n"+
+                .setTitle(L10n.t("설정 내보내기 · 기기 검색 중"))
+                .setMessage(L10n.t("같은 네트워크에서 '설정 가져오기 대기' 중인 FileHub를 찾고 있습니다.\n")+
                             "대상 기기는 1대면 자동 연결, 여러 대면 선택합니다.\n\n"+
                             "개인 Wi-Fi에서만 사용하고, 받는 기기에서 최종 승인을 확인하세요.")
-                .setNegativeButton("검색 취소",null).create();
+                .setNegativeButton(L10n.t("검색 취소"),null).create();
         lanDialog=dialog;
         lanDiscovery=new LanSettingsTransfer.Discovery(devices ->
                 activity.runOnUiThread(()->{
@@ -369,7 +369,7 @@ final class SettingsBackupUi {
                     String[] names=new String[devices.size()];
                     for(int i=0;i<devices.size();i++)names[i]=devices.get(i).label();
                     new AlertDialog.Builder(activity)
-                            .setTitle("가져올 기기 선택")
+                            .setTitle(L10n.t("가져올 기기 선택"))
                             .setItems(names,(d,index)->confirmLanRecipient(devices.get(index)))
                             .setNegativeButton(L10n.t("취소"),null).show();
                 }));
@@ -385,8 +385,8 @@ final class SettingsBackupUi {
     private void confirmLanRecipient(LanSettingsTransfer.Offer device) {
         // Unauthenticated LAN discovery must not send credentials silently.
         new AlertDialog.Builder(activity)
-                .setTitle("이 기기로 설정을 보낼까요?")
-                .setMessage("발견된 기기: " + device.label() + "\n\n"+
+                .setTitle(L10n.t("이 기기로 설정을 보낼까요?"))
+                .setMessage(L10n.t("발견된 기기: ") + device.label() + "\n\n"+
                         "NAS 비밀번호와 클라우드 토큰이 포함될 수 있습니다. " +
                         "본인의 TV/휴대폰인지 확인해 주세요.\n\n"+
                         "기기 탐색과 연결은 자동으로 처리됩니다.")
@@ -399,8 +399,8 @@ final class SettingsBackupUi {
         if(busy)return;
         busy=true;
         AlertDialog sending=new AlertDialog.Builder(activity)
-                .setTitle("설정 자동 전송 중")
-                .setMessage("대상: " + device.label()+"\n\n"+
+                .setTitle(L10n.t("설정 자동 전송 중"))
+                .setMessage(L10n.t("대상: ") + device.label()+"\n\n"+
                         "네트워크 연결·즐겨찾기·재생·독서 설정을 암호화해 전송하고 있습니다.")
                 .setCancelable(false).create();
         sending.show();
@@ -433,7 +433,7 @@ final class SettingsBackupUi {
         input.setInputType(InputType.TYPE_CLASS_TEXT|
                 InputType.TYPE_TEXT_VARIATION_PASSWORD);
         input.setSingleLine(true);
-        input.setHint("8자 이상 별도 백업 비밀번호");
+        input.setHint(L10n.t("8자 이상 별도 백업 비밀번호"));
         input.setPadding(Ui.dp(activity,18),Ui.dp(activity,8),
                 Ui.dp(activity,18),Ui.dp(activity,8));
         return input;
@@ -442,7 +442,7 @@ final class SettingsBackupUi {
     private void askExportPassword() {
         LinearLayout layout=Ui.vertical(activity);
         TextView description=Ui.text(activity,
-                "NAS 비밀번호·클라우드 토큰·즐겨찾기·콘텐츠 폴더·재생·독서 설정을 " +
+                L10n.t("NAS 비밀번호·클라우드 토큰·즐겨찾기·콘텐츠 폴더·재생·독서 설정을 ") +
                 "AES-256으로 암호화해 저장합니다.\n백업 비밀번호를 잃어버리면 복원할 수 없습니다.",
                 13,Ui.TEXT,false);
         layout.setPadding(Ui.dp(activity,16),Ui.dp(activity,12),Ui.dp(activity,16),0);
@@ -450,10 +450,10 @@ final class SettingsBackupUi {
         EditText password=passwordInput();
         layout.addView(password,Ui.lp(activity,-1,60));
         EditText again=passwordInput();
-        again.setHint("백업 비밀번호 다시 입력");
+        again.setHint(L10n.t("백업 비밀번호 다시 입력"));
         layout.addView(again,Ui.lp(activity,-1,60));
         AlertDialog dialog=new AlertDialog.Builder(activity)
-                .setTitle("암호화 설정 백업")
+                .setTitle(L10n.t("암호화 설정 백업"))
                 .setView(layout)
                 .setNegativeButton(L10n.t("취소"),null)
                 .setPositiveButton(L10n.t("내보낼 위치 선택"),null).create();
@@ -538,13 +538,13 @@ final class SettingsBackupUi {
         LinearLayout box=Ui.vertical(activity);
         box.setPadding(Ui.dp(activity,16),Ui.dp(activity,12),Ui.dp(activity,16),0);
         box.addView(Ui.text(activity,
-                "내보낼 때 설정한 비밀번호를 입력해 주세요. " +
+                L10n.t("내보낼 때 설정한 비밀번호를 입력해 주세요. ") +
                 "내용 확인 후 기존 설정과 병합하거나 교체할 수 있습니다.",
                 13,Ui.TEXT,false),Ui.lp(activity,-1,-2));
         box.addView(pass,Ui.lp(activity,-1,65));
-        new AlertDialog.Builder(activity).setTitle("설정 백업 열기")
+        new AlertDialog.Builder(activity).setTitle(L10n.t("설정 백업 열기"))
                 .setView(box).setNegativeButton(L10n.t("취소"),null)
-                .setPositiveButton("파일 확인",(d,w)->{
+                .setPositiveButton(L10n.t("파일 확인"),(d,w)->{
                     char[] password=pass.getText().toString().toCharArray();
                     doImportPreview(uri,password);
                 }).show();
@@ -591,25 +591,25 @@ final class SettingsBackupUi {
         int remoteCount=snapshot.optJSONArray("remotes").length();
         int favoriteCount=snapshot.optJSONArray("favorites").length();
         new AlertDialog.Builder(activity)
-                .setTitle("설정 가져오기 · 내용 확인")
-                .setMessage("원격 연결 " + remoteCount + "개, 즐겨찾기 " + favoriteCount+
+                .setTitle(L10n.t("설정 가져오기 · 내용 확인"))
+                .setMessage(L10n.t("원격 연결 ") + remoteCount + "개, 즐겨찾기 " + favoriteCount+
                         "개 및 동영상·만화책·소설책·사용자 설정을 복원합니다.\n\n" +
                         "기기별 SD카드 접근 권한이나 코덱 파일은 별도로 지정해야 합니다.\n\n" +
                         "병합: 기존 연결을 유지하고 가져온 설정을 반영\n" +
                         "교체: 기존 연결·즐겨찾기·대상 설정을 새 백업으로 변경")
                 .setNegativeButton(L10n.t("취소"),null)
-                .setNeutralButton("병합",(d,w)->confirmRestore(snapshot,false))
+                .setNeutralButton(L10n.t("병합"),(d,w)->confirmRestore(snapshot,false))
                 .setPositiveButton(L10n.t("전체 교체"),(d,w)->confirmRestore(snapshot,true))
                 .show();
     }
 
     private void confirmRestore(JSONObject snapshot,boolean replace) {
         if(replace) {
-            new AlertDialog.Builder(activity).setTitle("전체 설정을 교체할까요?")
-                    .setMessage("현재 TV/휴대폰의 연결 및 설정이 백업 내용으로 교체됩니다. " +
+            new AlertDialog.Builder(activity).setTitle(L10n.t("전체 설정을 교체할까요?"))
+                    .setMessage(L10n.t("현재 TV/휴대폰의 연결 및 설정이 백업 내용으로 교체됩니다. ") +
                             "필요하면 현재 설정을 먼저 내보내세요.")
                     .setNegativeButton(L10n.t("취소"),null)
-                    .setPositiveButton("교체 실행",(d,w)->restore(snapshot,true)).show();
+                    .setPositiveButton(L10n.t("교체 실행"),(d,w)->restore(snapshot,true)).show();
         }else restore(snapshot,false);
     }
 
@@ -646,7 +646,7 @@ final class SettingsBackupUi {
 
     private void alert(String text){
         if(activity.isFinishing() || activity.isDestroyed())return;
-        new AlertDialog.Builder(activity).setTitle("FileHub 설정 백업")
+        new AlertDialog.Builder(activity).setTitle(L10n.t("FileHub 설정 백업"))
                 .setMessage(text).setPositiveButton(L10n.t("확인"),null).show();
     }
 }

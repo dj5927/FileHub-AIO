@@ -85,7 +85,7 @@ final class OtaUpdater {
                 if(result!=null && OtaReleasePolicy.isNewer(result,installedVersion())) {
                     available=result;
                     if(userRequested)showRelease(result);
-                    else Toast.makeText(activity,"FileHub 새 업데이트 있음 · v"+
+                    else Toast.makeText(activity,L10n.t("FileHub 새 업데이트 있음 · v")+
                             result.version,Toast.LENGTH_SHORT).show();
                 }else if(userRequested) {
                     Toast.makeText(activity,failure==null ?
@@ -113,7 +113,7 @@ final class OtaUpdater {
                         "\n\n다운로드 크기: "+String.format(Locale.KOREA,"%.1f MB",
                         release.size/1_000_000d))
                 .setNegativeButton(L10n.t("나중에"),null)
-                .setPositiveButton("다운로드 및 설치",(d,w)->download(release))
+                .setPositiveButton(L10n.t("다운로드 및 설치"),(d,w)->download(release))
                 .show();
     }
 
@@ -121,8 +121,8 @@ final class OtaUpdater {
         if(busy || closed)return;
         busy=true;
         ProgressDialog progress=new ProgressDialog(activity);
-        progress.setTitle("FileHub 업데이트 다운로드");
-        progress.setMessage("검증 가능한 APK를 받는 중...");
+        progress.setTitle(L10n.t("FileHub 업데이트 다운로드"));
+        progress.setMessage(L10n.t("검증 가능한 APK를 받는 중..."));
         progress.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
         progress.setMax(100);
         progress.setCancelable(false);
@@ -180,8 +180,8 @@ final class OtaUpdater {
                 progress.dismiss();
                 if(closed || activity.isFinishing() || activity.isDestroyed())return;
                 if(failure!=null){
-                    new AlertDialog.Builder(activity).setTitle("업데이트 실패")
-                            .setMessage("다운로드 또는 APK 검증에 실패했습니다. 다시 시도해 주세요.")
+                    new AlertDialog.Builder(activity).setTitle(L10n.t("업데이트 실패"))
+                            .setMessage(L10n.t("다운로드 또는 APK 검증에 실패했습니다. 다시 시도해 주세요."))
                             .setPositiveButton(L10n.t("확인"),null).show();
                 }else{
                     verifiedApk=completed;
@@ -219,8 +219,8 @@ final class OtaUpdater {
         try{
             if(Build.VERSION.SDK_INT>=26 &&
                     !activity.getPackageManager().canRequestPackageInstalls()){
-                new AlertDialog.Builder(activity).setTitle("APK 설치 허용 필요")
-                        .setMessage("FileHub에서 다운로드한 업데이트를 설치하려면 " +
+                new AlertDialog.Builder(activity).setTitle(L10n.t("APK 설치 허용 필요"))
+                        .setMessage(L10n.t("FileHub에서 다운로드한 업데이트를 설치하려면 ") +
                                 "이 출처의 앱 설치를 허용해야 합니다. 허용 후 메뉴에서 업데이트를 다시 선택하세요.")
                         .setNegativeButton(L10n.t("취소"),null)
                         .setPositiveButton(L10n.t("설정 열기"),(d,w)->{
@@ -237,8 +237,8 @@ final class OtaUpdater {
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             activity.startActivity(intent);
         }catch(Exception e){
-            new AlertDialog.Builder(activity).setTitle("설치 화면 실행 실패")
-                    .setMessage("APK 다운로드는 완료됐으나 설치 화면을 열지 못했습니다.")
+            new AlertDialog.Builder(activity).setTitle(L10n.t("설치 화면 실행 실패"))
+                    .setMessage(L10n.t("APK 다운로드는 완료됐으나 설치 화면을 열지 못했습니다."))
                     .setPositiveButton(L10n.t("확인"),null).show();
         }
     }

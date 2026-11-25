@@ -28,7 +28,7 @@ final class ReaderQuickSeek {
         slider.setProgress(Math.max(0,Math.min(1000,currentPermille)));
         sheet.addView(slider,Ui.lp(activity,-1,62));
         TextView instruction=Ui.text(activity,
-                "슬라이더를 좌우로 움직이면 책 전체 0~100% 위치를 선택합니다."+
+                L10n.t("슬라이더를 좌우로 움직이면 책 전체 0~100% 위치를 선택합니다.")+
                 "\n'이동'을 누르면 그 위치로 이동하고 '취소'는 현재 위치를 유지합니다.",
                 12,Ui.MUTED,false);
         instruction.setGravity(Gravity.CENTER);

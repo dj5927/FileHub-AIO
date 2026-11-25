@@ -37,7 +37,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /** Full-screen, offline archive comic reader; never unpacks the whole book. */
-public final class ComicBookActivity extends Activity {
+public final class ComicBookActivity extends LocalizedActivity {
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final Handler main=new Handler(Looper.getMainLooper());
     private LinearLayout column,top,bottom;
@@ -130,7 +130,7 @@ public final class ComicBookActivity extends Activity {
         stage.addView(picture,new FrameLayout.LayoutParams(-1,-1));
         pageTransitions=new ReaderPageTransitions(this,stage,picture);
         pageTransitions.configure(turnStyle,slowTurn,Color.WHITE);
-        status=Ui.text(this,"만화책 여는 중...",13,0xFFBBBBBB,false);
+        status=Ui.text(this,L10n.t("만화책 여는 중..."),13,0xFFBBBBBB,false);
         status.setGravity(Gravity.CENTER);
         FrameLayout.LayoutParams sp=new FrameLayout.LayoutParams(-1,dp(38),Gravity.CENTER);
         stage.addView(status,sp);
@@ -144,7 +144,7 @@ public final class ComicBookActivity extends Activity {
         previous.setOnClickListener(v->move(-1));
         pageLabel=Ui.text(this,"0 / 0",14,Color.WHITE,true);
         pageLabel.setGravity(Gravity.CENTER);
-        pageLabel.setContentDescription("만화책 전체 쪽수와 진행률. 터치하면 0~100% 빠른 이동");
+        pageLabel.setContentDescription(L10n.t("만화책 전체 쪽수와 진행률. 터치하면 0~100% 빠른 이동"));
         pageLabel.setOnClickListener(v->showQuickSeek());
         actions.addView(pageLabel,new LinearLayout.LayoutParams(0,-1,1));
         TextView next=button("〉",24);
@@ -231,7 +231,7 @@ public final class ComicBookActivity extends Activity {
                     openPage(Math.max(0,Math.min(logicalPages.size()-1,saved)));
                 });
             }catch(Exception error){
-                main.post(()->showError("만화책을 열지 못했습니다: "+error.getMessage()));
+                main.post(()->showError(L10n.t("만화책을 열지 못했습니다: ")+error.getMessage()));
             }
         });
     }
@@ -321,7 +321,7 @@ public final class ComicBookActivity extends Activity {
         final boolean spread=spreadEnabled();
         if(pageTransitions.busy())status.setVisibility(View.GONE);
         else{
-            status.setText("페이지 불러오는 중...");
+            status.setText(L10n.t("페이지 불러오는 중..."));
             status.setVisibility(View.VISIBLE);
         }
         worker.execute(()->{
@@ -351,7 +351,7 @@ public final class ComicBookActivity extends Activity {
             }catch(Exception error){
                 main.post(()->{
                     if(generation==requestGeneration)
-                        showError("페이지를 표시하지 못했습니다: "+error.getMessage());
+                        showError(L10n.t("페이지를 표시하지 못했습니다: ")+error.getMessage());
                 });
             }
         });
@@ -382,7 +382,7 @@ public final class ComicBookActivity extends Activity {
     }
     private void showQuickSeek(){
         if(logicalPages==null||logicalPages.isEmpty()||pageTransitions.busy()){
-            Toast.makeText(this,"만화책 페이지를 준비한 뒤 이동할 수 있습니다.",
+            Toast.makeText(this,L10n.t("만화책 페이지를 준비한 뒤 이동할 수 있습니다."),
                     Toast.LENGTH_SHORT).show();
             return;
         }
@@ -473,16 +473,16 @@ public final class ComicBookActivity extends Activity {
         BookSeriesQueue.Volume following=BookSeriesQueue.next(
                 volumeQueue,fileName,currentLocation);
         if(following==null){
-            Toast.makeText(this,"마지막 페이지입니다.",
+            Toast.makeText(this,L10n.t("마지막 페이지입니다."),
                     Toast.LENGTH_SHORT).show();
             return;
         }
         endPromptVisible=true;
-        new AlertDialog.Builder(this).setTitle("다음 만화책 이어 보기")
-                .setMessage("현재 권을 끝까지 읽었습니다.\n\n"+
+        new AlertDialog.Builder(this).setTitle(L10n.t("다음 만화책 이어 보기"))
+                .setMessage(L10n.t("현재 권을 끝까지 읽었습니다.\n\n")+
                         following.name+"\n\n다음 권을 바로 열까요?")
                 .setNegativeButton(L10n.t("아니요"),(dialog,which)->endPromptVisible=false)
-                .setPositiveButton("다음 권 보기",(dialog,which)->{
+                .setPositiveButton(L10n.t("다음 권 보기"),(dialog,which)->{
                     android.content.Intent next=BookSeriesQueue.nextIntent(
                             getIntent(),following);
                     next.setClass(this,ComicBookActivity.class);
@@ -507,13 +507,13 @@ public final class ComicBookActivity extends Activity {
     private void showOptions(){
         LinearLayout form=Ui.vertical(this);
         form.setPadding(dp(20),dp(5),dp(20),0);
-        TextView direction=Ui.text(this,"읽는 방향",14,Ui.TEXT,true);
+        TextView direction=Ui.text(this,L10n.t("읽는 방향"),14,Ui.TEXT,true);
         form.addView(direction,Ui.lp(this,-1,28));
         RadioGroup read=new RadioGroup(this);
         RadioButton korean=new RadioButton(this);
-        korean.setText("한국식 · 왼쪽에서 오른쪽으로 넘기기");
+        korean.setText(L10n.t("한국식 · 왼쪽에서 오른쪽으로 넘기기"));
         RadioButton japanese=new RadioButton(this);
-        japanese.setText("일본식 · 오른쪽에서 왼쪽으로 넘기기");
+        japanese.setText(L10n.t("일본식 · 오른쪽에서 왼쪽으로 넘기기"));
         korean.setId(View.generateViewId());japanese.setId(View.generateViewId());
         read.addView(korean);read.addView(japanese);
         read.check(rtl?japanese.getId():korean.getId());
@@ -525,35 +525,35 @@ public final class ComicBookActivity extends Activity {
                 "밝기 · -100~+100",-100,100,brightness,
                 ReaderNumericSlider::brightness);
         CheckBox grayscale=new CheckBox(this);
-        grayscale.setText("흑백 모드");grayscale.setChecked(gray);
+        grayscale.setText(L10n.t("흑백 모드"));grayscale.setChecked(gray);
         form.addView(grayscale);
         CheckBox width=new CheckBox(this);
-        width.setText("가로 폭 맞춤 (기본: 페이지 전체 맞춤)");
+        width.setText(L10n.t("가로 폭 맞춤 (기본: 페이지 전체 맞춤)"));
         width.setChecked(fitWidth);
         form.addView(width);
         CheckBox spreadMode=new CheckBox(this);
-        spreadMode.setText("폴드 펼침 화면에서 두 페이지 펼쳐 보기");
+        spreadMode.setText(L10n.t("폴드 펼침 화면에서 두 페이지 펼쳐 보기"));
         spreadMode.setChecked(twoPage);
         form.addView(spreadMode);
         form.addView(Ui.text(this,L10n.t("좌우 합본 이미지 자동 분할"),14,Ui.TEXT,true));
         Spinner splitting=new Spinner(this);
         splitting.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
-                new String[]{"자동 감지 (권장)","분할하지 않음","민감하게 감지"}));
+                L10n.labels(new String[]{"자동 감지 (권장)","분할하지 않음","민감하게 감지"})));
         splitting.setSelection(Math.max(0,Math.min(2,splitMode)));
         form.addView(splitting,Ui.lp(this,-1,48));
         form.addView(Ui.text(this,L10n.t("책 넘김 효과"),14,Ui.TEXT,true));
         Spinner turn=new Spinner(this);
         turn.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
-                ReaderTurnPreferences.STYLES));
+                L10n.labels(ReaderTurnPreferences.STYLES)));
         turn.setSelection(ReaderTurnPreferences.toIndex(turnStyle));
         form.addView(turn,Ui.lp(this,-1,48));
         form.addView(Ui.text(this,L10n.t("페이지 넘김 속도"),14,Ui.TEXT,true));
         Spinner speed=new Spinner(this);
         speed.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
-                ReaderTurnPreferences.SPEEDS));
+                L10n.labels(ReaderTurnPreferences.SPEEDS)));
         speed.setSelection(slowTurn?1:0);
         form.addView(speed,Ui.lp(this,-1,48));
         ScrollView optionsScroll=new ScrollView(this);

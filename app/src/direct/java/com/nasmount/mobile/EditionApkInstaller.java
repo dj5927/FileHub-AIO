@@ -27,7 +27,7 @@ final class EditionApkInstaller {
         if (pendingApkInstall != null) {
             if (a.getPackageManager().canRequestPackageInstalls())
                 launchSystemApkInstaller(pendingApkInstall);
-            else { pendingApkInstall=null; a.toast("APK 설치 권한이 허용되지 않아 취소했습니다."); }
+            else { pendingApkInstall=null; a.toast(L10n.t("APK 설치 권한이 허용되지 않아 취소했습니다.")); }
         }
         return true;
     }
@@ -41,13 +41,13 @@ final class EditionApkInstaller {
             android.content.pm.PackageInfo pkg =
                     a.getPackageManager().getPackageArchiveInfo(staged.getAbsolutePath(), 0);
             if (pkg == null || pkg.packageName == null || pkg.packageName.isEmpty()) {
-                a.showError("Android 패키지 정보를 확인할 수 없습니다. " +
+                a.showError(L10n.t("Android 패키지 정보를 확인할 수 없습니다. ") +
                         "단독 APK 설치 파일인지 확인해 주세요.");
                 return;
             }
             new AlertDialog.Builder(a)
                     .setTitle(L10n.t("APK 설치"))
-                    .setMessage("파일: " + name +
+                    .setMessage(L10n.t("파일: ") + name +
                             "\n패키지: " + pkg.packageName +
                             "\n버전: " + pkg.versionName +
                             "\n크기: " + android.text.format.Formatter.formatFileSize(
@@ -65,8 +65,8 @@ final class EditionApkInstaller {
         pendingApkInstall = staged;
         if (!a.getPackageManager().canRequestPackageInstalls()) {
             new AlertDialog.Builder(a)
-                    .setTitle("NAS Mount의 APK 설치 권한")
-                    .setMessage("Android 설정에서 '이 출처의 앱 허용'을 켜야 " +
+                    .setTitle(L10n.t("NAS Mount의 APK 설치 권한"))
+                    .setMessage(L10n.t("Android 설정에서 '이 출처의 앱 허용'을 켜야 ") +
                             "APK 설치 화면을 열 수 있습니다. 설정에서 돌아오면 계속합니다.")
                     .setNegativeButton(L10n.t("취소"), (d, w) -> pendingApkInstall = null)
                     .setPositiveButton(L10n.t("설정 열기"), (d, w) -> {
@@ -76,7 +76,7 @@ final class EditionApkInstaller {
                                     Uri.parse("package:" + a.getPackageName()));
                             a.startActivityForResult(settings, REQ_APK_INSTALL_AUTH);
                         } catch (ActivityNotFoundException unavailable) {
-                            a.showError("이 기기의 앱 설치 허용 화면을 열 수 없습니다.");
+                            a.showError(L10n.t("이 기기의 앱 설치 허용 화면을 열 수 없습니다."));
                         }
                     }).show();
             return;
@@ -87,7 +87,7 @@ final class EditionApkInstaller {
     private void launchSystemApkInstaller(File staged) {
         if (staged == null || !staged.isFile()) {
             pendingApkInstall = null;
-            a.showError("APK 파일이 사라졌습니다. 다시 선택해 주세요.");
+            a.showError(L10n.t("APK 파일이 사라졌습니다. 다시 선택해 주세요."));
             return;
         }
         try {
@@ -107,9 +107,9 @@ final class EditionApkInstaller {
             }
             pendingApkInstall = null;
         } catch (ActivityNotFoundException missing) {
-            a.showError("시스템 패키지 설치 관리자를 찾지 못했습니다.");
+            a.showError(L10n.t("시스템 패키지 설치 관리자를 찾지 못했습니다."));
         } catch (Exception failure) {
-            a.showError("APK 설치 준비 오류: " + a.safeError(failure));
+            a.showError(L10n.t("APK 설치 준비 오류: ") + a.safeError(failure));
         }
     }
 

@@ -34,7 +34,7 @@ import java.util.concurrent.Executors;
  * User edits a private staged copy exposed through write-granted content URI.
  * The remote original is touched only on explicit "NAS에 저장".
  */
-public final class OfficeBridgeActivity extends Activity {
+public final class OfficeBridgeActivity extends LocalizedActivity {
     static final String EXTRA_KIND = "office_kind";
     static final String EXTRA_NAME = "office_name";
     static final String EXTRA_PATH = "office_path";
@@ -87,16 +87,16 @@ public final class OfficeBridgeActivity extends Activity {
         TextView title = Ui.text(this, filename, 19, Ui.TEXT, true);
         title.setMaxLines(2);
         vertical.addView(title, Ui.lp(this, -1, 78));
-        status = Ui.text(this, "편집할 파일을 안전한 임시 공간으로 복사하는 중...", 15,
+        status = Ui.text(this, L10n.t("편집할 파일을 안전한 임시 공간으로 복사하는 중..."), 15,
                 Ui.TEXT, false);
         status.setPadding(dp(5), dp(12), dp(5), dp(12));
         vertical.addView(status, Ui.lp(this, -1, 160));
-        editButton = action("1. 문서 편집기 열기", vertical, this::launchEditor);
-        saveButton = action("2. 변경 내용을 원본에 저장", vertical, this::commitChanges);
-        action("호환 편집기 설치 안내", vertical, this::showEditorInstructions);
+        editButton = action(L10n.t("1. 문서 편집기 열기"), vertical, this::launchEditor);
+        saveButton = action(L10n.t("2. 변경 내용을 원본에 저장"), vertical, this::commitChanges);
+        action(L10n.t("호환 편집기 설치 안내"), vertical, this::showEditorInstructions);
         action(L10n.t("닫기"), vertical, this::confirmClose);
         TextView note = Ui.text(this,
-                "엑셀: LibreOffice 기반 Collabora Office 등 설치된 호환 편집기 사용\n" +
+                L10n.t("엑셀: LibreOffice 기반 Collabora Office 등 설치된 호환 편집기 사용\n") +
                 "한글: Android HWP/HWPX 편집 앱이 별도로 필요합니다.\n\n" +
                 "외부 편집 앱에서 저장한 뒤 이 화면으로 돌아와 '원본에 저장'을 누르세요. " +
                 "외부 앱이 사본으로 저장하면 원본에는 적용되지 않습니다.",
@@ -192,7 +192,7 @@ public final class OfficeBridgeActivity extends Activity {
                     status.setText(excelLease.reason() +
                             "\n원본 저장이 차단된 읽기 전용 문서입니다.");
                 } else {
-                    status.setText("파일 준비 완료 (" + (staged.length()/1024) +
+                    status.setText(L10n.t("파일 준비 완료 (") + (staged.length()/1024) +
                             "KB)\n편집 앱을 연 뒤 앱에서 저장하고 돌아오세요.");
                 }
             });
@@ -211,7 +211,7 @@ public final class OfficeBridgeActivity extends Activity {
 
     private void launchEditor() {
         if (staged == null || !staged.isFile()) {
-            showError("편집용 문서가 준비되지 않았습니다."); return;
+            showError(L10n.t("편집용 문서가 준비되지 않았습니다.")); return;
         }
         try {
             Uri file = FileProvider.getUriForFile(this, getPackageName() + ".files", staged);
@@ -225,8 +225,8 @@ public final class OfficeBridgeActivity extends Activity {
             if (excelLease == null || !excelLease.readOnly())
                 open.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
             launched = true;
-            startActivityForResult(Intent.createChooser(open, "편집할 오피스 앱 선택"), 812);
-            status.setText("편집 앱에서 문서를 저장한 다음 이 화면으로 돌아와\n" +
+            startActivityForResult(Intent.createChooser(open, L10n.t("편집할 오피스 앱 선택")), 812);
+            status.setText(L10n.t("편집 앱에서 문서를 저장한 다음 이 화면으로 돌아와\n") +
                     "'변경 내용을 원본에 저장'을 눌러 주세요.");
         } catch (ActivityNotFoundException e) {
             launched = false;
@@ -247,7 +247,7 @@ public final class OfficeBridgeActivity extends Activity {
         if (saving || loading || staged == null || baseline == null) return;
         saving = true;
         updateButtons();
-        status.setText("편집된 문서 확인 및 원본 저장 중...");
+        status.setText(L10n.t("편집된 문서 확인 및 원본 저장 중..."));
         worker.execute(() -> {
             String error = null;
             boolean changed = false;
@@ -304,10 +304,10 @@ public final class OfficeBridgeActivity extends Activity {
                 saving = false;
                 updateButtons();
                 if (err != null) {
-                    status.setText("원본 저장에 실패했습니다. 편집본은 임시 공간에 유지됩니다.");
+                    status.setText(L10n.t("원본 저장에 실패했습니다. 편집본은 임시 공간에 유지됩니다."));
                     showError(err);
                 } else if (updated) {
-                    status.setText("원본 파일에 변경 내용을 저장했습니다.");
+                    status.setText(L10n.t("원본 파일에 변경 내용을 저장했습니다."));
                     setResult(RESULT_OK);
                 } else {
                     status.setText(launched ?
@@ -333,23 +333,23 @@ public final class OfficeBridgeActivity extends Activity {
         String label = spreadsheet ? "Collabora Office (LibreOffice 기반)" :
                 "HOP Android (rhwp 기반, 베타)";
         new AlertDialog.Builder(this)
-                .setTitle("호환 문서 편집기")
+                .setTitle(L10n.t("호환 문서 편집기"))
                 .setMessage(label + " 설치 페이지를 열까요?\n\n" +
                         "이 앱은 별도로 설치해야 하며, NAS Mount가 설치를 자동 진행하지 않습니다. " +
                         "편집기의 실제 파일 저장 지원 여부는 해당 앱 버전에 따라 다릅니다.")
                 .setNegativeButton(L10n.t("취소"), null)
-                .setPositiveButton("페이지 열기", (d,w) -> {
+                .setPositiveButton(L10n.t("페이지 열기"), (d,w) -> {
                     try {
                         startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(website)));
                     } catch (ActivityNotFoundException error) {
-                        showError("링크를 열 브라우저가 없습니다.");
+                        showError(L10n.t("링크를 열 브라우저가 없습니다."));
                     }
                 }).show();
     }
 
     private void confirmClose() {
-        new AlertDialog.Builder(this).setTitle("편집 화면 닫기")
-                .setMessage("변경 내용이 있으면 '원본에 저장'을 눌러야 반영됩니다. " +
+        new AlertDialog.Builder(this).setTitle(L10n.t("편집 화면 닫기"))
+                .setMessage(L10n.t("변경 내용이 있으면 '원본에 저장'을 눌러야 반영됩니다. ") +
                         "저장하지 않고 닫으시겠습니까?")
                 .setNegativeButton(L10n.t("계속 편집"), null)
                 .setPositiveButton(L10n.t("닫기"), (d, w) -> finish()).show();

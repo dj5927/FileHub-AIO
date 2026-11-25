@@ -1,3 +1,4 @@
+import { t } from '/office-locale.js';
 import { PptxRenderer, PptxWriter } from '/pptx-engine/index.js';
 import { installPinch, installSlideSwipe } from '/office-gestures.js';
 
@@ -21,18 +22,18 @@ function update(text) { notify(text); }
 function xmlText(doc) { return new XMLSerializer().serializeToString(doc); }
 function parseXml(content) {
   const doc = new DOMParser().parseFromString(content,'application/xml');
-  if (doc.querySelector('parsererror')) throw Error('문서 XML 형식을 읽을 수 없습니다.');
+  if (doc.querySelector('parsererror')) throw Error(t('문서 XML 형식을 읽을 수 없습니다.'));
   return doc;
 }
 function xmlSafeZip(zip) {
   let size=0, count=0;
   zip.forEach((name,entry)=>{
-    if(++count>12000) throw Error('문서 내부 파일 개수 제한을 초과합니다.');
+    if(++count>12000) throw Error(t('문서 내부 파일 개수 제한을 초과합니다.'));
     const uncompressed = entry._data?.uncompressedSize ?? 0;
     size += uncompressed;
-    if(size>MAX_ZIP_UNCOMPRESSED) throw Error('문서 내부 데이터가 너무 큽니다.');
+    if(size>MAX_ZIP_UNCOMPRESSED) throw Error(t('문서 내부 데이터가 너무 큽니다.'));
     if(name.startsWith('/') || name.includes('../') || name.includes('..\\'))
-      throw Error('문서 내부 경로가 올바르지 않습니다.');
+      throw Error(t('문서 내부 경로가 올바르지 않습니다.'));
   });
 }
 function updateWordSelect() {
@@ -42,7 +43,7 @@ function updateWordSelect() {
     if(!item.nodes.length) return;
     const option = document.createElement('option');
     option.value=String(index);
-    option.textContent=(index+1)+' · '+(item.text||'(빈 문단)').slice(0,55);
+    option.textContent=(index+1)+' · '+(item.text||t('(빈 문단)')).slice(0,55);
     pick.appendChild(option);
   });
   if(pick.options.length) {
@@ -73,19 +74,19 @@ function fitWordPages() {
     page.style.zoom=wordFitPage?String(scale):'1';
   }
   $('word-scroll').style.overflowX=wordFitPage?'hidden':'auto';
-  $('word-fit-toggle').textContent=wordFitPage?'100%':'화면 맞춤';
+  $('word-fit-toggle').textContent=wordFitPage?'100%':t('화면 맞춤');
 }
 export async function openWord(data, statusCallback) {
   notify=statusCallback;
   if(!window.JSZip || !window.docx?.renderAsync)
-    throw Error('내장 Word 표시 라이브러리를 불러오지 못했습니다.');
+    throw Error(t('내장 Word 표시 라이브러리를 불러오지 못했습니다.'));
   wordOriginal=data;
   wordZip=await JSZip.loadAsync(data,{checkCRC32:true});
   xmlSafeZip(wordZip);
   const entry=wordZip.file('word/document.xml');
-  if(!entry) throw Error('DOCX 내부 문서 본문이 없습니다.');
+  if(!entry) throw Error(t('DOCX 내부 문서 본문이 없습니다.'));
   if((entry._data?.uncompressedSize??0)>MAX_XML_BYTES)
-    throw Error('문서 본문이 편집 제한을 초과합니다.');
+    throw Error(t('문서 본문이 편집 제한을 초과합니다.'));
   wordXml=parseXml(await entry.async('string'));
   const paragraphNodes=Array.from(wordXml.getElementsByTagNameNS(W,'p'));
   wordNodes=paragraphNodes.map(paragraph=>{
@@ -120,10 +121,10 @@ export async function openWord(data, statusCallback) {
       wordChanged=true;
       wordZip.file('word/document.xml',xmlText(wordXml));
       await refreshWord();
-      update('문단 변경 완료 · 아래 원본 저장 버튼을 눌러 반영하세요.');
+      update(t('문단 변경 완료 · 아래 원본 저장 버튼을 눌러 반영하세요.'));
       $('word-editor').hidden=true;
       updateWordSelect();
-    } catch(err) {update('Word 문단 편집 실패: '+err.message);}
+    } catch(err) {update(t('Word 문단 편집 실패: ')+err.message);}
     finally {editing=false;}
   };
   updateWordSelect();
@@ -131,7 +132,7 @@ export async function openWord(data, statusCallback) {
   update('Word 문서 준비 완료 · '+wordNodes.length+'개 문단');
 }
 export async function exportWord() {
-  if(editing) throw Error('문단 편집을 마친 뒤 저장하세요.');
+  if(editing) throw Error(t('문단 편집을 마친 뒤 저장하세요.'));
   if(!wordChanged) return wordOriginal;
   return wordZip.generateAsync({type:'uint8array',compression:'DEFLATE'});
 }
@@ -186,11 +187,11 @@ async function renderPptSlide() {
         modernPpt,modernPpt.slides[pptIndex]);
       if(tick!==drawing) return;
       if(typeof svg!=='string'||!svg.includes('<svg'))
-        throw Error('SVG 출력이 없습니다.');
+        throw Error(t('SVG 출력이 없습니다.'));
       const url=URL.createObjectURL(new Blob([svg],{type:'image/svg+xml'}));
       await new Promise((resolve,reject)=>{
         img.onload=resolve;
-        img.onerror=()=>reject(Error('SVG 이미지 로드 실패'));
+        img.onerror=()=>reject(Error(t('SVG 이미지 로드 실패')));
         img.src=url;
       });
       if(tick!==drawing){URL.revokeObjectURL(url);return;}
@@ -210,9 +211,9 @@ async function renderPptSlide() {
     if(tick!==drawing) return;
     canvas.style.width='100%';
     canvas.style.height='auto';
-  } else throw Error('표시 가능한 슬라이드 렌더러가 없습니다.');
+  } else throw Error(t('표시 가능한 슬라이드 렌더러가 없습니다.'));
   if(tick===drawing){
-    $('slide-view-toggle').textContent=slideView==='modern'?'기존 보기':'호환 보기';
+    $('slide-view-toggle').textContent=slideView==='modern'?t('기존 보기'):t('호환 보기');
     applySlideZoom(slideZoom);
   }
 }
@@ -243,7 +244,7 @@ export async function openSlides(data, statusCallback) {
     pptRenderer=null;
     if(!modernPpt) throw err;
   }
-  if(!slideCount()) throw Error('열 수 있는 PPTX 슬라이드가 없습니다.');
+  if(!slideCount()) throw Error(t('열 수 있는 PPTX 슬라이드가 없습니다.'));
   slideView=modernPpt?'modern':'canvas';
   pptChanged=false;
   pptIndex=0;
@@ -293,16 +294,16 @@ export async function openSlides(data, statusCallback) {
       }
       pptChanged=true;
       await repaintPpt();
-      update('슬라이드 텍스트가 수정됐습니다. 아래 원본 저장을 누르세요.');
+      update(t('슬라이드 텍스트가 수정됐습니다. 아래 원본 저장을 누르세요.'));
       $('slide-editor').hidden=true;
-    } catch(err){update('PowerPoint 편집 실패: '+err.message);}
+    } catch(err){update(t('PowerPoint 편집 실패: ')+err.message);}
     finally{editing=false;}
   };
   await repaintPpt();
   update('PowerPoint 준비 완료 · '+slideCount()+'장 · 좌우 스와이프/두 손가락 확대 지원');
 }
 export async function exportSlides() {
-  if(editing) throw Error('슬라이드 편집을 마친 뒤 저장하세요.');
+  if(editing) throw Error(t('슬라이드 편집을 마친 뒤 저장하세요.'));
   if(!pptChanged) return pptOriginal;
   return pptWriter.save();
 }

@@ -54,7 +54,7 @@ final class FavoriteDrawerReorder {
         keys.add(key);
         itemKeys.put(row,key);
         row.setOnLongClickListener(v -> start(row));
-        row.setContentDescription("길게 눌러 순서 이동, 오른쪽 메뉴에서 이름 변경 또는 삭제");
+        row.setContentDescription(L10n.t("길게 눌러 순서 이동, 오른쪽 메뉴에서 이름 변경 또는 삭제"));
     }
 
     private boolean start(View row) {

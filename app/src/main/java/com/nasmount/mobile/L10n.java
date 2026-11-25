@@ -1,12 +1,19 @@
 package com.nasmount.mobile;
 
 import android.content.Context;
+import android.content.res.Configuration;
+import android.content.res.Resources;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /** Offline UI catalogue. Only authored UI literals are passed here, not file names or keys. */
 final class L10n {
+    private static final String PREFS="filehub_interface_language";
+    private static final String KEY="language";
+    static final String SYSTEM="system";
+    private static final String[] MODES={SYSTEM,"ko","en","ja","zh"};
+    private static final String[] NAMES={"시스템 언어에 맞춤","한국어","English","日本語","简体中文"};
     private static volatile Context context;
     private static volatile Map<String,String[]> catalog;
     private L10n() {}
@@ -22,7 +29,47 @@ final class L10n {
     }
     static String language() {
         Context app=context;
-        return app==null?"ko":language(app.getResources().getConfiguration().getLocales().get(0));
+        return app==null?"ko":resolve(mode(app),deviceLocale());
+    }
+    static String normalizeMode(String mode) {
+        for(String value:MODES)if(value.equals(mode))return value;
+        return SYSTEM;
+    }
+    static String resolve(String mode,Locale device) {
+        String value=normalizeMode(mode);
+        return SYSTEM.equals(value)?language(device):value;
+    }
+    private static Locale deviceLocale() {
+        android.os.LocaleList locales=Resources.getSystem().getConfiguration().getLocales();
+        return locales.isEmpty()?Locale.ENGLISH:locales.get(0);
+    }
+    static String mode(Context c) {
+        return normalizeMode(c.getSharedPreferences(PREFS,Context.MODE_PRIVATE).getString(KEY,SYSTEM));
+    }
+    static int selectedIndex(Context c) {
+        String value=mode(c);
+        for(int i=0;i<MODES.length;i++)if(MODES[i].equals(value))return i;
+        return 0;
+    }
+    static String[] choices() {
+        String[] result=NAMES.clone();
+        result[0]=t(result[0]);
+        return result;
+    }
+    static boolean choose(Context c,int index) {
+        if(index<0||index>=MODES.length)return false;
+        return c.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit()
+                .putString(KEY,MODES[index]).commit();
+    }
+    static Context localizedContext(Context base) {
+        String value=resolve(mode(base),deviceLocale());
+        Locale locale="zh".equals(value)?Locale.SIMPLIFIED_CHINESE:Locale.forLanguageTag(value);
+        // Override only the locale; leave orientation, density and Fold size
+        // inherited from the current device configuration.
+        Configuration config=new Configuration();
+        config.setLocale(locale);
+        config.setLayoutDirection(locale);
+        return base.createConfigurationContext(config);
     }
     private static synchronized Map<String,String[]> load() {
         if(catalog!=null)return catalog;

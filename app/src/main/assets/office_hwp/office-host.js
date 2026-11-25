@@ -1,4 +1,5 @@
 import { createEditor } from '/sdk/index.js';
+import { t,localizeOfficeShell } from '/office-locale.js';
 import { openWord, exportWord, openSlides, exportSlides } from '/office-word-ppt.js';
 import { installPinch, installSpreadsheetPinch } from '/office-gestures.js';
 import { openXlsxArchive, exportXlsxArchive } from '/excel-ooxml.js';
@@ -39,16 +40,16 @@ function selectCell(address) {
 }
 function applyCellEdit() {
   if(cfg?.readOnly) {
-    status('다른 기기에서 편집 중인 Excel 문서입니다. 읽기 전용입니다.',true);
+    status(t('다른 기기에서 편집 중인 Excel 문서입니다. 읽기 전용입니다.'),true);
     return;
   }
   const address = document.getElementById('cell-position').value.trim().toUpperCase();
   let loc;
   try { loc = XLSX.utils.decode_cell(address); }
-  catch { status('유효한 셀 주소를 입력해 주세요.', true); return; }
+  catch { status(t('유효한 셀 주소를 입력해 주세요.'), true); return; }
   if (!address.match(/^[A-Z]{1,3}[1-9][0-9]{0,6}$/) ||
       loc.r>1048575 || loc.c>16383) {
-    status('셀 주소가 올바르지 않습니다.', true); return;
+    status(t('셀 주소가 올바르지 않습니다.'), true); return;
   }
   const sheet = getSheet();
   const value = document.getElementById('formula-input').value;
@@ -76,7 +77,7 @@ function applyCellEdit() {
   }
   selectCell(address);
   renderSheet();
-  status('셀 변경사항이 있습니다. 상단 저장 아이콘을 누르면 원본에 저장됩니다.');
+  status(t('셀 변경사항이 있습니다. 상단 저장 아이콘을 누르면 원본에 저장됩니다.'));
 }
 function renderSheet() {
   gridController?.refresh();
@@ -89,7 +90,7 @@ function jumpToAddress() {
     if(pos.r>1048575 || pos.c>16383)return;
     gridController?.jump(address);
     selectCell(address);
-  } catch(error) { status('셀 주소를 확인해 주세요.',true); }
+  } catch(error) { status(t('셀 주소를 확인해 주세요.'),true); }
 }
 function attachSheetEvents() {
   const formula=document.getElementById('formula-input');
@@ -128,10 +129,10 @@ function renderSheetTabs() {
   });
 }
 async function openSpreadsheet(bytes) {
-  if(!window.XLSX)throw Error('엑셀 문서 분석기를 불러오지 못했습니다.');
+  if(!window.XLSX)throw Error(t('엑셀 문서 분석기를 불러오지 못했습니다.'));
   workbook=XLSX.read(bytes,{type:'array',cellStyles:true,cellFormula:true,
     cellDates:true,cellNF:true,bookVBA:true});
-  if(!workbook.SheetNames?.length)throw Error('시트가 없는 문서입니다.');
+  if(!workbook.SheetNames?.length)throw Error(t('시트가 없는 문서입니다.'));
   excelChanged.clear();
   excelArchive=await openXlsxArchive(bytes,workbook.SheetNames);
   const shell=document.getElementById('spreadsheet-shell');
@@ -150,9 +151,10 @@ async function openSpreadsheet(bytes) {
 }
 async function openHwp(bytes) {
   document.getElementById('hwp-shell').hidden=false;
-  status('내장 HWP/HWPX 편집 엔진을 초기화하고 있습니다...');
+  status(t('내장 HWP/HWPX 편집 엔진을 초기화하고 있습니다...'));
   hwpEditor=await createEditor('#hwp-container',{
-    studioUrl:location.origin+'/viewer.html',
+    studioUrl:location.origin+'/viewer.html?lang='+
+      (new URLSearchParams(location.search).get('lang')==='ko'?'ko':'en'),
     requestTimeoutMs:120000,handshakeTimeoutMs:6000,renderer:'canvas2d',
   });
   const loaded=await hwpEditor.loadFile(bytes,cfg.name,{suppressDialogs:true});
@@ -175,7 +177,7 @@ async function openHwp(bytes) {
     toggle.hidden=false;
     toggle.onclick=()=>{
       const compact=doc.body.classList.toggle('nas-compact');
-      toggle.textContent=compact?'도구':'도구 접기';
+      toggle.textContent=compact?t('도구'):t('도구 접기');
     };
     // The Studio already implements text layout zoom commands. Dispatch
     // actual zoom actions rather than applying CSS scale to the editor
@@ -203,17 +205,17 @@ function toBase64(bytes) {
 }
 async function persist(bytes) {
   const limit=64*1024*1024;
-  if (bytes.byteLength>limit) throw Error('저장할 문서가 64MB 제한을 초과합니다.');
+  if (bytes.byteLength>limit) throw Error(t('저장할 문서가 64MB 제한을 초과합니다.'));
   if (bridge.beginSave(cfg.token,bytes.byteLength)!=='OK')
-    throw Error('저장 작업을 시작하지 못했습니다.');
+    throw Error(t('저장 작업을 시작하지 못했습니다.'));
   try {
     for (let i=0;i<bytes.length;i+=16384) {
       const chunk=toBase64(bytes.subarray(i,i+16384));
       if (bridge.appendSave(cfg.token,chunk)!=='OK')
-        throw Error('문서 저장 데이터 전송에 실패했습니다.');
+        throw Error(t('문서 저장 데이터 전송에 실패했습니다.'));
     }
     if (bridge.finishSave(cfg.token)!=='OK')
-      throw Error('문서 저장을 확정하지 못했습니다.');
+      throw Error(t('문서 저장을 확정하지 못했습니다.'));
   } catch (e) {
     bridge.cancelSave(cfg.token);
     throw e;
@@ -221,11 +223,11 @@ async function persist(bytes) {
 }
 async function saveDocument() {
   if(cfg?.readOnly) {
-    status('다른 기기에서 편집 중인 문서는 원본에 저장할 수 없습니다.',true);
+    status(t('다른 기기에서 편집 중인 문서는 원본에 저장할 수 없습니다.'),true);
     return;
   }
   if (busy) return;
-  setBusy(true);status('문서를 생성해 NAS Mount에 전달하고 있습니다...');
+  setBusy(true);status(t('문서를 생성해 NAS Mount에 전달하고 있습니다...'));
   try {
     let bytes;
     if (cfg.mode==='hwp') {
@@ -255,12 +257,12 @@ async function saveDocument() {
         await exportXlsxArchive(excelArchive,excelChanged) :
         XLSX.write(workbook,{bookType:type,type:'array',compression:true,cellStyles:true});
       pendingExcelExport=bytes;
-    } else throw Error('지원하지 않는 문서 형식입니다.');
+    } else throw Error(t('지원하지 않는 문서 형식입니다.'));
     if (!(bytes instanceof Uint8Array)) bytes=new Uint8Array(bytes);
     await persist(bytes);
-    status('원본 파일에 저장 중입니다...');
+    status(t('원본 파일에 저장 중입니다...'));
   } catch (error) {
-    status('저장 실패: '+(error?.message || error),true);setBusy(false);
+    status(t('저장 실패: ')+(error?.message || error),true);setBusy(false);
   }
 }
 window.OfficeNativeSaveResult=async function(success,message){
@@ -273,37 +275,38 @@ window.OfficeNativeSaveResult=async function(success,message){
       } catch(e){ console.warn('Workbook cache refresh',e); }
     }
     pendingExcelExport=null;
-    status('원본 파일에 저장했습니다.');
+    status(t('원본 파일에 저장했습니다.'));
     if(pendingNotify&&hwpEditor) {
       try { await hwpEditor.notifySaved(); } catch(e) { console.warn('notifySaved',e); }
     }
   } else {
     pendingExcelExport=null; // edited cells remain for retry
-    status('NAS 저장 실패: '+message,true);
+    status(t('NAS 저장 실패: ')+message,true);
   }
   pendingNotify=false;setBusy(false);
 };
 saveButton.onclick=saveDocument;
 window.OfficeRequestSave=saveDocument;
-window.addEventListener('error',e=>status('편집 엔진 오류: '+e.message,true));
+window.addEventListener('error',e=>status(t('편집 엔진 오류: ')+e.message,true));
 window.addEventListener('unhandledrejection',e=>status(
-  '편집 엔진 오류: '+(e.reason?.message || String(e.reason)),true));
+  t('편집 엔진 오류: ')+(e.reason?.message || String(e.reason)),true));
 
 async function start() {
   try {
-    if (!bridge) throw Error('NAS Mount 문서 저장 연결이 없습니다.');
+    await localizeOfficeShell();
+    if (!bridge) throw Error(t('NAS Mount 문서 저장 연결이 없습니다.'));
     cfg=JSON.parse(bridge.getConfiguration());
     const response=await fetch('/office-input',{cache:'no-store'});
-    if(!response.ok) throw Error('원본 문서를 불러오지 못했습니다.');
+    if(!response.ok) throw Error(t('원본 문서를 불러오지 못했습니다.'));
     const bytes=new Uint8Array(await response.arrayBuffer());
-    if (!bytes.length) throw Error('빈 문서는 열 수 없습니다.');
+    if (!bytes.length) throw Error(t('빈 문서는 열 수 없습니다.'));
     if(cfg.mode==='hwp') await openHwp(bytes);
     else if(cfg.mode==='sheet') await openSpreadsheet(bytes);
     else if(cfg.mode==='word') await openWord(bytes,status);
     else if(cfg.mode==='slides') await openSlides(bytes,status);
     else if(cfg.mode==='legacy')
-      throw Error('구형 .doc/.ppt는 아직 미지원입니다. DOCX 또는 PPTX로 변환 후 열어 주세요.');
-    else throw Error('지원하지 않는 문서 형식입니다.');
+      throw Error(t('구형 .doc/.ppt는 아직 미지원입니다. DOCX 또는 PPTX로 변환 후 열어 주세요.'));
+    else throw Error(t('지원하지 않는 문서 형식입니다.'));
     if(cfg.readOnly) {
       saveButton.disabled=true;
       for(const id of ['formula-input','cell-position']) {
@@ -314,7 +317,7 @@ async function start() {
       statusEl.classList.remove('show','error');
     }
   } catch(error) {
-    status('문서를 열 수 없습니다: '+(error?.message || error),true);
+    status(t('문서를 열 수 없습니다: ')+(error?.message || error),true);
     saveButton.disabled=true;
   }
 }

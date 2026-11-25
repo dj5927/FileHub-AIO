@@ -43,11 +43,11 @@ final class TvPairingUi implements AutoCloseable {
                     labels.append("• ").append(p.label()).append(" (")
                             .append(p.protocol).append(")\n");
                 new AlertDialog.Builder(activity)
-                        .setTitle("TV 계정 연결 요청 · " + profiles.size() + "개")
-                        .setMessage("이 TV에 다음 연결을 가져올까요?\n\n" + labels +
+                        .setTitle(L10n.t("TV 계정 연결 요청 · ") + profiles.size() + "개")
+                        .setMessage(L10n.t("이 TV에 다음 연결을 가져올까요?\n\n") + labels +
                                 "\n기존 연결은 유지됩니다.")
                         .setNegativeButton(L10n.t("거절"),null)
-                        .setPositiveButton("이 TV에 저장",(d,which)->importProfiles(profiles))
+                        .setPositiveButton(L10n.t("이 TV에 저장"),(d,which)->importProfiles(profiles))
                         .show();
                 }catch(Exception ignored){error("TV로 받은 연결 정보 형식이 올바르지 않습니다.");}
             }));
@@ -57,7 +57,7 @@ final class TvPairingUi implements AutoCloseable {
             body.setGravity(Gravity.CENTER);
             body.setPadding(dp(22),dp(12),dp(22),dp(16));
             TextView help=Ui.text(activity,
-                    "휴대폰 카메라로 QR을 스캔해 FileHub에서 연결할 계정을 선택하세요.\n"+
+                    L10n.t("휴대폰 카메라로 QR을 스캔해 FileHub에서 연결할 계정을 선택하세요.\n")+
                     "두 기기는 같은 Wi-Fi에 있어야 합니다.",17,Ui.TEXT,false);
             help.setGravity(Gravity.CENTER);
             body.addView(help,Ui.lp(activity,-1,-2));
@@ -74,7 +74,7 @@ final class TvPairingUi implements AutoCloseable {
             address.setGravity(Gravity.CENTER);
             body.addView(address,Ui.lp(activity,-1,-2));
             qrDialog=new AlertDialog.Builder(activity)
-                    .setTitle("FileHub TV · QR로 로그인")
+                    .setTitle(L10n.t("FileHub TV · QR로 로그인"))
                     .setView(body)
                     .setNegativeButton(L10n.t("취소"),null).create();
             TvPairingServer active=server;
@@ -102,7 +102,7 @@ final class TvPairingUi implements AutoCloseable {
                 saved.add(incoming);
                 added++;
             }
-            new AlertDialog.Builder(activity).setTitle("TV 연결 저장 완료")
+            new AlertDialog.Builder(activity).setTitle(L10n.t("TV 연결 저장 완료"))
                     .setMessage(""+added+"개 연결을 암호화 저장했습니다.\n"+
                             "Synology DSM 2단계 인증은 이 TV에서 별도로 확인할 수 있습니다.")
                     .setPositiveButton(L10n.t("확인"),null).show();
@@ -114,19 +114,19 @@ final class TvPairingUi implements AutoCloseable {
         catch(Exception invalid){error("TV로 받은 설정이 올바르지 않습니다.");return;}
         int count=snapshot.optJSONArray("remotes").length();
         int favorite=snapshot.optJSONArray("favorites").length();
-        new AlertDialog.Builder(activity).setTitle("휴대폰 전체 설정 가져오기")
-                .setMessage("연결 " + count + "개, 즐겨찾기 " + favorite+
+        new AlertDialog.Builder(activity).setTitle(L10n.t("휴대폰 전체 설정 가져오기"))
+                .setMessage(L10n.t("연결 ") + count + "개, 즐겨찾기 " + favorite+
                         "개 및 동영상·만화책·소설책 설정이 도착했습니다.\n\n"+
                         "병합: 현재 TV 설정 유지 + 휴대폰 설정 반영\n"+
                         "교체: TV 설정을 휴대폰 설정으로 변경\n\n"+
                         "SD 권한과 외부 코덱 파일은 TV에서 별도로 지정해야 합니다.")
                 .setNegativeButton(L10n.t("거절"),null)
-                .setNeutralButton("병합",(d,w)->applyFullSettings(snapshot,false))
+                .setNeutralButton(L10n.t("병합"),(d,w)->applyFullSettings(snapshot,false))
                 .setPositiveButton(L10n.t("전체 교체"),(d,w)->new AlertDialog.Builder(activity)
-                        .setTitle("TV 전체 설정 교체")
-                        .setMessage("기존 설정을 교체할까요? 현재 설정은 사라질 수 있습니다.")
+                        .setTitle(L10n.t("TV 전체 설정 교체"))
+                        .setMessage(L10n.t("기존 설정을 교체할까요? 현재 설정은 사라질 수 있습니다."))
                         .setNegativeButton(L10n.t("취소"),null)
-                        .setPositiveButton("교체",(confirm,yes)->applyFullSettings(snapshot,true))
+                        .setPositiveButton(L10n.t("교체"),(confirm,yes)->applyFullSettings(snapshot,true))
                         .show()).show();
     }
 
@@ -158,7 +158,7 @@ final class TvPairingUi implements AutoCloseable {
         LinearLayout header=Ui.vertical(activity);
         header.setPadding(dp(20),dp(8),dp(20),dp(8));
         TextView notice=Ui.text(activity,
-                "TV QR을 휴대폰 카메라로 스캔해 열거나, QR 문자열을 복사해 아래에 붙여넣으세요.\n"+
+                L10n.t("TV QR을 휴대폰 카메라로 스캔해 열거나, QR 문자열을 복사해 아래에 붙여넣으세요.\n")+
                 "전송할 연결만 선택하세요. QR은 2분간 유효합니다.",13,Ui.TEXT,false);
         header.addView(notice,Ui.lp(activity,-1,-2));
         Ui.gap(header,activity,8);
@@ -169,7 +169,7 @@ final class TvPairingUi implements AutoCloseable {
                 InputType.TYPE_TEXT_VARIATION_URI);
         uriInput.setText(scanned);
         header.addView(uriInput,Ui.lp(activity,-1,52));
-        TextView choose=Ui.text(activity,"전송할 연결 선택 · 최대 12개",14,Ui.TEXT,true);
+        TextView choose=Ui.text(activity,L10n.t("전송할 연결 선택 · 최대 12개"),14,Ui.TEXT,true);
         header.addView(choose,Ui.lp(activity,-1,40));
         String[] labels=new String[available.size()];
         boolean[] chosen=new boolean[available.size()];
@@ -178,18 +178,18 @@ final class TvPairingUi implements AutoCloseable {
         new AlertDialog.Builder(activity).setCustomTitle(header)
                 .setMultiChoiceItems(labels,chosen,(d,index,checked)->chosen[index]=checked)
                 .setNegativeButton(L10n.t("취소"),null)
-                .setNeutralButton("전체 설정 TV로 보내기",(d,w)->{
+                .setNeutralButton(L10n.t("전체 설정 TV로 보내기"),(d,w)->{
                     final TvPairingCodec.Destination destination;
                     try{destination=TvPairingCodec.parseUri(uriInput.getText().toString());}
                     catch(Exception invalid){error("TV QR 주소를 먼저 확인해 주세요.");return;}
                     new AlertDialog.Builder(activity)
-                            .setTitle("전체 설정을 TV로 전송할까요?")
-                            .setMessage("대상 TV: "+destination.host+":"+destination.port+
+                            .setTitle(L10n.t("전체 설정을 TV로 전송할까요?"))
+                            .setMessage(L10n.t("대상 TV: ")+destination.host+":"+destination.port+
                                     "\n\n네트워크 연결·계정·즐겨찾기·콘텐츠 폴더·재생 및 독서 " +
                                     "설정을 일회용 QR 키로 암호화해 전송합니다. " +
                                     "TV에서 최종 승인해야 저장됩니다. 본인의 TV인지 확인하세요.")
                             .setNegativeButton(L10n.t("취소"),null)
-                            .setPositiveButton("전체 설정 전송",(confirm,ok)->{
+                            .setPositiveButton(L10n.t("전체 설정 전송"),(confirm,ok)->{
                                 new Thread(()->{
                                     boolean success=false;
                                     try {
@@ -212,7 +212,7 @@ final class TvPairingUi implements AutoCloseable {
                                 },"filehub-tv-full-settings-send").start();
                             }).show();
                 })
-                .setPositiveButton("선택한 연결 TV로 보내기",(d,w)->{
+                .setPositiveButton(L10n.t("선택한 연결 TV로 보내기"),(d,w)->{
                     List<Models.RemoteProfile> selected=new ArrayList<>();
                     for(int i=0;i<chosen.length;i++)if(chosen[i])selected.add(available.get(i));
                     final TvPairingCodec.Destination destination;
@@ -222,8 +222,8 @@ final class TvPairingUi implements AutoCloseable {
                         data=TvPairingCodec.encodeProfiles(selected);
                     }catch(Exception bad){error("QR 주소 또는 연결 선택을 확인하세요.");return;}
                     new AlertDialog.Builder(activity)
-                            .setTitle("TV에 연결 정보를 보낼까요?")
-                            .setMessage("대상 TV: " + destination.host + ":" + destination.port+
+                            .setTitle(L10n.t("TV에 연결 정보를 보낼까요?"))
+                            .setMessage(L10n.t("대상 TV: ") + destination.host + ":" + destination.port+
                                     "\n선택한 연결 "+selected.size()+"개\n\n"+
                                     "NAS 비밀번호와 클라우드 세션이 포함될 수 있으며, " +
                                     "일회용 키로 암호화됩니다. 본인의 TV인지 확인하세요.")

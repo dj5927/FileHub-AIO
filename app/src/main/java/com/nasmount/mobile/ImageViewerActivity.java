@@ -44,7 +44,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /** Offline built-in photo viewer with fit, pinch, pan, double tap and GIF. */
-public final class ImageViewerActivity extends Activity {
+public final class ImageViewerActivity extends LocalizedActivity {
     static final String EXTRA_KIND="image_kind";
     static final String EXTRA_NAME="image_name";
     static final String EXTRA_URI="image_uri";
@@ -138,7 +138,7 @@ public final class ImageViewerActivity extends Activity {
         stage.addView(canvas,new FrameLayout.LayoutParams(-1,-1));
         stage.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,oright,ob)->
                 applyPageOffsets(slideX));
-        info=Ui.text(this,"이미지 읽는 중...",12,0xFFA4B7BD,false);
+        info=Ui.text(this,L10n.t("이미지 읽는 중..."),12,0xFFA4B7BD,false);
         info.setGravity(Gravity.CENTER);
         root.addView(info,Ui.lp(this,-1,29));
         updateTitle();
@@ -285,7 +285,7 @@ public final class ImageViewerActivity extends Activity {
         if(!loaded.containsKey(target)) {
             pendingIndex=target;
             pendingDirection=direction;
-            info.setText("다음 사진 준비 중…");
+            info.setText(L10n.t("다음 사진 준비 중…"));
             requestPhoto(target);
             slideBack();
             return;
@@ -426,7 +426,7 @@ public final class ImageViewerActivity extends Activity {
                     if(destroyed||isFinishing()||isDestroyed())return;
                     if(index==pendingIndex) {
                         pendingIndex=-1;
-                        info.setText("다음 사진을 불러오지 못했습니다: "+error);
+                        info.setText(L10n.t("다음 사진을 불러오지 못했습니다: ")+error);
                         slideBack();
                     }else if(index==currentIndex()&&!currentReady)
                         info.setText(error);

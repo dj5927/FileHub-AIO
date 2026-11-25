@@ -32,7 +32,7 @@ import java.util.Collections;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Self-contained QR camera view. No external scanner app is required. */
-public final class QrScanActivity extends Activity
+public final class QrScanActivity extends LocalizedActivity
         implements TextureView.SurfaceTextureListener {
     static final String EXTRA_QR="filehub_qr_scan_result";
     private static final int REQUEST_CAMERA=7214;
@@ -56,11 +56,11 @@ public final class QrScanActivity extends Activity
         content.setPadding(Ui.dp(this,12),Ui.dp(this,15),
                 Ui.dp(this,12),Ui.dp(this,18));
         setContentView(content);
-        TextView heading=Ui.text(this,"LAN QR 스캔",20,0xFFFFFFFF,true);
+        TextView heading=Ui.text(this,L10n.t("LAN QR 스캔"),20,0xFFFFFFFF,true);
         heading.setGravity(Gravity.CENTER);
         content.addView(heading,Ui.lp(this,-1,62));
         TextView help=Ui.text(this,
-                "받는 TV의 QR코드를 화면 안에 맞추세요.\n" +
+                L10n.t("받는 TV의 QR코드를 화면 안에 맞추세요.\n") +
                 "인식되면 같은 내부망에서 설정을 암호화해 전송합니다.",
                 14,0xFFE2E8EB,false);
         help.setGravity(Gravity.CENTER);
@@ -90,7 +90,7 @@ public final class QrScanActivity extends Activity
         super.onRequestPermissionsResult(code,permissions,grants);
         if(code!=REQUEST_CAMERA)return;
         if(grants.length==0||grants[0]!=PackageManager.PERMISSION_GRANTED){
-            Toast.makeText(this,"카메라 권한이 필요합니다.",Toast.LENGTH_LONG).show();
+            Toast.makeText(this,L10n.t("카메라 권한이 필요합니다."),Toast.LENGTH_LONG).show();
             finish();
         }else if(preview.isAvailable())openCamera();
     }
@@ -208,7 +208,7 @@ public final class QrScanActivity extends Activity
     }
 
     private void showFailure(){
-        Toast.makeText(this,"카메라를 열 수 없습니다.",Toast.LENGTH_LONG).show();
+        Toast.makeText(this,L10n.t("카메라를 열 수 없습니다."),Toast.LENGTH_LONG).show();
         finish();
     }
 

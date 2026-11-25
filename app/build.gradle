@@ -168,8 +168,8 @@ android {
             dimension 'distribution'
             applicationId 'com.nasmount.mobile'
             targetSdk 35
-            versionCode 120
-            versionName '0.1.119'
+            versionCode 121
+            versionName '0.1.120'
             buildConfigField 'boolean', 'DIRECT_EDITION', 'true'
             buildConfigField 'String', 'PAIR_SCHEME', '"filehubaio"'
             manifestPlaceholders = [pairScheme: 'filehubaio']
@@ -179,8 +179,8 @@ android {
             dimension 'distribution'
             applicationId 'com.filehubaio.mobile'
             targetSdk 36
-            versionCode 3
-            versionName '1.0.2'
+            versionCode 4
+            versionName '1.0.3'
             buildConfigField 'boolean', 'DIRECT_EDITION', 'false'
             buildConfigField 'String', 'PAIR_SCHEME', '"filehubaio-play"'
             buildConfigField 'boolean', 'PLAY_INTERNAL_TEST', playInternal.toString()
@@ -271,3 +271,5 @@ dependencies {
     testImplementation 'net.sf.kxml:kxml2:2.3.0'
     testImplementation 'org.json:json:20260814'
 }
+
+apply from: 'license-notices.gradle'

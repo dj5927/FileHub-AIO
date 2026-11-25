@@ -40,7 +40,7 @@ import java.util.concurrent.Executors;
  * Built-in offline EPUB 2/3 viewer. The chapter XHTML is rendered without
  * JavaScript, local-file access, browser network access or external intents.
  */
-public final class EpubReaderActivity extends Activity {
+public final class EpubReaderActivity extends LocalizedActivity {
     private static final String HOST="reader.nasmount.invalid";
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private SharedPreferences prefs;
@@ -273,7 +273,7 @@ public final class EpubReaderActivity extends Activity {
         previous.setOnClickListener(v->turn(-1));
         TextView pageInfo=button("0 / 0",13);
         bottom.addView(pageInfo,new LinearLayout.LayoutParams(0,-1,1));
-        pageInfo.setContentDescription("현재 챕터, 현재 페이지와 본문 전체 진행률. 터치해서 0부터 100퍼센트까지 빠른 이동");
+        pageInfo.setContentDescription(L10n.t("현재 챕터, 현재 페이지와 본문 전체 진행률. 터치해서 0부터 100퍼센트까지 빠른 이동"));
         pageInfo.setOnClickListener(v->showQuickSeek());
         TextView next=button("〉",22);
         bottom.addView(next,Ui.lp(this,64,-1));
@@ -407,7 +407,7 @@ public final class EpubReaderActivity extends Activity {
     /** PDF uses PdfRenderer as the source but all EPUB reader chrome/controls. */
     private void openPdfDocument(){
         loadingChapter=true;
-        status.setText("PDF 책을 여는 중...");
+        status.setText(L10n.t("PDF 책을 여는 중..."));
         applyReaderStatus();
         worker.execute(()->{
             try{
@@ -518,7 +518,7 @@ public final class EpubReaderActivity extends Activity {
         if(pdfPageCount<1)return;
         if(loadingChapter||turnBusy){
             android.widget.Toast.makeText(this,
-                    "페이지를 불러온 뒤 이동해 주세요.",
+                    L10n.t("페이지를 불러온 뒤 이동해 주세요."),
                     android.widget.Toast.LENGTH_SHORT).show();
             return;
         }
@@ -544,7 +544,7 @@ public final class EpubReaderActivity extends Activity {
             @Override public void onStartTrackingTouch(SeekBar s){}
             @Override public void onStopTrackingTouch(SeekBar s){}
         });
-        new AlertDialog.Builder(this).setTitle("PDF 책 전체 이동")
+        new AlertDialog.Builder(this).setTitle(L10n.t("PDF 책 전체 이동"))
                 .setView(sheet)
                 .setNegativeButton(L10n.t("취소"),null)
                 .setPositiveButton(L10n.t("이동"),(dialog,which)->
@@ -556,32 +556,32 @@ public final class EpubReaderActivity extends Activity {
         controls.setPadding(Ui.dp(this,18),Ui.dp(this,8),
                 Ui.dp(this,18),0);
         controls.addView(Ui.text(this,
-                "PDF는 원본 페이지를 유지하며 EPUB과 같은 독서 화면으로 표시합니다.",
+                L10n.t("PDF는 원본 페이지를 유지하며 EPUB과 같은 독서 화면으로 표시합니다."),
                 13,Ui.MUTED,false));
         controls.addView(Ui.text(this,L10n.t("책 넘김 효과"),14,Ui.TEXT,true));
         Spinner effect=new Spinner(this);
         effect.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
-                ReaderTurnPreferences.STYLES));
+                L10n.labels(ReaderTurnPreferences.STYLES)));
         effect.setSelection(ReaderTurnPreferences.toIndex(pageEffect));
         controls.addView(effect,Ui.lp(this,-1,48));
         controls.addView(Ui.text(this,L10n.t("페이지 넘김 속도"),14,Ui.TEXT,true));
         Spinner speed=new Spinner(this);
         speed.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
-                ReaderTurnPreferences.SPEEDS));
+                L10n.labels(ReaderTurnPreferences.SPEEDS)));
         speed.setSelection(slowPageTurn?1:0);
         controls.addView(speed,Ui.lp(this,-1,48));
         SeekBar zoom=ReaderNumericSlider.add(this,controls,
                 "페이지 확대 · 75~250%",75,250,pdfZoomPercent,
                 ReaderNumericSlider::percent);
         CheckBox foldSpread=new CheckBox(this);
-        foldSpread.setText("폴드 펼침 화면에서 두 페이지 나란히 보기");
+        foldSpread.setText(L10n.t("폴드 펼침 화면에서 두 페이지 나란히 보기"));
         foldSpread.setChecked(pdfTwoPageFold);
         controls.addView(foldSpread,Ui.lp(this,-1,50));
         ScrollView scroll=new ScrollView(this);
         scroll.addView(controls);
-        new AlertDialog.Builder(this).setTitle("PDF 독서 설정")
+        new AlertDialog.Builder(this).setTitle(L10n.t("PDF 독서 설정"))
                 .setView(scroll).setNegativeButton(L10n.t("취소"),null)
                 .setPositiveButton(L10n.t("적용"),(dialog,which)->{
                     pageEffect=ReaderTurnPreferences.fromIndex(
@@ -934,7 +934,7 @@ public final class EpubReaderActivity extends Activity {
         }
         if(archive==null||progressMap==null)return;
         if(loadingChapter||turnBusy){
-            android.widget.Toast.makeText(this,"현재 페이지를 불러온 뒤 이동할 수 있습니다.",
+            android.widget.Toast.makeText(this,L10n.t("현재 페이지를 불러온 뒤 이동할 수 있습니다."),
                     android.widget.Toast.LENGTH_SHORT).show();
             return;
         }
@@ -950,7 +950,7 @@ public final class EpubReaderActivity extends Activity {
         seek.setProgress(initial);
         sheet.addView(seek,Ui.lp(this,-1,62));
         TextView guidance=Ui.text(this,
-                "슬라이더를 좌우로 움직이면 책 전체 0~100% 위치를 선택합니다."+
+                L10n.t("슬라이더를 좌우로 움직이면 책 전체 0~100% 위치를 선택합니다.")+
                         "\n'이동'을 누르면 선택한 위치에서 독서를 이어갑니다.",
                 12,Ui.MUTED,false);
         guidance.setGravity(Gravity.CENTER);
@@ -971,7 +971,7 @@ public final class EpubReaderActivity extends Activity {
             @Override public void onStopTrackingTouch(SeekBar bar){}
         });
         new AlertDialog.Builder(this)
-                .setTitle("EPUB 전체 빠른 이동")
+                .setTitle(L10n.t("EPUB 전체 빠른 이동"))
                 .setView(sheet)
                 .setNegativeButton(L10n.t("취소"),null)
                 .setPositiveButton(L10n.t("이동"),(dialog,which)->{
@@ -1257,42 +1257,42 @@ public final class EpubReaderActivity extends Activity {
         Spinner readerMode=new Spinner(this);
         readerMode.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
-                new String[]{"좌우 책 페이지","세로 연속 스크롤"}));
+                L10n.labels(new String[]{"좌우 책 페이지","세로 연속 스크롤"})));
         readerMode.setSelection(mode);
         settings.addView(readerMode,Ui.lp(this,-1,45));
-        settings.addView(Ui.text(this,"책 넘김 효과 (페이지형)",14,Ui.TEXT,true));
+        settings.addView(Ui.text(this,L10n.t("책 넘김 효과 (페이지형)"),14,Ui.TEXT,true));
         Spinner turnEffect=new Spinner(this);
         turnEffect.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
-                ReaderTurnPreferences.STYLES));
+                L10n.labels(ReaderTurnPreferences.STYLES)));
         turnEffect.setSelection(ReaderTurnPreferences.toIndex(pageEffect));
         settings.addView(turnEffect,Ui.lp(this,-1,45));
         settings.addView(Ui.text(this,L10n.t("페이지 넘김 속도"),14,Ui.TEXT,true));
         Spinner turnSpeed=new Spinner(this);
         turnSpeed.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
-                ReaderTurnPreferences.SPEEDS));
+                L10n.labels(ReaderTurnPreferences.SPEEDS)));
         turnSpeed.setSelection(slowPageTurn?1:0);
         settings.addView(turnSpeed,Ui.lp(this,-1,45));
         SeekBar size=ReaderNumericSlider.add(this,settings,
-                "글자 크기 · 12~36pt",12,36,fontSize,
+                L10n.t("글자 크기 · 12~36pt"),12,36,fontSize,
                 ReaderNumericSlider::points);
         SeekBar spacing=ReaderNumericSlider.add(this,settings,
-                "줄 간격 · 1.10~2.30배",110,230,lineSpacing,
+                L10n.t("줄 간격 · 1.10~2.30배"),110,230,lineSpacing,
                 ReaderNumericSlider::spacing);
         SeekBar margin=ReaderNumericSlider.add(this,settings,
-                "좌우 여백 · 8~50dp",8,50,sideMargin,
+                L10n.t("좌우 여백 · 8~50dp"),8,50,sideMargin,
                 ReaderNumericSlider::dp);
-        settings.addView(Ui.text(this,"독서 배경",14,Ui.TEXT,true));
+        settings.addView(Ui.text(this,L10n.t("독서 배경"),14,Ui.TEXT,true));
         Spinner themeSpinner=new Spinner(this);
         themeSpinner.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
-                new String[]{"아이보리","흰색","세피아","야간"}));
+                L10n.labels(new String[]{"아이보리","흰색","세피아","야간"})));
         themeSpinner.setSelection(theme);
         settings.addView(themeSpinner,Ui.lp(this,-1,45));
         ScrollView scroll=new ScrollView(this);
         scroll.addView(settings);
-        new AlertDialog.Builder(this).setTitle("EPUB 독서 설정")
+        new AlertDialog.Builder(this).setTitle(L10n.t("EPUB 독서 설정"))
                 .setView(scroll).setNegativeButton(L10n.t("취소"),null)
                 .setPositiveButton(L10n.t("적용"),(dialog,which)->{
                     int keep=currentPosition();

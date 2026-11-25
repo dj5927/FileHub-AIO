@@ -26,7 +26,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /** Paged, offline TXT reader with actual text-layout pagination. */
-public final class BookTextActivity extends Activity {
+public final class BookTextActivity extends LocalizedActivity {
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     // Full-book indexing must never block the page currently being opened.
     private final ExecutorService pageIndexWorker=
@@ -131,7 +131,7 @@ public final class BookTextActivity extends Activity {
                     position->jumpToOffset((int)displayOffset(position)));
         });
         TextView customize=Ui.text(this,"Aa",19,foregrounds[themeIndex],true);
-        customize.setContentDescription("폰트, 글씨 크기, 줄간격, 배경 설정");
+        customize.setContentDescription(L10n.t("폰트, 글씨 크기, 줄간격, 배경 설정"));
         customize.setGravity(Gravity.CENTER);
         header.addView(customize,Ui.lp(this,57,-1));
         customize.setOnClickListener(v->showSettings());
@@ -175,7 +175,7 @@ public final class BookTextActivity extends Activity {
                     (right-left!=oldRight-oldLeft || bottom-top!=oldBottom-oldTop))
                 textPage.post(this::paginate);
         });
-        loadMessage=Ui.text(this,"책을 여는 중...",14,foregrounds[themeIndex],false);
+        loadMessage=Ui.text(this,L10n.t("책을 여는 중..."),14,foregrounds[themeIndex],false);
         loadMessage.setGravity(Gravity.CENTER);
         stage.addView(loadMessage,new FrameLayout.LayoutParams(-1,dp(58),Gravity.CENTER));
         footer=Ui.vertical(this);
@@ -188,7 +188,7 @@ public final class BookTextActivity extends Activity {
         prev.setOnClickListener(v->move(-1));
         pageCount=Ui.text(this,"0 / 0",12,foregrounds[themeIndex],false);
         pageCount.setGravity(Gravity.CENTER);
-        pageCount.setContentDescription("텍스트책 전체 진행률과 페이지. 터치하면 0~100% 빠른 이동");
+        pageCount.setContentDescription(L10n.t("텍스트책 전체 진행률과 페이지. 터치하면 0~100% 빠른 이동"));
         pageCount.setOnClickListener(v->showQuickSeek());
         controls.addView(pageCount,new LinearLayout.LayoutParams(0,-1,1));
         TextView next=Ui.text(this,"〉",21,foregrounds[themeIndex],false);
@@ -249,7 +249,7 @@ public final class BookTextActivity extends Activity {
                 });
             }catch(Exception error){
                 runOnUiThread(()->loadMessage.setText(
-                        "텍스트책을 열지 못했습니다: "+error.getMessage()));
+                        L10n.t("텍스트책을 열지 못했습니다: ")+error.getMessage()));
             }
         });
     }
@@ -395,7 +395,7 @@ public final class BookTextActivity extends Activity {
             scrollText.setText(window);
             scrollView.post(this::restoreScrollPosition);
         }catch(Exception failed){
-            loadMessage.setText("큰 책의 본문을 읽지 못했습니다: "+failed.getMessage());
+            loadMessage.setText(L10n.t("큰 책의 본문을 읽지 못했습니다: ")+failed.getMessage());
             loadMessage.setVisibility(View.VISIBLE);
         }
     }
@@ -433,7 +433,7 @@ public final class BookTextActivity extends Activity {
                 (int)originalOffset(anchor),(int)originalOffset(end),
                 (int)originalLength());
         int percent=Math.min(100,Math.round(100f*end/fullText.length()));
-        pageCount.setText("스크롤 읽기  ·  "+percent+"%");
+        pageCount.setText(L10n.t("스크롤 읽기  ·  ")+percent+"%");
         if(!seekDragging)progress.setProgress(
                 Math.round(1000f*anchor/fullText.length()));
         if(!scrollRebasePending && TextScrollWindow.shift(
@@ -484,7 +484,7 @@ public final class BookTextActivity extends Activity {
     private void showQuickSeek(){
         if(!hasBook()||pageTransitions.busy()||
                 (displayMode==0&&(pages==null||pages.isEmpty()))){
-            Toast.makeText(this,"본문 페이지를 준비한 뒤 이동할 수 있습니다.",
+            Toast.makeText(this,L10n.t("본문 페이지를 준비한 뒤 이동할 수 있습니다."),
                     Toast.LENGTH_SHORT).show();
             return;
         }
@@ -539,7 +539,7 @@ public final class BookTextActivity extends Activity {
         // typography/viewport reflows keep the last readable page visible;
         // re-showing the overlay after showPage caused it to stick over text.
         if(textPage.length()==0){
-            loadMessage.setText("페이지를 나누는 중...");
+            loadMessage.setText(L10n.t("페이지를 나누는 중..."));
             loadMessage.setVisibility(View.VISIBLE);
         }
         worker.execute(()->{
@@ -562,7 +562,7 @@ public final class BookTextActivity extends Activity {
             }catch(Exception error){
                 runOnUiThread(()->{
                     if(generation==layoutGeneration)loadMessage.setText(
-                            "페이지 구성 실패: "+error.getMessage());
+                            L10n.t("페이지 구성 실패: ")+error.getMessage());
                 });
             }
         });
@@ -587,7 +587,7 @@ public final class BookTextActivity extends Activity {
         final long point=TextPageWindow.point(desired,bookEnd);
         final long base=TextPageWindow.base(desired,bookEnd,alignAtStart);
         if(textPage.length()==0){
-            loadMessage.setText("페이지를 구성하는 중...");
+            loadMessage.setText(L10n.t("페이지를 구성하는 중..."));
             loadMessage.setVisibility(View.VISIBLE);
         }
         worker.execute(()->{
@@ -621,7 +621,7 @@ public final class BookTextActivity extends Activity {
                 runOnUiThread(()->{
                     if(generation==layoutGeneration){
                         pageTransitions.cancel();
-                        loadMessage.setText("페이지 구성 실패: "+error.getMessage());
+                        loadMessage.setText(L10n.t("페이지 구성 실패: ")+error.getMessage());
                         loadMessage.setVisibility(View.VISIBLE);
                     }
                 });
@@ -673,7 +673,7 @@ public final class BookTextActivity extends Activity {
         if(total<=0)return;
         int done=(int)Math.round(100d*Math.max(0,Math.min(total,shownEnd))/total);
         if(largeBook!=null||completeBookPages==null){
-            pageCount.setText("페이지 읽기  ·  "+done+"%");
+            pageCount.setText(L10n.t("페이지 읽기  ·  ")+done+"%");
         }else{
             int index=BookPaginator.pageFor(completeBookPages,(int)start);
             int end=Math.min(completeBookPages.size(),
@@ -888,32 +888,32 @@ public final class BookTextActivity extends Activity {
         Spinner readingMode=new Spinner(this);
         readingMode.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
-                new String[]{"책 넘김 · 좌우 페이지","세로 스크롤 · 연속 읽기"}));
+                L10n.labels(new String[]{"책 넘김 · 좌우 페이지","세로 스크롤 · 연속 읽기"})));
         readingMode.setSelection(displayMode);
         form.addView(readingMode,Ui.lp(this,-1,46));
-        form.addView(Ui.text(this,"페이지 넘김 효과",14,Ui.TEXT,true));
+        form.addView(Ui.text(this,L10n.t("페이지 넘김 효과"),14,Ui.TEXT,true));
         Spinner animation=new Spinner(this);
         animation.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
-                ReaderTurnPreferences.STYLES));
+                L10n.labels(ReaderTurnPreferences.STYLES)));
         animation.setSelection(ReaderTurnPreferences.toIndex(turnStyle));
         form.addView(animation,Ui.lp(this,-1,46));
         form.addView(Ui.text(this,L10n.t("페이지 넘김 속도"),14,Ui.TEXT,true));
         Spinner animationSpeed=new Spinner(this);
         animationSpeed.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
-                ReaderTurnPreferences.SPEEDS));
+                L10n.labels(ReaderTurnPreferences.SPEEDS)));
         animationSpeed.setSelection(slowTurn?1:0);
         form.addView(animationSpeed,Ui.lp(this,-1,46));
         CheckBox foldSpread=new CheckBox(this);
-        foldSpread.setText("폴드 펼침 화면에서 양쪽 두 페이지");
+        foldSpread.setText(L10n.t("폴드 펼침 화면에서 양쪽 두 페이지"));
         foldSpread.setChecked(foldColumns);
         form.addView(foldSpread);
-        form.addView(Ui.text(this,"글꼴",14,Ui.TEXT,true));
+        form.addView(Ui.text(this,L10n.t("글꼴"),14,Ui.TEXT,true));
         Spinner fontSelect=new Spinner(this);
         fontSelect.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
-                new String[]{"명조 · 책 본문","고딕 · 선명한 글씨","고정폭"}));
+                L10n.labels(new String[]{"명조 · 책 본문","고딕 · 선명한 글씨","고정폭"})));
         fontSelect.setSelection(fontIndex);
         form.addView(fontSelect,Ui.lp(this,-1,46));
         SeekBar size=ReaderNumericSlider.add(this,form,
@@ -923,16 +923,16 @@ public final class BookTextActivity extends Activity {
                 ReaderNumericSlider::spacing);
         SeekBar margins=ReaderNumericSlider.add(this,form,
                 "좌우 여백 · 9~44dp",9,44,margin,ReaderNumericSlider::dp);
-        form.addView(Ui.text(this,"책 배경",14,Ui.TEXT,true));
+        form.addView(Ui.text(this,L10n.t("책 배경"),14,Ui.TEXT,true));
         Spinner background=new Spinner(this);
         background.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item,
-                new String[]{"아이보리 종이","흰 종이","오래된 세피아 종이","야간 독서"}));
+                L10n.labels(new String[]{"아이보리 종이","흰 종이","오래된 세피아 종이","야간 독서"})));
         background.setSelection(themeIndex);
         form.addView(background,Ui.lp(this,-1,46));
         ScrollView optionsScroll=new ScrollView(this);
         optionsScroll.addView(form);
-        new AlertDialog.Builder(this).setTitle("텍스트책 보기 설정")
+        new AlertDialog.Builder(this).setTitle(L10n.t("텍스트책 보기 설정"))
                 .setView(optionsScroll).setNegativeButton(L10n.t("취소"),null)
                 .setPositiveButton(L10n.t("적용"),(dialog,which)->{
                     pageTransitions.cancel();

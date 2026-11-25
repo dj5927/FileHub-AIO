@@ -50,7 +50,7 @@ final class ReaderSettingsPreview extends LinearLayout {
         setOrientation(VERTICAL);
         setPadding(px(12),px(10),px(12),px(12));
         setBackground(Ui.bg(activity,Ui.SURFACE,12,Ui.BORDER));
-        TextView header=Ui.text(activity,"실시간 미리보기",13,Ui.TEAL,true);
+        TextView header=Ui.text(activity,L10n.t("실시간 미리보기"),13,Ui.TEAL,true);
         addView(header,new LayoutParams(-1,px(26)));
         sampleSurface=new LinearLayout(activity);
         sampleSurface.setOrientation(VERTICAL);
@@ -152,7 +152,7 @@ final class ReaderSettingsPreview extends LinearLayout {
             matrix.postConcat(adjust);
             sampleComic.setColorFilter(new ColorMatrixColorFilter(matrix));
             sampleSurface.setBackgroundColor(0xFFEBEBEB);
-            summary.setText("명암 "+contrast+"% · 밝기 "+
+            summary.setText(L10n.t("명암 ")+contrast+"% · 밝기 "+
                     (brightness>0?"+":"")+brightness+" · "+
                     (gray?"흑백":"컬러")+" · "+
                     (checked("rtl",false)?"일본식":"한국식")+

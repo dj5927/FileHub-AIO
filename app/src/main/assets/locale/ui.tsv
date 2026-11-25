@@ -165,7 +165,7 @@ TTF 글꼴 가져오기	Import TTF font	TTFフォントを取り込む	导入 TT
 자막 미리보기: 안녕하세요! Hello 123	Subtitle preview: Hello 123	字幕プレビュー：こんにちは！ Hello 123	字幕预览：你好！Hello 123
 재생 설정	Playback settings	再生設定	播放设置
 오디오 트랙 및 정보	Audio tracks & info	音声トラック・情報	音轨与信息
-화면 회전 · 	Rotation · 	画面回転・	屏幕旋转 · 
+화면 회전 · 	Rotation · 	画面回転・	屏幕旋转 ·
 재생 속도 초기화 (1.0×)	Reset speed (1.0×)	再生速度をリセット（1.0×）	重置播放速度（1.0×）
 화면 맞춤 / 확대	Fit / zoom	画面に合わせる・拡大	适应屏幕或缩放
 홈 버튼 확인창 권한 설정	Home button prompt permissions	ホームボタン確認の権限	主页按钮确认权限
@@ -312,3 +312,676 @@ Google Play 결제를 완료하지 못했습니다.	Google Play purchase could n
 풀버전으로 업그레이드	Upgrade to full version	フル版にアップグレード	升级至完整版
 무료 버전	Free edition	無料版	免费版
 풀버전	Full version	フル版	完整版
+표시 언어	Display language	表示言語	显示语言
+시스템 언어에 맞춤	Follow system language	システム言語に従う	跟随系统语言
+언어 설정을 저장하지 못했습니다.	Could not save the language setting.	言語設定を保存できませんでした。	无法保存语言设置。
+시스템 언어를 따르거나 직접 표시 언어를 선택할 수 있습니다. 지원하지 않는 시스템 언어는 영어로 표시합니다.	Follow the system language or choose one manually. Unsupported system languages use English.	システム言語に従うか、手動で表示言語を選択できます。未対応のシステム言語では英語を使用します。	可跟随系统语言或手动选择显示语言。不支持的系统语言将使用英语。
+시스템 설정에 맞춤	Follow system settings	システム設定に従う	跟随系统设置
+라이트 모드	Light mode	ライトモード	浅色模式
+다크 모드	Dark mode	ダークモード	深色模式
+인터페이스 · 화면 테마	Interface · Theme	インターフェース・テーマ	界面 · 主题
+FileHub AIO 파일관리자와 설정 화면의 밝기 및 색상 테마를 선택합니다.	Choose the theme for the file manager and settings.	ファイルマネージャーと設定画面のテーマを選択します。	选择文件管理器和设置页面的主题。
+개별 폴더 설정과 기존 원격 저장소 연결 정보는 유지됩니다.	Folder settings and existing remote connections are preserved.	フォルダー設定と既存のリモート接続情報は保持されます。	保留文件夹设置和现有远程连接信息。
+일반 설정은 새로운 공통 기능이 추가될 때 이 탭에 확장됩니다.	New general settings will appear in this tab.	新しい共通設定はこのタブに追加されます。	新的通用设置将添加到此选项卡。
+화면 비율	Aspect ratio	画面比率	画面比例
+비율 유지 · 영상 전체 표시	Keep aspect ratio · fit	比率を維持・全体表示	保持比例 · 完整显示
+비율 유지 · 꽉 채우기 (일부 잘림)	Keep aspect ratio · crop to fill	比率を維持・画面いっぱい（切り抜き）	保持比例 · 填满（部分裁切）
+화면 강제 채우기 (비율 변형)	Stretch to fill	画面いっぱいに引き伸ばす	拉伸填满（比例变形）
+해당 폴더에서 별도로 지정하지 않은 영상에 적용합니다.	Applies to videos without individual folder settings.	フォルダー個別設定のない動画に適用します。	适用于未单独设置的文件夹中的视频。
+좌우 더블탭 탐색 시간	Double-tap seek interval	ダブルタップのシーク間隔	双击跳转时长
+5초	5 sec	5秒	5秒
+10초	10 sec	10秒	10秒
+15초	15 sec	15秒	15秒
+20초	20 sec	20秒	20秒
+30초	30 sec	30秒	30秒
+60초	60 sec	60秒	60秒
+가로·세로 영상에 맞춰 자동 회전하며, 수동 전환도 가능합니다. 화면을 2초 누르거나 자물쇠 버튼으로 터치를 잠그고 해제합니다. 영상 왼쪽 세로 스와이프는 화면 밝기, 오른쪽 세로 스와이프는 미디어 볼륨을 조절합니다. 영상 종료 시 시청 위치를 저장하여 다음에 이어보기 여부를 묻습니다.	Rotation follows video orientation and can be changed manually. Hold for 2 seconds or use the lock button to lock/unlock touch controls. Swipe vertically on the left for brightness or on the right for volume. Playback position is saved for resuming later.	動画の向きに合わせて自動回転し、手動切り替えも可能です。2秒長押しするか鍵ボタンでタッチ操作をロック・解除します。左側の縦スワイプで明るさ、右側で音量を調整します。視聴位置を保存し、次回の再開時に確認します。	自动适配横竖屏，也可手动切换。长按2秒或点击锁按钮锁定或解锁触控。左侧上下滑动调亮度，右侧调音量。退出时保存播放位置，下次询问是否继续。
+영상 폴더별로 변경하지 않았다면 여기의 값이 적용됩니다.	These defaults apply unless overridden for a video folder.	動画フォルダーの個別設定がない場合に適用します。	未单独设置视频文件夹时使用此默认值。
+기본 자막 크기	Default subtitle size	既定の字幕サイズ	默认字幕大小
+자막 기본 언어	Default subtitle language	既定の字幕言語	默认字幕语言
+기본 자막 소스	Default subtitle source	既定の字幕ソース	默认字幕来源
+기본 언어: 한국어. 영상에 원하는 언어가 없으면 가능한 자막 트랙만 선택할 수 있습니다. 영상별 글꼴 크기 변경은 재생 중 '자막 → 자막 크기'에서 설정합니다.	Default: Korean. Only available subtitle tracks can be selected. Change subtitle size for an individual video in Subtitles → Subtitle size during playback.	既定は韓国語です。利用可能な字幕トラックのみ選択できます。動画ごとの文字サイズは再生中に「字幕→字幕サイズ」で変更します。	默认韩语。只能选择视频中可用的字幕轨道。播放时在“字幕→字幕大小”中调整单个视频的字幕大小。
+PC에서 받은 TTF 글꼴을 이 앱의 전용 저장소로 가져옵니다.	Import a TTF font into the app's private storage.	TTFフォントをアプリ専用ストレージに取り込みます。	将 TTF 字体导入应用专用存储空间。
+기본 읽기 방향	Default reading direction	既定の読む方向	默认阅读方向
+한국식 · 왼쪽→오른쪽	Left to right	左から右	从左到右
+일본식 · 오른쪽→왼쪽	Right to left	右から左	从右到左
+기본 페이지 넘김 효과	Default page turn effect	既定のページめくり効果	默认翻页效果
+기본 책 넘김 속도	Default page turn speed	既定のページ送り速度	默认翻页速度
+기본 명암 대비	Default contrast	既定のコントラスト	默认对比度
+기본 밝기	Default brightness	既定の明るさ	默认亮度
+책이나 폴더에서 따로 설정하지 않은 만화책에만 적용됩니다.	Applies to comics without individual book or folder settings.	本やフォルダーの個別設定がないコミックに適用します。	适用于未单独设置书籍或文件夹的漫画。
+TXT 기본 글꼴	TXT default font	TXTの既定フォント	TXT 默认字体
+TXT 기본 글씨 크기	TXT default font size	TXTの既定文字サイズ	TXT 默认字号
+TXT 기본 독서 배경	TXT default reading background	TXTの既定背景	TXT 默认阅读背景
+TXT 기본 읽기 방식	TXT default reading mode	TXTの既定読書モード	TXT 默认阅读模式
+TXT 기본 좌우 여백	TXT default side margins	TXTの既定左右余白	TXT 默认左右边距
+TXT 기본 줄간격	TXT default line spacing	TXTの既定行間	TXT 默认行距
+TXT 소설의 기본 글꼴·줄간격·여백·독서 모드입니다.	Default font, spacing, margins and reading mode for TXT books.	TXT小説の既定フォント・行間・余白・読書モードです。	TXT 小说的默认字体、行距、边距和阅读模式。
+EPUB 기본 글씨 크기	EPUB default font size	EPUBの既定文字サイズ	EPUB 默认字号
+EPUB 기본 독서 배경	EPUB default reading background	EPUBの既定背景	EPUB 默认阅读背景
+EPUB 기본 읽기 방식	EPUB default reading mode	EPUBの既定読書モード	EPUB 默认阅读模式
+EPUB 기본 좌우 여백	EPUB default side margins	EPUBの既定左右余白	EPUB 默认左右边距
+EPUB 기본 줄간격	EPUB default line spacing	EPUBの既定行間	EPUB 默认行距
+같은 텍스트뷰어 탭에서 EPUB의 읽기 방식과 본문 설정도 관리합니다.	Manage EPUB reading modes and text settings in this tab too.	このタブでEPUBの読書モードと本文設定も管理できます。	也可在此选项卡管理 EPUB 阅读模式和正文设置。
+PDF도 FileHub 안에서 바로 열 수 있습니다. 로컬·SD/USB·NAS 파일을 지원합니다.	Open PDFs directly in FileHub from local, SD/USB or NAS storage.	FileHub内でPDFを直接開けます。ローカル・SD/USB・NASに対応します。	可在 FileHub 中直接打开本地、SD/USB 或 NAS 中的 PDF。
+경로 형식을 확인하세요.	Check the path format.	パスの形式を確認してください。	请检查路径格式。
+선택한 폴더를 저장할 수 없습니다.	Cannot save the selected folder.	選択したフォルダーを保存できません。	无法保存所选文件夹。
+연결 목록을 읽을 수 없습니다.	Cannot read the connection list.	接続一覧を読み込めません。	无法读取连接列表。
+저장소	Storage	ストレージ	存储空间
+추가기능	Additional features	追加機能	附加功能
+외장 메모리	External memory	外部メモリ	外部存储
+검색	Search	検索	搜索
+검색 결과가 없습니다.	No search results.	検索結果がありません。	没有搜索结果。
+찾은 파일이 없습니다.	No files found.	ファイルが見つかりません。	未找到文件。
+목록 새로고침	Refresh list	一覧を更新	刷新列表
+보기 및 정렬	View & sort	表示・並べ替え	查看与排序
+보기 방식	View mode	表示形式	查看方式
+보기 방식 및 정렬 설정	View and sort settings	表示・並べ替え設定	查看与排序设置
+정렬	Sort	並べ替え	排序
+상위 폴더	Parent folder	親フォルダー	上级文件夹
+공유하기	Share	共有	分享
+숨기기	Hide	非表示	隐藏
+제외하기	Exclude	除外	排除
+숨겨진 파일 표시	Show hidden files	隠しファイルを表示	显示隐藏文件
+썸네일 표시 (이미지)	Show image thumbnails	画像サムネイルを表示	显示图片缩略图
+동영상 실제 장면 미리보기 (기본 켜짐)	Video thumbnails (on by default)	動画サムネイル（既定でオン）	视频缩略图（默认开启）
+이 폴더에만 적용 (하위 폴더 제외)	Apply to this folder only	このフォルダーのみに適用	仅应用于此文件夹
+삭제 확인	Confirm deletion	削除の確認	确认删除
+기존 파일 덮어쓰기	Overwrite existing files	既存ファイルを上書き	覆盖现有文件
+파일 선택 취소	Clear file selection	ファイル選択を解除	取消文件选择
+선택 완료	Done selecting	選択完了	选择完成
+설정에서 허용	Allow in settings	設定で許可	在设置中允许
+설정을 확인해 주세요	Check your settings	設定を確認してください	请检查设置
+저장소를 선택하세요	Choose storage	ストレージを選択	选择存储空间
+저장소를 선택한 뒤 원하는 하위 폴더로 이동하세요.	Select storage, then browse to the desired folder.	ストレージを選択して目的のサブフォルダーに移動してください。	选择存储空间后进入所需子文件夹。
+파일 목록을 읽는 중...	Reading files...	ファイル一覧を読み込み中…	正在读取文件列表…
+파일 목록을 정리하는 중...	Organizing files...	ファイル一覧を整理中…	正在整理文件列表…
+서버 폴더를 불러오는 중...	Loading server folders...	サーバーフォルダーを読み込み中…	正在加载服务器文件夹…
+서버 저장공간 확인 중...	Checking server storage...	サーバー容量を確認中…	正在检查服务器存储空间…
+네트워크 폴더 연결 중...	Connecting to network folder...	ネットワークフォルダーに接続中…	正在连接网络文件夹…
+SD 폴더를 읽는 중...	Reading SD folder...	SDフォルダーを読み込み中…	正在读取 SD 文件夹…
+SD 폴더를 읽지 못했습니다.	Could not read SD folder.	SDフォルダーを読み込めませんでした。	无法读取 SD 文件夹。
+SD카드 접근 권한	SD card access	SDカードアクセス権限	SD 卡访问权限
+SD카드가 장착되어 있지 않습니다.	No SD card inserted.	SDカードが挿入されていません。	未插入 SD 卡。
+장착된 SD카드를 찾지 못했습니다. 카드가 마운트되었는지 확인해 주세요.	No mounted SD card found. Check that the card is mounted.	SDカードが見つかりません。マウントされているか確認してください。	未找到已挂载的 SD 卡，请确认挂载状态。
+전체 접근 설정	Full access settings	全ファイルアクセス設定	所有文件访问设置
+미디어 조회 권한이 없습니다. 설정에서 접근을 허용해 주세요.	Media access is not allowed. Grant access in settings.	メディアへのアクセス権限がありません。設定で許可してください。	没有媒体访问权限，请在设置中授权。
+이미 저장소 접근 권한이 허용되어 있습니다.	Storage access is already granted.	ストレージアクセスは許可済みです。	已授予存储访问权限。
+읽기 전용 저장소입니다.	This storage is read-only.	このストレージは読み取り専用です。	此存储空间为只读。
+읽기 전용 (변경·삭제·업로드 차단)	Read-only (no edits, deletion or uploads)	読み取り専用（変更・削除・アップロード不可）	只读（禁止修改、删除和上传）
+읽기 전용 저장소의 파일은 이동할 수 없습니다. 복사를 사용하세요.	Read-only files cannot be moved. Use Copy instead.	読み取り専用ファイルは移動できません。コピーを使用してください。	无法移动只读文件，请使用复制。
+읽기 전용 저장소에는 압축 파일을 생성할 수 없습니다.	Cannot create archives on read-only storage.	読み取り専用ストレージに圧縮ファイルを作成できません。	无法在只读存储空间创建压缩文件。
+읽기 전용 저장소에서 압축해제할 수 없습니다.	Cannot extract on read-only storage.	読み取り専用ストレージには展開できません。	无法在只读存储空间解压。
+압축하기	Compress	圧縮する	压缩
+압축파일 이름	Archive name	圧縮ファイル名	压缩文件名
+압축파일 이름을 입력하세요.	Enter an archive name.	圧縮ファイル名を入力してください。	请输入压缩文件名。
+압축 파일이 있는 저장소 폴더에서 압축을 해제하세요.	Extract the archive in its storage folder.	圧縮ファイルのあるフォルダーで展開してください。	请在压缩文件所在文件夹中解压。
+이름 변경 중...	Renaming...	名前を変更中…	正在重命名…
+이름 변경은 파일 또는 폴더 하나만 선택하세요.	Select one file or folder to rename.	名前を変更するファイルまたはフォルダーを1つ選択してください。	请选择一个文件或文件夹重命名。
+선택 항목 삭제 중...	Deleting selected items...	選択項目を削除中…	正在删除所选项目…
+네트워크 파일 삭제 중...	Deleting network files...	ネットワークファイルを削除中…	正在删除网络文件…
+파일 압축·저장 중...	Compressing and saving...	圧縮・保存中…	正在压缩并保存…
+압축 해제·파일 업로드 중...	Extracting and uploading...	展開・アップロード中…	正在解压并上传…
+네트워크 저장소에 업로드 중...	Uploading to network storage...	ネットワークストレージにアップロード中…	正在上传到网络存储…
+업로드를 완료했습니다.	Upload complete.	アップロードが完了しました。	上传完成。
+파일 전송이 완료되었습니다.	File transfer complete.	ファイル転送が完了しました。	文件传输完成。
+파일 전송이 취소되었습니다.	File transfer canceled.	ファイル転送をキャンセルしました。	文件传输已取消。
+파일 전송 중에는 새 복사·이동을 시작할 수 없습니다.	Wait for the current transfer before starting another.	現在の転送が終わってから次のコピー・移動を開始してください。	请等待当前传输完成后再复制或移动。
+이미 파일 전송 중입니다.	A transfer is already running.	ファイル転送中です。	正在传输文件。
+이미 파일 전송 중입니다. 진행률 아이콘에서 확인하세요.	A transfer is already running. Check the progress icon.	ファイル転送中です。進捗アイコンで確認してください。	文件正在传输，请查看进度图标。
+붙여넣을 파일 탐색기 폴더로 이동하세요.	Open a folder to paste into.	貼り付け先のフォルダーを開いてください。	请打开要粘贴到的文件夹。
+취소 중...	Canceling...	キャンセル中…	正在取消…
+0개 완료	0 completed	0件完了	已完成 0 项
+즐겨찾기 이름을 변경했습니다.	Favorite renamed.	お気に入りの名前を変更しました。	已重命名收藏。
+즐겨찾기에 표시되는 이름만 변경되며 실제 폴더명은 그대로입니다.	Only the favorite's label changes; the folder name stays the same.	お気に入りの表示名のみ変更され、実際のフォルダー名は変わりません。	仅更改收藏显示名称，实际文件夹名称不变。
+즐겨찾기에 표시할 이름	Favorite display name	お気に入りの表示名	收藏显示名称
+즐겨찾기한 폴더가 없습니다.	No favorite folders.	お気に入りフォルダーがありません。	没有收藏文件夹。
+즐겨찾기한 SD 폴더를 찾을 수 없습니다.	Favorite SD folder not found.	お気に入りのSDフォルダーが見つかりません。	找不到收藏的 SD 文件夹。
+원래 이름	Original name	元の名前	原始名称
+원래 폴더명으로 표시합니다.	Use the original folder name.	元のフォルダー名で表示します。	使用原始文件夹名称。
+연결 방식	Connection type	接続方式	连接方式
+연결 설정을 저장했습니다.	Connection saved.	接続設定を保存しました。	已保存连接设置。
+연결을 추가하면 여기에 표시돼요.	Added connections will appear here.	追加した接続がここに表示されます。	添加的连接将显示在这里。
+NAS · TeraBox · 네이버 MYBOX 연결	NAS · TeraBox · NAVER MYBOX	NAS・TeraBox・NAVER MYBOX接続	NAS · TeraBox · NAVER MYBOX 连接
+원격 연결 삭제	Remove remote connection	リモート接続を削除	删除远程连接
+삭제된 원격 연결입니다.	This remote connection was removed.	このリモート接続は削除されています。	此远程连接已删除。
+원격 연결 정보가 없거나 삭제되었습니다.	Remote connection is missing or removed.	リモート接続が存在しないか削除されています。	远程连接不存在或已删除。
+저장된 연결 설정을 읽을 수 없습니다. 암호화 키를 확인하세요.	Cannot read saved connections. Check the encryption key.	保存済み接続を読み込めません。暗号化キーを確認してください。	无法读取已保存连接，请检查加密密钥。
+네트워크 계정을 읽지 못했습니다.	Could not read the network account.	ネットワークアカウントを読み込めませんでした。	无法读取网络账号。
+예: 집 NAS	e.g. Home NAS	例：自宅NAS	例如：家庭 NAS
+예: /video 또는 /Public	e.g. /video or /Public	例：/video または /Public	例如：/video 或 /Public
+WebDAV HTTPS 보안 연결 사용	Use secure WebDAV HTTPS	WebDAV HTTPS接続を使用	使用 WebDAV HTTPS 安全连接
+FTP 연결 보안	FTP connection security	FTP接続のセキュリティ	FTP 连接安全
+FTP 수동 모드(PASV)	FTP passive mode (PASV)	FTPパッシブモード（PASV）	FTP 被动模式（PASV）
+FTP 파일명 문자셋	FTP filename encoding	FTPファイル名文字コード	FTP 文件名编码
+SFTP 파일명 문자셋	SFTP filename encoding	SFTPファイル名文字コード	SFTP 文件名编码
+SFTP 서버 신뢰 확인	Verify SFTP server trust	SFTPサーバーの信頼確認	验证 SFTP 服务器信任
+SFTP 홈 디렉터리 확인 중...	Checking SFTP home directory...	SFTPホームディレクトリを確認中…	正在检查 SFTP 主目录…
+SFTP 로그인 계정의 홈 폴더를 확인하는 중...	Checking the SFTP account's home folder...	SFTPアカウントのホームフォルダーを確認中…	正在检查 SFTP 账号主文件夹…
+인증 확인 후 저장	Verify and save	認証して保存	验证并保存
+인증하고 계속	Authenticate and continue	認証して続ける	验证并继续
+DSM 2단계 인증	DSM two-factor authentication	DSM二段階認証	DSM 双重验证
+6자리 인증코드	6-digit verification code	6桁の認証コード	6 位验证码
+이 기기를 신뢰하여 다음 로그인부터 코드 생략	Trust this device and skip code next time	この端末を信頼し次回からコードを省略	信任此设备，下次登录无需验证码
+공유 링크 해제	Revoke share link	共有リンクを解除	撤销分享链接
+선택 링크 해제	Revoke selected links	選択リンクを解除	撤销所选链接
+NAS 공유 링크 관리	Manage NAS share links	NAS共有リンク管理	管理 NAS 分享链接
+NAS 공유 링크 목록 확인 중...	Checking NAS share links...	NAS共有リンク一覧を確認中…	正在检查 NAS 分享链接…
+NAS에서 공유 링크 생성 중...	Creating NAS share link...	NAS共有リンクを作成中…	正在创建 NAS 分享链接…
+NAS 공유 링크 인증이 완료됐습니다.	NAS share authentication complete.	NAS共有リンク認証が完了しました。	NAS 分享链接验证完成。
+NAS 공유 기능 연결을 해제했습니다.	NAS sharing disconnected.	NAS共有機能の接続を解除しました。	已断开 NAS 分享功能。
+링크 생성	Create link	リンクを作成	创建链接
+링크 하나만 선택하면 주소를 복사할 수 있습니다.	Select one link to copy its address.	リンクを1つ選択するとアドレスをコピーできます。	选择一个链接即可复制地址。
+유효기간	Expiration	有効期限	有效期
+다운로드 링크 공유	Share download link	ダウンロードリンクを共有	分享下载链接
+다운로드 링크 생성 완료	Download link created	ダウンロードリンクを作成しました	已创建下载链接
+공유 링크 일괄 해제 결과	Bulk link revocation results	一括リンク解除結果	批量撤销链接结果
+링크 공유를 허용할 NAS 폴더	NAS folders allowed for link sharing	リンク共有を許可するNASフォルダー	允许链接分享的 NAS 文件夹
+공유 폴더 목록 불러오기 · 여러 개 선택	Load shared folders · multi-select	共有フォルダー一覧を取得・複数選択	加载共享文件夹 · 多选
+접근 가능한 공유 폴더가 없습니다.	No accessible shared folders.	アクセス可能な共有フォルダーがありません。	没有可访问的共享文件夹。
+NAS 공유 폴더 조회 중...	Loading NAS shared folders...	NAS共有フォルダーを取得中…	正在加载 NAS 共享文件夹…
+File Station 공유 폴더 탐색 중...	Browsing File Station shares...	File Station共有フォルダーを参照中…	正在浏览 File Station 共享文件夹…
+선택하지 않은 NAS 공유 폴더입니다.	This NAS share is not selected.	選択されていないNAS共有フォルダーです。	未选择此 NAS 共享文件夹。
+공유 링크는 Synology·QNAP 개인 NAS 연결에서만 사용할 수 있습니다.	Share links are available only for Synology and QNAP NAS connections.	共有リンクはSynology・QNAP NAS接続でのみ利用できます。	仅 Synology 和 QNAP NAS 连接支持分享链接。
+Synology 또는 QNAP 제조사를 먼저 선택하세요.	Select Synology or QNAP first.	先にSynologyまたはQNAPを選択してください。	请先选择 Synology 或 QNAP。
+공식 포털 열기	Open official portal	公式ポータルを開く	打开官方门户
+SmartURL 저장 후 열기	Save SmartURL and open	SmartURLを保存して開く	保存并打开 SmartURL
+장치 SmartURL을 입력하거나 공식 포털 열기를 선택하세요.	Enter the device SmartURL or open the official portal.	端末のSmartURLを入力するか公式ポータルを開いてください。	请输入设备 SmartURL 或打开官方门户。
+QNAP CloudLink · 포트 개방 불필요	QNAP CloudLink · no port forwarding	QNAP CloudLink・ポート開放不要	QNAP CloudLink · 无需端口转发
+QNAP CloudLink로 포트 개방 없이 접속 (공식 웹)	Connect through QNAP CloudLink (official web, no port forwarding)	QNAP CloudLinkで接続（公式Web・ポート開放不要）	通过 QNAP CloudLink 连接（官方网站，无需端口转发）
+myQNAPcloud 페이지를 열려면 웹 브라우저가 필요합니다.	A browser is required to open myQNAPcloud.	myQNAPcloudを開くにはブラウザーが必要です。	打开 myQNAPcloud 需要浏览器。
+네이버 MYBOX PAT 발급 방법	How to issue a NAVER MYBOX PAT	NAVER MYBOX PATの発行方法	如何申请 NAVER MYBOX PAT
+mbx_pat_... 개인 액세스 토큰	mbx_pat_... personal access token	mbx_pat_... 個人アクセストークン	mbx_pat_... 个人访问令牌
+TeraBox 계정으로 웹 로그인 · 세션 가져오기	Sign in to TeraBox on the web · import session	TeraBox Webログイン・セッション取得	TeraBox 网页登录 · 导入会话
+TeraBox 웹 로그인 · 세션 가져오기	TeraBox web login · import session	TeraBox Webログイン・セッション取得	TeraBox 网页登录 · 导入会话
+PC에서 TeraBox 세션 가져오는 방법	Import a TeraBox session from PC	PCからTeraBoxセッションを取り込む	从电脑导入 TeraBox 会话
+세션 가져오기	Import session	セッションを取り込む	导入会话
+PC 웹 새로고침	Refresh web page	Webページを更新	刷新网页
+ndus 세션값 또는 ndus=...	ndus session value or ndus=...	ndusセッション値またはndus=...	ndus 会话值或 ndus=...
+Android판에서는 Google Drive 연결을 지원하지 않습니다.	Google Drive is not supported in the Android edition.	Android版はGoogle Drive接続に対応していません。	Android 版不支持 Google Drive 连接。
+클라우드 베타 연결은 읽기 전용입니다.	This cloud beta connection is read-only.	クラウドベータ接続は読み取り専用です。	此云端测试连接为只读。
+클라우드 폴더	Cloud folder	クラウドフォルダー	云端文件夹
+동영상 폴더	Video folder	動画フォルダー	视频文件夹
+독서용 폴더 설정/해제	Toggle reading folder	読書フォルダーの指定・解除	设置或取消阅读文件夹
+권한 변경 완료: 	Permissions changed: 	権限を変更しました：	权限已更改：
+권한 변경은 쓰기 가능한 SFTP 파일 또는 폴더 한 개를 선택하세요.	Select one writable SFTP file or folder to change permissions.	権限を変更する書き込み可能なSFTPファイルまたはフォルダーを1つ選択してください。	请选择一个可写的 SFTP 文件或文件夹修改权限。
+SFTP chmod 권한 변경 중...	Changing SFTP permissions (chmod)...	SFTP権限を変更中（chmod）…	正在修改 SFTP 权限（chmod）…
+파일 권한이 변경되지 않았습니다.	File permissions were not changed.	ファイル権限は変更されていません。	文件权限未更改。
+755, 644, 0755처럼 3~4자리 8진수를 입력하세요.	Enter 3–4 octal digits, such as 755, 644 or 0755.	755、644、0755のような3～4桁の8進数を入力してください。	请输入 3～4 位八进制数，例如 755、644 或 0755。
+왼쪽 탐색 메뉴	Left navigation menu	左側ナビゲーション	左侧导航菜单
+FileHub AIO 아이콘	FileHub AIO icon	FileHub AIOアイコン	FileHub AIO 图标
+FileHub AIO 홈	FileHub AIO home	FileHub AIOホーム	FileHub AIO 主页
+음악 일시정지 또는 재생	Pause or play music	音楽の一時停止・再生	暂停或播放音乐
+음악 재생 종료	Stop music	音楽再生を終了	停止音乐
+음악 재생 조작에 실패했습니다.	Music control failed.	音楽再生の操作に失敗しました。	音乐播放操作失败。
+파일 전송 진행률, 눌러서 전송창 다시 열기	Transfer progress · tap to reopen	転送進捗・タップで再表示	传输进度 · 点击重新打开
+인터넷 QR은 더 이상 지원하지 않습니다. LAN QR을 이용해 주세요.	Internet QR is no longer supported. Use LAN QR.	インターネットQRは終了しました。LAN QRを使用してください。	不再支持互联网二维码，请使用局域网二维码。
+일치하는 파일이 없습니다.	No matching files.	一致するファイルがありません。	没有匹配文件。
+파일명 일부를 입력하세요. 현재 폴더의 항목에서 검색합니다.	Enter part of a filename to search the current folder.	ファイル名の一部を入力して現在のフォルダー内を検索します。	输入部分文件名以搜索当前文件夹。
+이 폴더를 열 수 없습니다. 저장소 접근 권한을 확인하세요.	Cannot open this folder. Check storage permissions.	フォルダーを開けません。アクセス権限を確認してください。	无法打开此文件夹，请检查存储权限。
+책 폴더는 폴더 하나를 선택해 지정해 주세요.	Select one folder to assign as a book folder.	本フォルダーとして1つのフォルダーを指定してください。	请选择一个文件夹作为书籍文件夹。
+오른쪽 위 + 를 눌러 로컬·SD·네트워크 폴더를 찾아 지정하세요.	Tap + to choose a local, SD or network folder.	右上の＋でローカル・SD・ネットワークフォルダーを指定してください。	点击右上角 + 选择本地、SD 或网络文件夹。
+기기에 저장된 파일 · 보기 설정에서 정렬 변경 가능	Files on this device · change sorting in view settings	端末内ファイル・表示設定で並べ替え可能	设备上的文件 · 可在查看设置中排序
+기존 파일 전송이 완료된 뒤 붙여넣기를 사용할 수 있습니다.	Paste is available after the current transfer completes.	現在の転送完了後に貼り付けできます。	当前传输完成后可粘贴。
+0 B / 용량 확인 중	0 B / Checking capacity	0 B / 容量確認中	0 B / 正在检查容量
+폴더 용도 지정 해제	Remove folder assignment	フォルダー指定を解除	取消文件夹用途
+폴더 용도를 지정했습니다.	Folder purpose assigned.	フォルダーの用途を指定しました。	已指定文件夹用途。
+폴더 용도 설정은 폴더 하나만 선택하세요.	Select one folder to assign its purpose.	用途を指定するフォルダーを1つ選択してください。	请选择一个文件夹设置用途。
+폴더 읽기 권한이 없습니다.	No permission to read this folder.	フォルダーの読み取り権限がありません。	没有文件夹读取权限。
+폴더 접근 권한 주의	Folder access warning	フォルダーアクセス権限の注意	文件夹访问权限提示
+폴더 직접 선택	Choose folder directly	フォルダーを直接選択	直接选择文件夹
+폴더 추가 · 탐색기	Add folder · explorer	フォルダー追加・エクスプローラー	添加文件夹 · 浏览器
+폴더 하나를 선택해 주세요.	Select one folder.	フォルダーを1つ選択してください。	请选择一个文件夹。
+표시할 하위 폴더가 없습니다. + 버튼으로 폴더를 추가하세요.	No folders to display. Tap + to add one.	表示するフォルダーがありません。＋で追加してください。	没有可显示的文件夹，点击 + 添加。
+하위 폴더 목록을 읽는 중...	Reading subfolders...	サブフォルダーを読み込み中…	正在读取子文件夹…
+하위 폴더 포함 검색	Search including subfolders	サブフォルダーも検索	搜索包含子文件夹
+하위 폴더가 없습니다. 이 폴더를 지정할 수 있습니다.	No subfolders. You can assign this folder.	サブフォルダーがありません。このフォルダーを指定できます。	没有子文件夹，可以指定此文件夹。
+하위 폴더를 검색하고 있습니다…	Searching subfolders…	サブフォルダーを検索中…	正在搜索子文件夹…
+현재 리눅스 파일 권한 확인 중...	Checking Linux file permissions...	Linuxファイル権限を確認中…	正在检查 Linux 文件权限…
+현재 설정한 공유 폴더에 발급된 링크가 없습니다.	No links issued for the selected shares.	指定した共有フォルダーに発行済みリンクがありません。	所选共享文件夹没有已创建的链接。
+현재 폴더	Current folder	現在のフォルダー	当前文件夹
+현재 폴더 새로고침	Refresh current folder	現在のフォルダーを更新	刷新当前文件夹
+현재 폴더 작업	Current folder actions	現在のフォルダーの操作	当前文件夹操作
+현재 폴더 즐겨찾기 추가	Add current folder to favorites	現在のフォルダーをお気に入りに追加	收藏当前文件夹
+현재 폴더 지정	Assign current folder	現在のフォルダーを指定	指定当前文件夹
+현재 폴더에서 검색	Search current folder	現在のフォルダーを検索	搜索当前文件夹
+현재 폴더에서 파일명 검색	Search filenames in current folder	現在のフォルダーのファイル名を検索	搜索当前文件夹中的文件名
+현재: 	Current: 	現在：	当前：
+호스트 또는 IP	Host or IP	ホストまたはIP	主机或 IP
+홈으로 이동	Go home	ホームに移動	返回主页
+확인하고 연결	Verify and connect	確認して接続	确认并连接
+NAS 제조사 및 File Station 인증 확인 중...	Checking NAS vendor and File Station authentication...	NASメーカーとFile Stationの認証を確認中…	正在检查 NAS 厂商和 File Station 身份验证…
+SD·USB 폴더 접근 권한이 없습니다. 저장소에서 권한을 다시 설정해 주세요.	No SD/USB folder access. Grant access again in storage settings.	SD・USBフォルダーのアクセス権限がありません。ストレージで再設定してください。	没有 SD/USB 文件夹访问权限，请在存储设置中重新授权。
+SMB: 공유이름    기타: /시작폴더	SMB: share name    Others: /start-folder	SMB：共有名　その他：/開始フォルダー	SMB：共享名称　其他：/起始文件夹
+갤러리 미디어 등록 요청 중...	Registering media with the gallery...	ギャラリーにメディアを登録中…	正在将媒体添加到图库…
+메인 저장소와 다운로드의 모든 폴더를 탐색하려면 파일관리자 접근 권한이 필요합니다. 보호된 시스템·앱 개인 폴더는 제외됩니다.	File manager access is required to browse all folders in internal storage and Downloads. Protected system and private app folders are excluded.	内部ストレージとダウンロード内の全フォルダーを参照するにはファイル管理権限が必要です。保護されたシステム・アプリ専用フォルダーは対象外です。	浏览内部存储和下载目录中的所有文件夹需要文件管理权限，不包括受保护的系统及应用私有文件夹。
+미디어 화면의 이름 변경은 저장소 폴더에서 진행하세요.	To rename media, open its storage folder.	メディアの名前変更は保存先フォルダーで行ってください。	请在媒体所在存储文件夹中重命名。
+백그라운드 전송 진행률을 알림바에 표시하려면 알림 권한이 필요합니다.	Notification permission is required to show background transfer progress.	バックグラウンド転送の進捗表示には通知権限が必要です。	显示后台传输进度需要通知权限。
+백그라운드 전송 서비스를 시작하지 못했습니다: 	Could not start background transfer: 	バックグラウンド転送を開始できませんでした：	无法启动后台传输：
+변경할 권한: 	New permissions: 	変更する権限：	新权限：
+생성했습니다.	Created.	作成しました。	已创建。
+선택한 NAS 공유 링크 해제 중...	Revoking selected NAS share links...	選択したNAS共有リンクを解除中…	正在撤销所选 NAS 分享链接…
+선택한 미디어를 표시하려면 파일 접근 권한이 필요합니다.	File access permission is required to display selected media.	選択したメディアの表示にはファイルアクセス権限が必要です。	显示所选媒体需要文件访问权限。
+실제 폴더명: 	Actual folder name: 	実際のフォルダー名：	实际文件夹名称：
+압축 파일 생성: 	Creating archive: 	圧縮ファイルを作成：	创建压缩文件：
+압축파일을 저장할 파일관리자 폴더에서 선택해 주세요.	Choose a folder in the file manager to save the archive.	圧縮ファイルの保存先をファイルマネージャーで選択してください。	请在文件管理器中选择压缩文件保存目录。
+영상 폴더에 접근할 수 없습니다. SD·USB 또는 폴더 접근 권한을 다시 지정해 주세요.	Cannot access the video folder. Grant SD/USB or folder access again.	動画フォルダーにアクセスできません。SD・USBまたはフォルダーの権限を再設定してください。	无法访问视频文件夹，请重新授予 SD/USB 或文件夹访问权限。
+외부 앱/허용되지 않은 주소로 이동하지 않습니다.	External apps and disallowed URLs will not be opened.	外部アプリや許可されていないURLは開きません。	不会打开外部应用或未获允许的网址。
+음악 재생 서비스를 실행하지 못했습니다: 	Could not start music playback: 	音楽再生サービスを開始できませんでした：	无法启动音乐播放服务：
+지정 폴더를 표시하지 못했습니다: 	Could not display assigned folder: 	指定フォルダーを表示できませんでした：	无法显示指定文件夹：
+지정한 로컬 폴더를 찾을 수 없습니다: 	Assigned local folder not found: 	指定ローカルフォルダーが見つかりません：	找不到指定的本地文件夹：
+지정한 폴더의 하위 폴더를 찾는 중...	Finding subfolders in the assigned folder...	指定フォルダーのサブフォルダーを検索中…	正在查找指定文件夹中的子文件夹…
+파일 전송 실패: 	File transfer failed: 	ファイル転送失敗：	文件传输失败：
+폴더 이동: 	Move folder: 	フォルダーを移動：	移动文件夹：
+폴더를 읽지 못했습니다: 	Could not read folder: 	フォルダーを読み込めませんでした：	无法读取文件夹：
+코드는 저장하지 않습니다. '이 기기 신뢰'를 선택하면 DSM에서 발급한 기기 식별자만 암호화 저장합니다.	The code is not stored. If you trust this device, only the DSM-issued device identifier is encrypted and stored.	コードは保存しません。端末を信頼する場合、DSM発行の端末識別子のみ暗号化して保存します。	不保存验证码。选择信任此设备时，仅加密保存 DSM 发放的设备标识符。
+글꼴	Font	フォント	字体
+본문 페이지를 준비한 뒤 이동할 수 있습니다.	Wait until the text pages are ready.	本文ページの準備が完了してから移動できます。	正文页面准备完成后即可跳转。
+스크롤 읽기  ·  	Scroll reading · 	スクロール読書・	滚动阅读 ·
+책 배경	Book background	本の背景	书籍背景
+책을 여는 중...	Opening book...	本を開いています…	正在打开书籍…
+큰 책의 본문을 읽지 못했습니다: 	Could not read large book: 	大きな本の本文を読み込めませんでした：	无法读取大文件书籍正文：
+텍스트책 보기 설정	Text book view settings	テキスト本の表示設定	文本书籍查看设置
+텍스트책 전체 진행률과 페이지. 터치하면 0~100% 빠른 이동	Book progress and page. Tap to seek from 0–100%.	本全体の進捗とページ。タップで0～100%に移動。	全书进度与页码。点击可快速跳转 0～100%。
+텍스트책을 열지 못했습니다: 	Could not open text book: 	テキスト本を開けませんでした：	无法打开文本书籍：
+페이지 구성 실패: 	Page layout failed: 	ページ構成に失敗しました：	页面布局失败：
+페이지 넘김 효과	Page turn effect	ページめくり効果	翻页效果
+페이지 읽기  ·  	Page reading · 	ページ読書・	分页阅读 ·
+페이지를 구성하는 중...	Laying out pages...	ページを構成中…	正在排版页面…
+페이지를 나누는 중...	Paginating...	ページ分割中…	正在分页…
+폰트, 글씨 크기, 줄간격, 배경 설정	Font, text size, line spacing and background	フォント・文字サイズ・行間・背景設定	字体、字号、行距与背景设置
+폴드 펼침 화면에서 양쪽 두 페이지	Two pages on unfolded display	展開画面で見開き表示	展开屏幕时双页显示
+내장 문서 엔진 준비 중...	Preparing built-in document engine...	内蔵文書エンジンを準備中…	正在准备内置文档引擎…
+내장 문서 편집기를 여는 중...	Opening built-in document editor...	内蔵文書エディターを開いています…	正在打开内置文档编辑器…
+문서 준비 실패: 	Document preparation failed: 	文書の準備に失敗しました：	文档准备失败：
+문서 편집 종료	Close document editor	文書編集を終了	退出文档编辑
+문서를 원본에 저장했습니다.	Document saved to original file.	元のファイルに文書を保存しました。	已将文档保存到原文件。
+원본 엑셀 파일 저장	Save original Excel file	元のExcelファイルに保存	保存原始 Excel 文件
+원본 저장 실패. 편집 화면을 유지하세요.	Save failed. Keep the editor open.	保存に失敗しました。編集画面を閉じないでください。	保存失败，请保持编辑页面打开。
+원본 저장이 완료된 뒤 닫으세요.	Close after saving to the original file.	元のファイルへの保存完了後に閉じてください。	保存到原文件后再关闭。
+저장 진행 중	Saving	保存中	正在保存
+저장하지 않은 변경 내용은 사라질 수 있습니다. 종료하시겠습니까?	Unsaved changes may be lost. Exit?	未保存の変更は失われる可能性があります。終了しますか？	未保存的更改可能丢失，是否退出？
+가로 폭 맞춤 (기본: 페이지 전체 맞춤)	Fit width (default: fit page)	幅に合わせる（既定：ページ全体）	适应宽度（默认：整页适应）
+다음 권 보기	Open next volume	次の巻を開く	打开下一卷
+다음 만화책 이어 보기	Continue to next comic	次のコミックを読む	继续阅读下一本漫画
+마지막 페이지입니다.	This is the last page.	最後のページです。	已到最后一页。
+만화책 여는 중...	Opening comic...	コミックを開いています…	正在打开漫画…
+만화책 전체 쪽수와 진행률. 터치하면 0~100% 빠른 이동	Comic page count and progress. Tap to seek from 0–100%.	コミックのページ数と進捗。タップで0～100%に移動。	漫画页数与进度。点击可快速跳转 0～100%。
+만화책 페이지를 준비한 뒤 이동할 수 있습니다.	Wait until the comic pages are ready.	コミックのページ準備完了後に移動できます。	漫画页面准备完成后即可跳转。
+만화책을 열지 못했습니다: 	Could not open comic: 	コミックを開けませんでした：	无法打开漫画：
+일본식 · 오른쪽에서 왼쪽으로 넘기기	Right-to-left page turns	右から左へページをめくる	从右向左翻页
+읽는 방향	Reading direction	読む方向	阅读方向
+페이지 불러오는 중...	Loading page...	ページを読み込み中…	正在加载页面…
+페이지를 표시하지 못했습니다: 	Could not display page: 	ページを表示できませんでした：	无法显示页面：
+폴드 펼침 화면에서 두 페이지 펼쳐 보기	Show two pages on unfolded display	展開画面で見開き表示	展开屏幕时显示双页
+한국식 · 왼쪽에서 오른쪽으로 넘기기	Left-to-right page turns	左から右へページをめくる	从左向右翻页
+현재 권을 끝까지 읽었습니다.\n\n	You have finished this volume.\n\n	この巻を読み終えました。\n\n	已读完本卷。\n\n
+흑백 모드	Grayscale mode	白黒モード	灰度模式
+EPUB 독서 설정	EPUB reading settings	EPUB読書設定	EPUB 阅读设置
+EPUB 전체 빠른 이동	Seek through EPUB	EPUB全体の移動	EPUB 全书快速跳转
+PDF 독서 설정	PDF reading settings	PDF読書設定	PDF 阅读设置
+PDF 책 전체 이동	Seek through PDF	PDF全体の移動	PDF 全书跳转
+PDF 책을 여는 중...	Opening PDF book...	PDF本を開いています…	正在打开 PDF 书籍…
+PDF는 원본 페이지를 유지하며 EPUB과 같은 독서 화면으로 표시합니다.	PDF preserves the original pages and uses the same reading interface as EPUB.	PDFは元のページを維持し、EPUBと同じ読書画面で表示します。	PDF 保留原始页面，并使用与 EPUB 相同的阅读界面。
+독서 배경	Reading background	読書背景	阅读背景
+슬라이더를 좌우로 움직이면 책 전체 0~100% 위치를 선택합니다.	Move the slider to select a position from 0–100% of the book.	スライダーで本全体の0～100%の位置を選択できます。	拖动滑块选择全书 0～100% 的位置。
+책 넘김 효과 (페이지형)	Page turn effect (paged mode)	ページめくり効果（ページ形式）	翻页效果（分页模式）
+페이지를 불러온 뒤 이동해 주세요.	Wait until the page loads.	ページの読み込み完了後に移動してください。	请等待页面加载完成后跳转。
+폴드 펼침 화면에서 두 페이지 나란히 보기	Two side-by-side pages on unfolded display	展開画面で2ページを並べて表示	展开屏幕时并排显示双页
+현재 챕터, 현재 페이지와 본문 전체 진행률. 터치해서 0부터 100퍼센트까지 빠른 이동	Chapter, page and overall progress. Tap to seek from 0–100%.	章・ページ・全体の進捗。タップで0～100%に移動。	章节、页码与全书进度。点击快速跳转 0～100%。
+현재 페이지를 불러온 뒤 이동할 수 있습니다.	Wait until the current page loads.	現在のページの読み込み後に移動できます。	当前页面加载完成后即可跳转。
+길게 눌러 순서 이동, 오른쪽 메뉴에서 이름 변경 또는 삭제	Hold to reorder; use the right menu to rename or delete.	長押しで並べ替え、右のメニューで名前変更・削除。	长按调整顺序，使用右侧菜单重命名或删除。
+다음 사진 준비 중…	Preparing next photo…	次の写真を準備中…	正在准备下一张照片…
+다음 사진을 불러오지 못했습니다: 	Could not load next photo: 	次の写真を読み込めませんでした：	无法加载下一张照片：
+이미지 읽는 중...	Reading image...	画像を読み込み中…	正在读取图片…
+문서 저장	Save document	文書を保存	保存文档
+문서 편집	Edit document	文書編集	编辑文档
+문서를 수정했지만 아직 저장하지 않았습니다.	The document has unsaved changes.	文書に未保存の変更があります。	文档有未保存的更改。
+문서를 읽는 중...	Reading document...	文書を読み込み中…	正在读取文档…
+원본 파일에 저장하는 중...	Saving to original file...	元のファイルに保存中…	正在保存到原文件…
+저장하지 않고 닫기	Close without saving	保存せずに閉じる	不保存并关闭
+저장하지 않은 변경사항	Unsaved changes	未保存の変更	未保存的更改
+저장했습니다.	Saved.	保存しました。	已保存。
+편집기 닫기	Close editor	エディターを閉じる	关闭编辑器
+오디오 설정	Audio settings	音声設定	音频设置
+오디오 소스 / 언어	Audio source / language	音声ソース／言語	音频来源 / 语言
+오디오 트랙	Audio track	音声トラック	音轨
+오디오 트랙 / 언어 선택	Select audio track / language	音声トラック・言語を選択	选择音轨 / 语言
+오디오 트랙 및 디코더 설정	Audio track and decoder settings	音声トラック・デコーダー設定	音轨与解码器设置
+내장 자막 언어 / 트랙	Embedded subtitle language / track	内蔵字幕の言語・トラック	内嵌字幕语言 / 轨道
+내장 자막 언어 / 트랙 선택	Select embedded subtitle language / track	内蔵字幕の言語・トラックを選択	选择内嵌字幕语言 / 轨道
+다음 편 재생	Play next episode	次の話を再生	播放下一集
+다음 편을 재생할까요?	Play the next episode?	次の話を再生しますか？	播放下一集吗？
+동영상 재생 종료	Stop video playback	動画再生を終了	结束视频播放
+동영상 폴더의 자막 글꼴	Subtitle font for video folder	動画フォルダーの字幕フォント	视频文件夹字幕字体
+모든 자막 끄기	Turn off all subtitles	すべての字幕をオフ	关闭所有字幕
+선택 가능한 내장 자막이 없습니다. 하드섭 영상일 수도 있어요.	No selectable embedded subtitles. The video may have burned-in subtitles.	選択できる内蔵字幕がありません。焼き付け字幕の動画かもしれません。	没有可选内嵌字幕，视频可能含硬字幕。
+외부 SRT · VTT · SMI 파일 선택	Choose external SRT / VTT / SMI file	外部SRT・VTT・SMIファイルを選択	选择外部 SRT、VTT 或 SMI 文件
+외부 및 내장 자막 설정	External and embedded subtitle settings	外部・内蔵字幕設定	外挂与内嵌字幕设置
+외부 자막 제거	Remove external subtitles	外部字幕を削除	移除外挂字幕
+외부 자막이 아직 없습니다. 파일 선택으로 추가할 수 있어요.	No external subtitles yet. Select a file to add one.	外部字幕がありません。ファイルを選択して追加できます。	没有外挂字幕，可选择文件添加。
+이 폴더의 기본 설정을 복원했습니다.	Default folder settings restored.	フォルダーの既定設定を復元しました。	已恢复文件夹默认设置。
+이 폴더의 동영상 설정 초기화	Reset this folder's video settings	このフォルダーの動画設定をリセット	重置此文件夹的视频设置
+이 폴더의 자막 크기	Subtitle size for this folder	このフォルダーの字幕サイズ	此文件夹字幕大小
+이어보기	Resume	続きから再生	继续播放
+이어서 재생할까요?	Resume playback?	続きから再生しますか？	继续播放吗？
+자동 선택으로 되돌리기 (외부 우선)	Restore auto selection (external first)	自動選択に戻す（外部優先）	恢复自动选择（外挂优先）
+자막 글꼴 (이 폴더 전체 영상)	Subtitle font (all videos in this folder)	字幕フォント（フォルダー内全動画）	字幕字体（此文件夹所有视频）
+자막 소스 선택	Select subtitle source	字幕ソースを選択	选择字幕来源
+자막 크기 (이 폴더 전체 영상)	Subtitle size (all videos in this folder)	字幕サイズ（フォルダー内全動画）	字幕大小（此文件夹所有视频）
+재생 속도 0.1배 감소	Decrease speed by 0.1×	再生速度を0.1倍下げる	播放速度降低 0.1 倍
+재생 속도 0.1배 증가	Increase speed by 0.1×	再生速度を0.1倍上げる	播放速度增加 0.1 倍
+재생 정지	Stop playback	再生停止	停止播放
+재생 중인 오디오: 	Playing audio: 	再生中の音声：	正在播放的音频：
+처음부터	From beginning	最初から	从头开始
+팝업 재생 전환이 불가능합니다.	Cannot switch to popup playback.	ポップアップ再生に切り替えられません。	无法切换到悬浮播放。
+팝업 재생을 시작하지 못했습니다.	Could not start popup playback.	ポップアップ再生を開始できませんでした。	无法启动悬浮播放。
+팝업으로 계속 재생	Continue in popup	ポップアップで再生を続ける	在悬浮窗口继续播放
+팝업으로 계속 재생하시겠습니까?	Continue playback in a popup?	ポップアップで再生を続けますか？	是否在悬浮窗口继续播放？
+한 번만 권한 허용	Allow once	今回のみ許可	仅允许一次
+현재 영상 오디오 정보	Current video audio information	現在の動画の音声情報	当前视频音频信息
+현재 오디오 소스 · 코덱 · 디코더 정보	Current audio source, codec and decoder	現在の音声ソース・コーデック・デコーダー情報	当前音频来源、编解码器和解码器信息
+현재 오디오 코덱: 	Current audio codec: 	現在の音声コーデック：	当前音频编解码器：
+현재 재생 속도, 누르면 1배로 초기화	Current playback speed. Tap to reset to 1×.	現在の再生速度。タップで1倍に戻します。	当前播放速度，点击恢复 1 倍。
+현재 재생기에서 선택 가능한 오디오 트랙이 없습니다.	No selectable audio tracks in the current player.	現在のプレーヤーに選択可能な音声トラックがありません。	当前播放器没有可选音轨。
+홈 버튼 확인창 권한	Home button prompt permission	ホームボタン確認の権限	主页按钮确认权限
+홈 버튼 확인창 권한이 허용되어 있습니다.	Home button prompt permission is granted.	ホームボタン確認の権限は許可済みです。	已授予主页按钮确认权限。
+화면 방향 자동, 가로, 세로 순환	Cycle auto, landscape and portrait orientation	自動・横・縦の向きを切り替え	循环切换自动、横屏和竖屏
+🔓 잠금 해제	🔓 Unlock	🔓 ロック解除	🔓 解锁
+권한 설정을 열 수 없습니다.	Cannot open permission settings.	権限設定を開けません。	无法打开权限设置。
+기본값 사용	Use default	既定値を使用	使用默认值
+SRT, VTT, SMI 파일을 지원합니다.	SRT, VTT and SMI files are supported.	SRT、VTT、SMIファイルに対応します。	支持 SRT、VTT、SMI 文件。
+SMI 자막 불러오기 실패: 	Could not load SMI subtitles: 	SMI字幕を読み込めませんでした：	无法加载 SMI 字幕：
+FileHub AIO 팝업 재생 확인	FileHub AIO popup playback	FileHub AIO ポップアップ再生の確認	FileHub AIO 悬浮播放确认
+/영화/해외영화	/Movies/Foreign	/映画/海外映画	/电影/海外电影
+PDF는 원본 문서의 글과 그림 위치를 유지합니다. 읽는 중 상단 +/−로 	PDF preserves the original text and image layout. Use +/− at the top to 	PDFは元の文字や画像の配置を維持します。上部の＋/−で	PDF 保留原始文字与图片位置。阅读时使用顶部 +/−
+TXT 빈 줄 자동 정리: 기본 적용 · 규칙적으로 늘어난 줄바꿈만 감지해 	TXT blank-line cleanup: enabled by default · Detects only regularly repeated line breaks and 	TXT空行の自動整理：既定で有効・規則的に増えた改行のみ検出し	TXT 空行自动整理：默认启用 · 仅检测规律增加的换行并
+예: 만화책/A만화의 1권에서 일본식으로 변경하면 A만화 폴더의 	For example, changing volume 1 in Comics/A to right-to-left will make 	例：コミック/Aの1巻を右から左に変更すると、Aフォルダーの	例如，将漫画/A 的第1卷设为从右向左，则 A 文件夹的
+위 설정은 새 폴더에 적용되는 기본값입니다. 책 안의 Aa 설정을 	The settings above are defaults for new folders. Changing the Aa settings in a book 	上記は新規フォルダーの既定値です。本のAa設定を	以上设置为新文件夹默认值。在书籍中更改 Aa 设置
+DSM/QTS File Station 관리 API를 별도로 연결합니다. 	Connect the DSM/QTS File Station management API separately. 	DSM/QTS File Station管理APIを別途接続します。	单独连接 DSM/QTS File Station 管理 API。
+SD/저장소 폴더 권한을 저장하는 중 오류가 발생했습니다. 	An error occurred while saving SD/storage folder permissions. 	SD・ストレージのフォルダー権限保存中にエラーが発生しました。	保存 SD/存储文件夹权限时发生错误。
+SD카드가 제거되었거나 연결이 끊겼습니다. 	The SD card was removed or disconnected. 	SDカードが取り外されたか接続が切れました。	SD 卡已移除或断开连接。
+SD카드의 원하는 폴더를 선택하고 접근을 허용해 주세요. 	Select a folder on the SD card and grant access. 	SDカード上のフォルダーを選択してアクセスを許可してください。	请选择 SD 卡中的文件夹并允许访问。
+SMB 경로와 File Station 경로는 다를 수 있습니다. 	SMB and File Station paths may differ. 	SMBとFile Stationのパスは異なる場合があります。	SMB 与 File Station 路径可能不同。
+SmartURL을 모르면 '공식 포털 열기'를 선택하세요. 	If you don't know the SmartURL, choose Open official portal. 	SmartURLが不明な場合は「公式ポータルを開く」を選択してください。	若不知道 SmartURL，请选择打开官方门户。
+TeraBox 베타: 폴더·파일 읽기/쓰기 지원. ndus 세션값이 필요합니다. 	TeraBox beta: folder and file read/write support. An ndus session value is required. 	TeraBoxベータ：フォルダーとファイルの読み書き対応。ndusセッション値が必要です。	TeraBox 测试版：支持文件夹和文件读写，需要 ndus 会话值。
+TeraBox 자체 계정으로 로그인한 후 세션 가져오기를 누르세요. 	Sign in with your own TeraBox account, then tap Import session. 	ご自身のTeraBoxアカウントでログインし、セッション取得を押してください。	使用自己的 TeraBox 账号登录后点击导入会话。
+https://qlink.to/내장치이름	https://qlink.to/my-device	https://qlink.to/my-device	https://qlink.to/my-device
+① PC Chrome에서 TeraBox 공식 웹사이트에 로그인합니다. 	① Sign in to the official TeraBox website in Chrome on your PC. 	① PCのChromeでTeraBox公式サイトにログインします。	① 在电脑 Chrome 中登录 TeraBox 官方网站。
+① 네이버 MYBOX에 로그인합니다.\n\n	① Sign in to NAVER MYBOX.\n\n	① NAVER MYBOXにログインします。\n\n	① 登录 NAVER MYBOX。\n\n
+같은 이름의 파일이 	Files with the same name: 	同名ファイル：	同名文件：
+공식 myQNAPcloud Link 웹 접속입니다. NAS 관리 포트 개방은 필요하지 않습니다. 	This opens the official myQNAPcloud Link website; NAS management port forwarding is unnecessary. 	公式myQNAPcloud LinkへのWeb接続です。NAS管理ポートの開放は不要です。	通过官方 myQNAPcloud Link 网页连接，无需开放 NAS 管理端口。
+기기에 폴더 선택 앱이 없어 SD카드를 선택할 수 없습니다. 	No folder picker is available on this device. 	端末にフォルダー選択アプリがないためSDカードを選択できません。	设备没有文件夹选择器，无法选择 SD 卡。
+네이버 MYBOX 공식 Open API PAT가 필요합니다. 	A NAVER MYBOX official Open API PAT is required. 	NAVER MYBOX公式Open APIのPATが必要です。	需要 NAVER MYBOX 官方 Open API PAT。
+대상 폴더에 '	Destination folder contains '	保存先フォルダーに「	目标文件夹中有“
+더 보기  (	Show more (	もっと見る（	查看更多（
+독서용 폴더 설정/해제 · 	Assign/unassign reading folder · 	読書フォルダーの指定・解除・	设置或取消阅读文件夹 ·
+로그인 세션(ndus)을 아직 찾지 못했습니다. 	The login session (ndus) has not been found yet. 	ログインセッション（ndus）がまだ見つかりません。	尚未找到登录会话（ndus）。
+링크를 받은 사람이 NAS에 로그인하지 않고 다운로드할 수 있습니다. 	Recipients can download without signing in to the NAS. 	リンクの受信者はNASにログインせずダウンロードできます。	链接接收者无需登录 NAS 即可下载。
+먼저 Synology 또는 QNAP 제조사를 선택하세요. 	Select Synology or QNAP first. 	先にSynologyまたはQNAPを選択してください。	请先选择 Synology 或 QNAP。
+서버의 ‘	Server's “	サーバーの「	服务器的“
+선택한 	Selected: 	選択した	已选：
+선택한 SD/저장소 폴더의 읽기 권한을 받지 못했습니다. 	Read access to the selected SD/storage folder was not granted. 	選択したSD・ストレージフォルダーの読み取り権限を取得できませんでした。	未获得所选 SD/存储文件夹的读取权限。
+선택한 다운로드 공유 주소만 무효화합니다. 	Only selected download share addresses will be revoked. 	選択したダウンロード共有URLのみ無効にします。	仅撤销所选下载分享地址。
+선택한 위치가 현재 SD카드의 폴더가 아닙니다. 	The selected location is not on the current SD card. 	選択した場所は現在のSDカード内のフォルダーではありません。	所选位置不在当前 SD 卡中。
+선택한 파일과 폴더를 삭제하시겠습니까? 폴더 안의 파일도 삭제되며 	Delete the selected files and folders? Files inside folders will also be deleted. 	選択したファイルとフォルダーを削除しますか？フォルダー内のファイルも削除されます。	删除所选文件和文件夹吗？文件夹中的文件也将删除。
+심볼릭 링크가 가리키는 대상에 접근할 수 없습니다. 	Cannot access the symbolic link target. 	シンボリックリンクの参照先にアクセスできません。	无法访问符号链接目标。
+쓰기/실행 권한을 제거하면 파일 수정 또는 폴더 접근이 막힐 수 있습니다. 	Removing write/execute permissions may prevent editing files or accessing folders. 	書き込み・実行権限を削除するとファイル変更やフォルダーアクセスができなくなる場合があります。	移除写入或执行权限可能阻止文件修改或文件夹访问。
+아직 	Not yet: 	まだ	尚未：
+압축 	Compress 	圧縮	压缩
+압축파일은 현재 폴더에 만들어집니다. 	The archive will be created in the current folder. 	圧縮ファイルは現在のフォルダーに作成されます。	压缩文件将在当前文件夹创建。
+원격 썸네일은 1MB 이하 이미지에서만 다운로드합니다. 	Remote thumbnails are downloaded only for images up to 1 MB. 	リモートサムネイルは1MB以下の画像のみダウンロードします。	仅下载不超过 1MB 的远程图片缩略图。
+이 기기에서는 전체 파일 접근 설정 화면을 열 수 없습니다. 	Cannot open all-files access settings on this device. 	この端末では全ファイルアクセス設定を開けません。	此设备无法打开所有文件访问设置。
+이 폴더는 이미 상위 폴더의 동영상 폴더 설정을 적용받고 있어요. 	This folder already inherits video settings from its parent. 	このフォルダーには既に親フォルダーの動画設定が適用されています。	此文件夹已继承上级文件夹的视频设置。
+일치하는 파일 	Matching files: 	一致するファイル：	匹配文件：
+저장한 ‘	Saved “	保存済みの「	已保存的“
+전체 파일 접근 권한이 허용되지 않았습니다.\n\n	All-files access was not granted.\n\n	全ファイルアクセスが許可されていません。\n\n	未授予所有文件访问权限。\n\n
+처음 접속한 서버입니다. 관리자에게 아래 키 지문을 확인하세요.\n\n	This is a new server. Verify the fingerprint below with its administrator.\n\n	初めて接続するサーバーです。以下の鍵指紋を管理者に確認してください。\n\n	首次连接此服务器，请向管理员确认以下密钥指纹。\n\n
+총 	Total: 	合計：	总计：
+파일 수정 또는 생성 날짜 	File modified or created date 	ファイルの更新・作成日時	文件修改或创建日期
+폴더 	Folder: 	フォルダー：	文件夹：
+폴더 권한을 영구 저장하지 못했습니다. 	Could not persist folder access permission. 	フォルダー権限を永続保存できませんでした。	无法永久保存文件夹权限。
+폴더 더 보기  (	Show more folders (	フォルダーをもっと見る（	查看更多文件夹（
+폴더 소유자의 실행(x) 권한을 제거하면 	Removing the folder owner's execute (x) permission 	フォルダー所有者の実行（x）権限を削除すると	移除文件夹所有者的执行（x）权限后
+폴더 용도 설정 · 	Folder purpose · 	フォルダーの用途・	文件夹用途 ·
+폴더가 선택됐지만 읽기 권한이 없습니다. 	A folder was selected, but read access was not granted. 	フォルダーを選択しましたが読み取り権限がありません。	已选择文件夹，但没有读取权限。
+하위 폴더 더 보기  (	Show more subfolders (	サブフォルダーをもっと見る（	查看更多子文件夹（
+APK 설치 권한이 허용되지 않아 취소했습니다.	Canceled because APK installation was not authorized.	APKインストールが許可されていないため中止しました。	未授权安装 APK，已取消。
+APK 설치 준비 오류: 	APK installation preparation error: 	APKインストール準備エラー：	APK 安装准备错误：
+APK 파일이 사라졌습니다. 다시 선택해 주세요.	APK file is missing. Select it again.	APKファイルがありません。再度選択してください。	APK 文件不存在，请重新选择。
+Android 설정에서 '이 출처의 앱 허용'을 켜야 	Turn on Allow from this source in Android settings to 	Android設定の「この提供元を許可」をオンにすると	在 Android 设置中启用允许来自此来源的应用后
+Android 패키지 정보를 확인할 수 없습니다. 	Unable to verify Android package information. 	Androidパッケージ情報を確認できません。	无法确认 Android 软件包信息。
+NAS Mount의 APK 설치 권한	FileHub AIO APK installation permission	FileHub AIOのAPKインストール権限	FileHub AIO APK 安装权限
+시스템 패키지 설치 관리자를 찾지 못했습니다.	System package installer not found.	システムパッケージインストーラーが見つかりません。	找不到系统软件包安装器。
+이 기기의 앱 설치 허용 화면을 열 수 없습니다.	Cannot open installation permission settings on this device.	この端末のインストール許可設定を開けません。	无法打开此设备的应用安装授权设置。
+파일: 	File: 	ファイル：	文件：
+FFmpeg 오픈소스 고지	FFmpeg open-source notice	FFmpegオープンソース告知	FFmpeg 开源声明
+Media3 FFmpeg 확장 디코더가 APK에 포함됩니다. 기기 기본 디코더가 지원하지 않는 코덱은 FFmpeg를 자동으로 사용합니다.	The APK includes Media3 FFmpeg extension decoders. FFmpeg is used automatically for codecs unsupported by the device.	APKにMedia3 FFmpeg拡張デコーダーが含まれます。端末標準デコーダー非対応のコーデックは自動でFFmpegを使用します。	APK 包含 Media3 FFmpeg 扩展解码器。设备默认解码器不支持的编解码器会自动使用 FFmpeg。
+NAS Mount로 코덱 파일 가져오기	Import codec files into FileHub AIO	FileHub AIOにコーデックファイルを取り込む	将编解码器文件导入 FileHub AIO
+NAS Mount의 확장 디코더는 NextLib GPLv3 기반입니다.\n\n	FileHub AIO's extension decoder is based on NextLib (GPLv3).\n\n	FileHub AIOの拡張デコーダーはNextLib（GPLv3）をベースにしています。\n\n	FileHub AIO 的扩展解码器基于 NextLib（GPLv3）。\n\n
+기기 CPU: 	Device CPU: 	端末CPU：	设备 CPU：
+기기 E-AC3 디코더: 	Device E-AC3 decoder: 	端末E-AC3デコーダー：	设备 E-AC3 解码器：
+동영상 플레이어에 포함된 확장 코덱의 라이선스입니다.	License for the video player's bundled codec extension.	動画プレーヤーの拡張コーデックのライセンスです。	视频播放器内置扩展编解码器的许可证。
+선택 폴더의 코덱 파일을 확인 중...	Checking codec files in the selected folder...	選択フォルダーのコーデックを確認中…	正在检查所选文件夹的编解码器文件…
+코덱 가져오기 결과	Codec import results	コーデック取り込み結果	编解码器导入结果
+코덱 가져오기 실패	Codec import failed	コーデックの取り込みに失敗	编解码器导入失败
+1. 문서 편집기 열기	1. Open document editor	1. 文書エディターを開く	1. 打开文档编辑器
+2. 변경 내용을 원본에 저장	2. Save changes to original	2. 変更を元のファイルに保存	2. 保存更改到原文件
+링크를 열 브라우저가 없습니다.	No browser available to open the link.	リンクを開くブラウザーがありません。	没有可打开链接的浏览器。
+변경 내용이 있으면 '원본에 저장'을 눌러야 반영됩니다. 	Tap Save to original to apply changes. 	変更がある場合は「元のファイルに保存」を押してください。	有更改时请点击保存到原文件。
+엑셀: LibreOffice 기반 Collabora Office 등 설치된 호환 편집기 사용\n	Excel: use a compatible installed editor such as Collabora Office (LibreOffice-based).\n	Excel：Collabora Officeなどのインストール済み互換エディターを使用\n	Excel：使用已安装的兼容编辑器，如基于 LibreOffice 的 Collabora Office。\n
+원본 저장에 실패했습니다. 편집본은 임시 공간에 유지됩니다.	Save to original failed. The edited copy remains in temporary storage.	元のファイルへの保存に失敗しました。編集済みのコピーは一時領域に残ります。	保存到原文件失败，编辑副本保留在临时空间。
+원본 파일에 변경 내용을 저장했습니다.	Changes saved to the original file.	変更を元のファイルに保存しました。	更改已保存到原文件。
+파일 준비 완료 (	File ready (	ファイル準備完了（	文件准备完成（
+페이지 열기	Open page	ページを開く	打开页面
+편집 앱에서 문서를 저장한 다음 이 화면으로 돌아와\n	Save the document in the editor, then return here\n	編集アプリで文書を保存してからこの画面に戻り\n	在编辑应用中保存文档后返回此页面\n
+편집 화면 닫기	Close editing screen	編集画面を閉じる	关闭编辑页面
+편집된 문서 확인 및 원본 저장 중...	Checking edited document and saving original...	編集済み文書を確認し、元のファイルに保存中…	正在检查编辑后的文档并保存到原文件…
+편집용 문서가 준비되지 않았습니다.	The editable document is not ready.	編集用文書の準備ができていません。	编辑用文档尚未准备好。
+편집할 오피스 앱 선택	Select Office editor	Office編集アプリを選択	选择 Office 编辑应用
+편집할 파일을 안전한 임시 공간으로 복사하는 중...	Copying the file to secure temporary storage...	編集ファイルを安全な一時領域へコピー中…	正在将文件复制到安全临时空间…
+호환 문서 편집기	Compatible document editor	互換文書エディター	兼容文档编辑器
+호환 편집기 설치 안내	Install a compatible editor	互換エディターのインストール案内	兼容编辑器安装说明
+APK 다운로드는 완료됐으나 설치 화면을 열지 못했습니다.	APK downloaded, but the installation screen could not be opened.	APKのダウンロードは完了しましたがインストール画面を開けません。	APK 已下载，但无法打开安装页面。
+APK 설치 허용 필요	APK installation permission required	APKインストール許可が必要	需要 APK 安装权限
+FileHub 새 업데이트 있음 · v	FileHub update available · v	FileHubの新しい更新・v	FileHub 有新更新 · v
+FileHub 업데이트 다운로드	Download FileHub update	FileHub更新をダウンロード	下载 FileHub 更新
+FileHub에서 다운로드한 업데이트를 설치하려면 	To install updates downloaded by FileHub, 	FileHubでダウンロードした更新をインストールするには	要安装 FileHub 下载的更新，
+검증 가능한 APK를 받는 중...	Downloading verifiable APK...	検証可能なAPKをダウンロード中…	正在下载可验证的 APK…
+다운로드 또는 APK 검증에 실패했습니다. 다시 시도해 주세요.	Download or APK verification failed. Try again.	ダウンロードまたはAPK検証に失敗しました。再試行してください。	下载或 APK 验证失败，请重试。
+다운로드 및 설치	Download and install	ダウンロードしてインストール	下载并安装
+설치 화면 실행 실패	Could not open installer	インストーラーの起動に失敗	无法打开安装器
+업데이트 실패	Update failed	更新に失敗	更新失败
+LAN QR 스캔	Scan LAN QR	LAN QRをスキャン	扫描局域网二维码
+받는 TV의 QR코드를 화면 안에 맞추세요.\n	Position the receiving TV's QR code within the frame.\n	受信するTVのQRコードを枠内に合わせてください。\n	将接收电视的二维码对准框内。\n
+카메라 권한이 필요합니다.	Camera permission is required.	カメラ権限が必要です。	需要相机权限。
+카메라를 열 수 없습니다.	Cannot open camera.	カメラを開けません。	无法打开相机。
+책갈피  ·  	Bookmark · 	しおり・	书签 ·
+명암 	Contrast 	コントラスト	对比度
+실시간 미리보기	Live preview	リアルタイムプレビュー	实时预览
+8자 이상 별도 백업 비밀번호	Separate backup password (8+ characters)	別のバックアップパスワード（8文字以上）	独立备份密码（至少8字符）
+FileHub 설정 백업	FileHub settings backup	FileHub設定バックアップ	FileHub 设置备份
+LAN QR · 설정 받기	LAN QR · receive settings	LAN QR・設定を受信	局域网二维码 · 接收设置
+NAS 비밀번호·클라우드 토큰·즐겨찾기·콘텐츠 폴더·재생·독서 설정을 	NAS passwords, cloud tokens, favorites, content folders, playback and reading settings 	NASパスワード・クラウドトークン・お気に入り・コンテンツフォルダー・再生・読書設定を	NAS 密码、云令牌、收藏、内容文件夹、播放和阅读设置
+가져올 기기 선택	Select device to import from	取り込み元の端末を選択	选择导入设备
+같은 Wi-Fi에 연결된 휴대폰에서 'QR로 전송하기'를 누른 뒤 이 코드를 스캔하세요.\n	On a phone connected to the same Wi-Fi, tap Send via QR, then scan this code.\n	同じWi-Fiのスマートフォンで「QRで送信」を押し、このコードをスキャンしてください。\n	在连接同一 Wi-Fi 的手机上点击通过二维码发送，再扫描此码。\n
+같은 Wi-Fi의 다른 FileHub에서 '설정 내보내기'를 선택하세요.\n\n	Choose Export settings in FileHub on another device on the same Wi-Fi.\n\n	同じWi-Fiの別のFileHubで「設定をエクスポート」を選択してください。\n\n	在同一 Wi-Fi 的其他 FileHub 中选择导出设置。\n\n
+같은 내부망 전용 · 별도 서버 불필요	Local network only · no separate server required	同一LAN専用・別途サーバー不要	仅限同一局域网 · 无需单独服务器
+같은 네트워크에서 '설정 가져오기 대기' 중인 FileHub를 찾고 있습니다.\n	Searching the local network for FileHub devices waiting to receive settings.\n	同じネットワーク内で設定受信待ちのFileHubを検索しています。\n	正在同一网络中查找等待接收设置的 FileHub。\n
+같은 네트워크에서 자동 검색 또는 QR 스캔으로 설정을 전송합니다.	Transfer settings via automatic discovery or QR scan on the same network.	同じネットワーク上で自動検索またはQRスキャンで設定を送信します。	在同一网络通过自动发现或扫描二维码传输设置。
+검색 취소	Cancel search	検索をキャンセル	取消搜索
+교체 실행	Replace now	置き換えを実行	立即替换
+내보낼 때 설정한 비밀번호를 입력해 주세요. 	Enter the password set during export. 	エクスポート時のパスワードを入力してください。	请输入导出时设置的密码。
+대상: 	Destination: 	送信先：	目标：
+발견된 기기: 	Devices found: 	検出した端末：	发现的设备：
+백업 비밀번호 다시 입력	Re-enter backup password	バックアップパスワードを再入力	再次输入备份密码
+병합	Merge	統合	合并
+설정 가져오기 · 내용 확인	Import settings · review	設定の取り込み・内容確認	导入设置 · 确认内容
+설정 가져오기 대기 중	Waiting to receive settings	設定の受信待ち	等待接收设置
+설정 내보내기 · 기기 검색 중	Export settings · searching devices	設定のエクスポート・端末検索中	导出设置 · 正在搜索设备
+설정 백업 열기	Open settings backup	設定バックアップを開く	打开设置备份
+설정 이동 및 백업	Settings transfer & backup	設定移行・バックアップ	设置迁移与备份
+설정 자동 전송 중	Transferring settings automatically	設定を自動送信中	正在自动传输设置
+수신 취소	Cancel receiving	受信をキャンセル	取消接收
+암호화 설정 백업	Encrypted settings backup	暗号化設定バックアップ	加密设置备份
+원격 연결 	Remote connections: 	リモート接続：	远程连接：
+이 기기로 설정을 보낼까요?	Send settings to this device?	この端末に設定を送信しますか？	向此设备发送设置吗？
+전체 설정을 교체할까요?	Replace all settings?	すべての設定を置き換えますか？	替换所有设置吗？
+파일 확인	Check file	ファイルを確認	检查文件
+현재 TV/휴대폰의 연결 및 설정이 백업 내용으로 교체됩니다. 	Current TV/phone connections and settings will be replaced with the backup. 	現在のTV・スマートフォンの接続と設定がバックアップ内容に置き換わります。	当前电视/手机的连接与设置将被备份内容替换。
+FileHub TV · QR로 로그인	FileHub TV · Sign in with QR	FileHub TV・QRでログイン	FileHub TV · 二维码登录
+TV QR을 휴대폰 카메라로 스캔해 열거나, QR 문자열을 복사해 아래에 붙여넣으세요.\n	Scan the TV QR using your phone camera or paste the copied QR text below.\n	スマートフォンでTVのQRをスキャンするか、QR文字列をコピーして下に貼り付けてください。\n	使用手机相机扫描电视二维码，或复制二维码文本并粘贴到下方。\n
+TV 계정 연결 요청 · 	TV account connection request · 	TVアカウント接続リクエスト・	电视账号连接请求 ·
+TV 연결 저장 완료	TV connection saved	TV接続の保存完了	电视连接已保存
+TV 전체 설정 교체	Replace all TV settings	TVの全設定を置き換え	替换电视全部设置
+TV에 연결 정보를 보낼까요?	Send connection details to TV?	TVに接続情報を送信しますか？	向电视发送连接信息吗？
+교체	Replace	置き換え	替换
+기존 설정을 교체할까요? 현재 설정은 사라질 수 있습니다.	Replace existing settings? Current settings may be lost.	既存設定を置き換えますか？現在の設定が失われる可能性があります。	替换现有设置吗？当前设置可能丢失。
+대상 TV: 	Target TV: 	対象TV：	目标电视：
+선택한 연결 TV로 보내기	Send selected connections to TV	選択した接続をTVへ送信	向电视发送所选连接
+연결 	Connections: 	接続：	连接：
+이 TV에 다음 연결을 가져올까요?\n\n	Import the following connections to this TV?\n\n	次の接続をこのTVに取り込みますか？\n\n	将以下连接导入此电视吗？\n\n
+이 TV에 저장	Save to this TV	このTVに保存	保存到此电视
+전송할 연결 선택 · 최대 12개	Select up to 12 connections to send	送信する接続を選択・最大12件	选择要发送的连接 · 最多12个
+전체 설정 TV로 보내기	Send all settings to TV	全設定をTVへ送信	向电视发送全部设置
+전체 설정 전송	Send all settings	すべての設定を送信	发送全部设置
+전체 설정을 TV로 전송할까요?	Send all settings to the TV?	すべての設定をTVに送信しますか？	向电视发送全部设置吗？
+휴대폰 전체 설정 가져오기	Import all phone settings	スマートフォンの全設定を取り込む	导入手机全部设置
+휴대폰 카메라로 QR을 스캔해 FileHub에서 연결할 계정을 선택하세요.\n	Scan the QR with your phone camera and select accounts to connect in FileHub.\n	スマートフォンでQRをスキャンし、FileHubで接続するアカウントを選択してください。\n	使用手机相机扫描二维码，在 FileHub 中选择要连接的账号。\n
+이 폴더에서 변경한 영상 화면비율·자막 크기·자막 소스·자막 글꼴 설정을 해제하고 메인 기본값을 사용합니다.\n	Remove this folder's video aspect ratio, subtitle size, source and font overrides and use the main defaults.\n	このフォルダーの画面比率・字幕サイズ・字幕ソース・字幕フォントの個別設定を解除し、既定値を使用します。\n	清除此文件夹的画面比例、字幕大小、来源和字体设置，使用全局默认值。\n
+이전에 	Previously: 	前回：	上次：
+자막 설정 · 	Subtitle settings · 	字幕設定・	字幕设置 ·
+자막 소스 선택 · 	Select subtitle source · 	字幕ソースを選択・	选择字幕来源 ·
+재생 도중 홈 버튼을 누를 때마다 홈 화면에 	When pressing Home during playback, on the home screen 	再生中にホームボタンを押すとホーム画面に	播放时按主页按钮，在主屏幕上
+재생 배속 	Playback speed 	再生速度	播放速度
+재생 실패: 네트워크 또는 지원하지 않는 코덱 (	Playback failed: network or unsupported codec (	再生失敗：ネットワークまたは未対応コーデック（	播放失败：网络或不支持的编解码器（
+현재 영상이 끝났습니다.\n\n다음 영상:\n	The current video has ended.\n\nNext video:\n	現在の動画が終了しました。\n\n次の動画：\n	当前视频已结束。\n\n下一个视频：\n
+현재 플레이어에서 선택 가능한 자막 트랙이 없습니다.\n	No selectable subtitle tracks in the current player.\n	現在のプレーヤーに選択可能な字幕トラックがありません。\n	当前播放器没有可选字幕轨道。\n
+NAS Mount 내장 오피스	FileHub AIO Office	FileHub AIO 内蔵オフィス	FileHub AIO 内置 Office
+문서 편집 엔진을 준비 중입니다...	Preparing document editor...	文書編集エンジンを準備中…	正在准备文档编辑引擎…
+셀 위치	Cell address	セル位置	单元格位置
+편집할 셀 주소	Cell address to edit	編集するセルのアドレス	要编辑的单元格地址
+셀 적용	Apply cell	セルを適用	应用单元格
+셀 내용 / 수식	Cell value / formula	セルの内容／数式	单元格内容 / 公式
+한 손가락으로 상하좌우 이동, 두 손가락으로 확대 축소	Drag with one finger, pinch with two to zoom	1本指で上下左右に移動、2本指で拡大縮小	单指上下左右移动，双指缩放
+엑셀 시트	Excel sheets	Excelシート	Excel 工作表
+시트·셀 값 편집을 지원합니다. 수식은 다시 계산하지 않으며 복잡한 서식, 매크로, 차트는 원본과 달라질 수 있으므로 중요한 문서는 백업하세요.	Edit sheets and cell values. Formulas are not recalculated. Complex formatting, macros and charts may differ from the original; back up important files.	シート・セル値を編集できます。数式は再計算されません。複雑な書式やマクロ、グラフが元の文書と異なる場合があります。重要な文書はバックアップしてください。	支持编辑工作表和单元格值。公式不会重新计算，复杂格式、宏和图表可能与原件不同，请备份重要文档。
+Word 문서	Word document	Word文書	Word 文档
+문단 편집	Edit paragraph	段落を編集	编辑段落
+문단 선택	Select paragraph	段落を選択	选择段落
+선택한 문단의 텍스트 수정	Edit selected paragraph text	選択した段落のテキストを編集	修改所选段落文本
+문단 적용	Apply paragraph	段落を適用	应用段落
+수정 문단의 일부 글자별 서식은 통일될 수 있습니다. 원본은 백업하세요.	Some character formatting in edited paragraphs may be unified. Back up the original.	編集した段落の文字書式が統一される場合があります。原本をバックアップしてください。	编辑段落的部分字符格式可能被统一，请备份原件。
+이전 슬라이드	Previous slide	前のスライド	上一张幻灯片
+다음 슬라이드	Next slide	次のスライド	下一张幻灯片
+보기 전환	Switch view	表示切り替え	切换视图
+텍스트 편집	Edit text	テキストを編集	编辑文本
+PowerPoint 슬라이드	PowerPoint slide	PowerPointスライド	PowerPoint 幻灯片
+파워포인트 슬라이드	PowerPoint slide	PowerPointスライド	PowerPoint 幻灯片
+텍스트 상자 선택	Select text box	テキストボックスを選択	选择文本框
+슬라이드 텍스트 수정	Edit slide text	スライドのテキストを編集	修改幻灯片文本
+텍스트 적용	Apply text	テキストを適用	应用文本
+텍스트 상자 내 글자별 서식은 변경될 수 있습니다.	Character formatting in the text box may change.	テキストボックス内の文字書式は変わる場合があります。	文本框中的字符格式可能发生变化。
+한글 편집 도구 펼치기	Expand HWP editing tools	HWP編集ツールを展開	展开 HWP 编辑工具
+도구	Tools	ツール	工具
+도구 접기	Collapse tools	ツールを閉じる	收起工具
+엑셀 세부 도구 펼치기	Expand Excel tools	Excelツールを展開	展开 Excel 工具
+원본 파일에 저장	Save to original file	元のファイルに保存	保存到原文件
+다른 기기에서 편집 중인 Excel 문서입니다. 읽기 전용입니다.	This Excel document is being edited on another device. Read only.	別の端末で編集中のExcel文書です。読み取り専用です。	此 Excel 文档正在其他设备上编辑，仅可读取。
+유효한 셀 주소를 입력해 주세요.	Enter a valid cell address.	有効なセルアドレスを入力してください。	请输入有效的单元格地址。
+셀 주소가 올바르지 않습니다.	Invalid cell address.	セルアドレスが正しくありません。	单元格地址无效。
+셀 변경사항이 있습니다. 상단 저장 아이콘을 누르면 원본에 저장됩니다.	Cell changes are pending. Tap the save icon to write them to the original.	セルに未保存の変更があります。上部の保存アイコンで原本に保存します。	单元格有未保存更改，点击顶部保存图标写入原文件。
+셀 주소를 확인해 주세요.	Check the cell address.	セルアドレスを確認してください。	请检查单元格地址。
+엑셀 문서 분석기를 불러오지 못했습니다.	Could not load Excel parser.	Excel解析エンジンを読み込めませんでした。	无法加载 Excel 解析器。
+시트가 없는 문서입니다.	The document has no sheets.	シートのない文書です。	文档没有工作表。
+내장 HWP/HWPX 편집 엔진을 초기화하고 있습니다...	Initializing HWP/HWPX editor...	HWP/HWPX編集エンジンを初期化中…	正在初始化 HWP/HWPX 编辑引擎…
+저장할 문서가 64MB 제한을 초과합니다.	The document exceeds the 64 MB save limit.	保存する文書が64MBの上限を超えています。	文档超出 64 MB 保存限制。
+저장 작업을 시작하지 못했습니다.	Could not start saving.	保存を開始できませんでした。	无法开始保存。
+문서 저장 데이터 전송에 실패했습니다.	Document save transfer failed.	文書保存データの転送に失敗しました。	文档保存数据传输失败。
+문서 저장을 확정하지 못했습니다.	Could not finalize document save.	文書保存を確定できませんでした。	无法完成文档保存。
+다른 기기에서 편집 중인 문서는 원본에 저장할 수 없습니다.	A document being edited on another device cannot be saved to the original.	別の端末で編集中の文書は原本に保存できません。	正在其他设备编辑的文档无法保存到原文件。
+문서를 생성해 NAS Mount에 전달하고 있습니다...	Preparing the document and sending it to FileHub...	文書を生成してFileHubに渡しています…	正在生成文档并发送到 FileHub…
+지원하지 않는 문서 형식입니다.	Unsupported document format.	未対応の文書形式です。	不支持的文档格式。
+원본 파일에 저장 중입니다...	Saving to original file...	元のファイルに保存中…	正在保存到原文件…
+저장 실패: 	Save failed: 	保存に失敗しました：	保存失败：
+원본 파일에 저장했습니다.	Saved to original file.	元のファイルに保存しました。	已保存到原文件。
+NAS 저장 실패: 	NAS save failed: 	NASへの保存に失敗しました：	保存到 NAS 失败：
+편집 엔진 오류: 	Editor error: 	編集エンジンのエラー：	编辑引擎错误：
+NAS Mount 문서 저장 연결이 없습니다.	FileHub document save bridge is unavailable.	FileHubの文書保存連携が利用できません。	FileHub 文档保存连接不可用。
+원본 문서를 불러오지 못했습니다.	Could not load original document.	元の文書を読み込めませんでした。	无法加载原始文档。
+빈 문서는 열 수 없습니다.	Cannot open an empty document.	空の文書は開けません。	无法打开空文档。
+구형 .doc/.ppt는 아직 미지원입니다. DOCX 또는 PPTX로 변환 후 열어 주세요.	Legacy .doc/.ppt files are not supported yet. Convert to DOCX or PPTX first.	旧形式の.doc/.pptには未対応です。DOCXまたはPPTXに変換してください。	暂不支持旧版 .doc/.ppt 文件，请先转换为 DOCX 或 PPTX。
+문서를 열 수 없습니다: 	Cannot open document: 	文書を開けません：	无法打开文档：
+엑셀 삽입 이미지	Embedded Excel image	Excelの挿入画像	Excel 插入图片
+문서 XML 형식을 읽을 수 없습니다.	Cannot read document XML.	文書のXML形式を読み込めません。	无法读取文档 XML。
+문서 내부 파일 개수 제한을 초과합니다.	The document exceeds its internal file count limit.	文書内のファイル数の上限を超えています。	文档内部文件数超出限制。
+문서 내부 데이터가 너무 큽니다.	The document's internal data is too large.	文書内データが大きすぎます。	文档内部数据过大。
+문서 내부 경로가 올바르지 않습니다.	Invalid internal document path.	文書内パスが正しくありません。	文档内部路径无效。
+(빈 문단)	(Empty paragraph)	（空の段落）	（空段落）
+화면 맞춤	Fit screen	画面に合わせる	适应屏幕
+내장 Word 표시 라이브러리를 불러오지 못했습니다.	Could not load the built-in Word renderer.	内蔵Word表示ライブラリを読み込めませんでした。	无法加载内置 Word 渲染器。
+DOCX 내부 문서 본문이 없습니다.	No document body in DOCX.	DOCX内に文書本文がありません。	DOCX 中没有文档正文。
+문서 본문이 편집 제한을 초과합니다.	The document body exceeds the editing limit.	文書本文が編集上限を超えています。	文档正文超出编辑限制。
+문단 변경 완료 · 아래 원본 저장 버튼을 눌러 반영하세요.	Paragraph changed. Tap Save to original to apply it.	段落を変更しました。下の原本保存ボタンで反映してください。	段落已修改，请点击下方保存到原文件。
+Word 문단 편집 실패: 	Word paragraph edit failed: 	Word段落編集に失敗しました：	Word 段落编辑失败：
+문단 편집을 마친 뒤 저장하세요.	Finish editing the paragraph before saving.	段落編集を終えてから保存してください。	完成段落编辑后再保存。
+SVG 출력이 없습니다.	No SVG output.	SVG出力がありません。	没有 SVG 输出。
+SVG 이미지 로드 실패	SVG image loading failed	SVG画像の読み込み失敗	SVG 图片加载失败
+표시 가능한 슬라이드 렌더러가 없습니다.	No available slide renderer.	利用可能なスライドレンダラーがありません。	没有可用的幻灯片渲染器。
+기존 보기	Original view	元の表示	原始视图
+호환 보기	Compatibility view	互換表示	兼容视图
+열 수 있는 PPTX 슬라이드가 없습니다.	No readable PPTX slides.	開けるPPTXスライドがありません。	没有可打开的 PPTX 幻灯片。
+슬라이드 텍스트가 수정됐습니다. 아래 원본 저장을 누르세요.	Slide text changed. Tap Save to original.	スライドのテキストを変更しました。下の原本保存を押してください。	幻灯片文本已修改，请点击下方保存到原文件。
+PowerPoint 편집 실패: 	PowerPoint edit failed: 	PowerPoint編集に失敗しました：	PowerPoint 编辑失败：
+슬라이드 편집을 마친 뒤 저장하세요.	Finish editing the slide before saving.	スライド編集を終えてから保存してください。	完成幻灯片编辑后再保存。
+종이책 모서리 말림 (실시간 드래그)	Paper curl (interactive drag)	紙のページめくり（ドラッグ）	纸张卷角（实时拖动）
+부드럽게 슬라이드	Smooth slide	スムーズなスライド	平滑滑动
+부드럽게 페이드	Smooth fade	スムーズなフェード	平滑淡入淡出
+효과 없음	No effect	効果なし	无效果
+자동 (외부 자막 우선)	Auto (external subtitles first)	自動（外部字幕優先）	自动（外挂字幕优先）
+외부 자막	External subtitles	外部字幕	外挂字幕
+자막 끄기	Subtitles off	字幕オフ	关闭字幕
+책 넘김 · 좌우 페이지	Page turns · horizontal	ページめくり・横方向	左右翻页
+세로 스크롤 · 연속 읽기	Vertical scroll · continuous	縦スクロール・連続読書	垂直滚动 · 连续阅读
+QNAP CloudLink (포트 개방 없이 웹 접속)	QNAP CloudLink (web, no port forwarding)	QNAP CloudLink（Web・ポート開放不要）	QNAP CloudLink（网页连接，无需端口转发）
+오픈소스 및 라이선스	Open source & licenses	オープンソース・ライセンス	开源软件与许可证
+사용된 라이브러리와 원문 라이선스를 확인합니다.	View included libraries and original license notices.	使用ライブラリーと原文ライセンスを確認します。	查看使用的库及原始许可证声明。
+라이선스 내용을 열 수 없습니다.	Cannot open license notice.	ライセンスを開けません。	无法打开许可证声明。
+라이선스 고지	License notices	ライセンス告知	许可证声明
+좌우 책 페이지	Horizontal pages	左右ページ	左右分页
+글자 크기 · 12~36pt	Font size · 12–36 pt	文字サイズ・12～36pt	字号 · 12～36pt
+줄 간격 · 1.10~2.30배	Line spacing · 1.10–2.30×	行間・1.10～2.30倍	行距 · 1.10～2.30倍
+좌우 여백 · 8~50dp	Side margins · 8–50 dp	左右余白・8～50dp	左右边距 · 8～50dp
+SD·일반 NAS는 휴지통 없이 삭제될 수 있습니다. 	SD and ordinary NAS files may be deleted permanently. 	SD・一般NASではゴミ箱を経由せず削除される場合があります。	SD 和普通 NAS 文件可能被永久删除。
+네이버 MYBOX 파일은 MYBOX 휴지통으로 이동합니다.	NAVER MYBOX files are moved to the MYBOX trash.	NAVER MYBOXのファイルはMYBOXのゴミ箱へ移動します。	NAVER MYBOX 文件将移至 MYBOX 回收站。
+현재 파일의 권한만 변경하며 하위 항목에는 재귀적으로 적용되지 않습니다.	Only the current item's permissions are changed, not its descendants.	現在の項目の権限のみ変更し、下位項目には再帰的に適用しません。	仅更改当前项目权限，不递归应用到子项目。
+이 폴더에 다시 들어가지 못할 수 있습니다. 적용할까요?	You may lose access to this folder. Apply anyway?	このフォルダーに再度アクセスできなくなる場合があります。適用しますか？	可能无法再次访问此文件夹，仍要应用吗？
+암호화 및 RAR 생성은 지원하지 않습니다.	Encryption and RAR creation are not supported.	暗号化とRAR作成はサポートしていません。	不支持加密和创建 RAR。
+NAS 동영상은 구간 읽기로 일부만 가져오며, 	NAS video thumbnails use partial reads. 	NAS動画は範囲読み取りで一部のみ取得します。	NAS 视频缩略图采用分段读取。
+지원되지 않는 영상은 기본 재생 아이콘으로 표시합니다.	Unsupported videos use the default play icon.	未対応動画は標準再生アイコンで表示します。	不支持的视频显示默认播放图标。
+시스템 파일 관리자 앱을 확인해 주세요.	Check the system file manager app.	システムのファイル管理アプリを確認してください。	请检查系统文件管理应用。
+선택한 폴더와 하위 폴더를 사용할 수 있습니다.	The selected folder and its subfolders will be available.	選択したフォルダーとサブフォルダーを利用できます。	可以使用所选文件夹及其子文件夹。
+SD 폴더 선택을 사용해 주세요.	Use the SD folder picker instead.	SDフォルダー選択を使用してください。	请改用 SD 文件夹选择。
+상위 폴더의 설정을 해제하면 하위 폴더도 함께 해제됩니다.	Removing the parent assignment also removes it from subfolders.	親フォルダーの設定を解除すると、下位フォルダーも解除されます。	取消上级文件夹设置时也会取消子文件夹设置。
+외부 접속 가능 여부는 NAS HTTPS/QuickConnect/myQNAPcloud 설정에 따라 다릅니다.	External access depends on NAS HTTPS, QuickConnect or myQNAPcloud settings.	外部アクセスの可否はNASのHTTPS・QuickConnect・myQNAPcloud設定によります。	外部访问取决于 NAS 的 HTTPS、QuickConnect 或 myQNAPcloud 设置。
+NAS에 저장된 원본 파일과 폴더는 삭제되지 않습니다.	Original files and folders on the NAS are not deleted.	NAS内の元のファイルやフォルダーは削除されません。	不会删除 NAS 上的原始文件和文件夹。
+제조사는 실제 로그인 및 File Station 응답 확인 후 활성화됩니다. 	The vendor is enabled after verifying login and File Station response. 	実際のログインとFile Station応答の確認後にメーカー設定が有効になります。	验证登录及 File Station 响应后启用厂商设置。
+관리 주소는 올바른 HTTPS 인증서가 있어야 합니다.	The management address must have a valid HTTPS certificate.	管理アドレスには有効なHTTPS証明書が必要です。	管理地址必须具有有效的 HTTPS 证书。
+기본 전송 접속 설정은 변경되지 않습니다.	The main transfer connection settings remain unchanged.	基本の転送接続設定は変更されません。	基本传输连接设置不会更改。
+기능을 해제하려면 '연결 해제'를 누르세요.	To disable this feature, tap Disconnect.	機能を無効にするには「切断」を押してください。	要禁用此功能，请点击断开连接。
+QNAP 계정으로 로그인하여 File Station에서 공유 링크를 만드세요. 	Sign in with your QNAP account and create links in File Station. 	QNAPアカウントでログインし、File Stationで共有リンクを作成してください。	使用 QNAP 账号登录后在 File Station 创建分享链接。
+FileHub의 직접 NAS API 연결과는 별개이며 웹 세션을 가져오지 않습니다.	This is separate from FileHub's direct NAS API connection and does not import the web session.	FileHubの直接NAS API接続とは別であり、Webセッションは取り込みません。	此功能独立于 FileHub 的直接 NAS API 连接，不导入网页会话。
+QNAP 계정 > 내 장치에서 SmartURL을 확인할 수 있습니다.	Find the SmartURL under QNAP account > My Devices.	QNAPアカウントの「マイデバイス」でSmartURLを確認できます。	在 QNAP 账号的我的设备中查看 SmartURL。
+Google 계정 인증은 세션을 가져올 수 없어 지원하지 않습니다. 	Google account authentication is unsupported because its session cannot be imported. 	Googleアカウント認証はセッションを取得できないため非対応です。	由于无法导入会话，不支持 Google 账号认证。
+그 경우 PC에서 ndus 값을 확인해 입력하세요.	In that case, enter the ndus value obtained on your PC.	その場合はPCでndus値を確認して入力してください。	这种情况下请在电脑上查看并输入 ndus 值。
+PC 웹에서 로그인을 완료했는지 확인해 주세요. 	Make sure you completed sign-in on the PC web page. 	PCのWebページでログインを完了したか確認してください。	请确认已在电脑网页完成登录。
+웹사이트가 로그인을 차단하면 수동 ndus 입력을 사용할 수 있습니다.	If the website blocks sign-in, you can enter the ndus value manually.	Webサイトがログインをブロックする場合はndusを手動入力できます。	若网站阻止登录，可手动输入 ndus 值。
+2~10권도 일본식으로 열립니다. 다른 만화 폴더는 기본 방향을 사용합니다.	volumes 2–10 open right-to-left too. Other comic folders retain the default direction.	2～10巻も右から左で開きます。他のコミックフォルダーでは既定の方向を使用します。	第2～10卷也将从右向左打开，其他漫画文件夹使用默认方向。
+독서 화면에서 복원합니다. 원본 파일은 수정하지 않습니다.	restores them in the reading view. Original files are not changed.	読書画面で復元します。元のファイルは変更しません。	在阅读界面恢复，不修改原始文件。
+변경하면 해당 소설이 들어 있는 폴더의 TXT 또는 EPUB에만 적용됩니다.	applies only to TXT or EPUB books in that novel's folder.	変更すると、その小説のフォルダー内のTXTまたはEPUBにのみ適用されます。	仅应用于该小说所在文件夹的 TXT 或 EPUB。
+확대하고 하단에서 페이지를 이동할 수 있으며, 읽던 위치를 저장합니다.	zoom and use the bottom controls to navigate. Reading position is saved.	拡大し、下部の操作でページを移動できます。読書位置は保存されます。	缩放，使用底部控件翻页，并保存阅读位置。
+영상 파일과 시청 기록은 삭제하지 않습니다.	Video files and viewing history will not be deleted.	動画ファイルと視聴履歴は削除されません。	不会删除视频文件或观看记录。
+영상에 자막이 없거나 디코더가 지원하지 않는 형식일 수 있습니다.	The video may have no subtitles, or the decoder may not support their format.	動画に字幕がないか、デコーダーが字幕形式に対応していない可能性があります。	视频可能没有字幕，或解码器不支持其格式。
+\n\n계속 재생하시겠습니까?	\n\nContinue playback?	\n\n再生を続けますか？	\n\n继续播放吗？
+\n\n확인 후 이 키를 저장하고 연결할까요?	\n\nSave this key and connect after verification?	\n\n確認後、この鍵を保存して接続しますか？	\n\n确认后保存此密钥并连接吗？
+, 누르면 기본 속도로 복귀	, tap to restore default speed	、タップで既定速度に戻す	，点击恢复默认速度

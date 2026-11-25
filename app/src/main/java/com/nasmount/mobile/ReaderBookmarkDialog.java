@@ -30,7 +30,7 @@ final class ReaderBookmarkDialog {
             rows.add("삭제  ·  "+spot);
         }
         new AlertDialog.Builder(activity)
-                .setTitle("책갈피  ·  "+markers.size()+"개")
+                .setTitle(L10n.t("책갈피  ·  ")+markers.size()+"개")
                 .setItems(rows.toArray(new String[0]),(dialog,chosen)->{
                     if(chosen==0) {
                         ReaderHistory.setBookmark(activity,bookId,current,!saved);

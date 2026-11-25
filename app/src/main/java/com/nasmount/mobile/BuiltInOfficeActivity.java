@@ -37,7 +37,7 @@ import org.json.JSONObject;
  *
  * Remote credentials are kept in Java and only document bytes enter WebView.
  */
-public final class BuiltInOfficeActivity extends Activity {
+public final class BuiltInOfficeActivity extends LocalizedActivity {
     static final String EXTRA_KIND = "built_in_kind";
     static final String EXTRA_NAME = "built_in_name";
     static final String EXTRA_PATH = "built_in_path";
@@ -109,7 +109,7 @@ public final class BuiltInOfficeActivity extends Activity {
         if ("sheet".equals(OfficeFileTypes.mode(name))) {
             spreadsheetSave = new ImageButton(this);
             spreadsheetSave.setImageResource(R.drawable.ic_excel_save);
-            spreadsheetSave.setContentDescription("원본 엑셀 파일 저장");
+            spreadsheetSave.setContentDescription(L10n.t("원본 엑셀 파일 저장"));
             spreadsheetSave.setBackgroundColor(Color.TRANSPARENT);
             spreadsheetSave.setPadding(Ui.dp(this, 8), Ui.dp(this, 5),
                     Ui.dp(this, 8), Ui.dp(this, 5));
@@ -124,7 +124,7 @@ public final class BuiltInOfficeActivity extends Activity {
                 }
             });
         }
-        status = Ui.text(this, "내장 문서 엔진 준비 중...", 12, Ui.MUTED, false);
+        status = Ui.text(this, L10n.t("내장 문서 엔진 준비 중..."), 12, Ui.MUTED, false);
         status.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), 0);
         root.addView(status, Ui.lp(this, -1, 24));
 
@@ -212,7 +212,7 @@ public final class BuiltInOfficeActivity extends Activity {
                 if (excelLease != null && !excelLease.readOnly())
                     excelLease.verifyBeforeSave();
                 loaded = true;
-                showStatus("내장 문서 편집기를 여는 중...");
+                showStatus(L10n.t("내장 문서 편집기를 여는 중..."));
                 runOnUiThread(() -> {
                     if (!isDestroyed() && !isFinishing()) {
                         if (spreadsheetSave != null)
@@ -223,7 +223,7 @@ public final class BuiltInOfficeActivity extends Activity {
                             documentTitle.setContentDescription(name + ", 읽기 전용");
                         }
                         status.setVisibility(android.view.View.GONE);
-                        web.loadUrl(ASSET_ORIGIN + "/office-host.html");
+                        web.loadUrl(ASSET_ORIGIN + "/office-host.html?lang="+L10n.language());
                     }
                 });
             } catch (Exception e) {
@@ -232,7 +232,7 @@ public final class BuiltInOfficeActivity extends Activity {
                     excelLease = null;
                 }
                 runOnUiThread(() -> status.setVisibility(android.view.View.VISIBLE));
-                showStatus("문서 준비 실패: " +
+                showStatus(L10n.t("문서 준비 실패: ") +
                         (e.getMessage() == null ? "알 수 없는 오류" : e.getMessage()));
             }
         });
@@ -247,6 +247,12 @@ public final class BuiltInOfficeActivity extends Activity {
         String route = uri.getPath();
         if (route == null || route.contains("..") || route.contains("\\") ||
                 route.indexOf('\0') >= 0) return unavailable();
+        if ("/locale/ui.tsv".equals(route)) {
+            try {
+                return new WebResourceResponse("text/plain","UTF-8",
+                        getAssets().open("locale/ui.tsv"));
+            } catch (IOException missing) { return unavailable(); }
+        }
         if ("/office-input".equals(route)) {
             try {
                 if (!loaded || sourceFile == null) return unavailable();
@@ -338,10 +344,10 @@ public final class BuiltInOfficeActivity extends Activity {
                 busy = false;
                 if (isFinishing() || isDestroyed()) return;
                 if (message == null) {
-                    status.setText("문서를 원본에 저장했습니다.");
+                    status.setText(L10n.t("문서를 원본에 저장했습니다."));
                     web.evaluateJavascript("window.OfficeNativeSaveResult(true,'')", null);
                 } else {
-                    status.setText("원본 저장 실패. 편집 화면을 유지하세요.");
+                    status.setText(L10n.t("원본 저장 실패. 편집 화면을 유지하세요."));
                     web.evaluateJavascript("window.OfficeNativeSaveResult(false," +
                             JSONObject.quote(message) + ")", null);
                 }
@@ -430,13 +436,13 @@ public final class BuiltInOfficeActivity extends Activity {
 
     private void askClose() {
         if (busy) {
-            new AlertDialog.Builder(this).setTitle("저장 진행 중")
-                    .setMessage("원본 저장이 완료된 뒤 닫으세요.")
+            new AlertDialog.Builder(this).setTitle(L10n.t("저장 진행 중"))
+                    .setMessage(L10n.t("원본 저장이 완료된 뒤 닫으세요."))
                     .setPositiveButton(L10n.t("확인"), null).show();
             return;
         }
-        new AlertDialog.Builder(this).setTitle("문서 편집 종료")
-                .setMessage("저장하지 않은 변경 내용은 사라질 수 있습니다. 종료하시겠습니까?")
+        new AlertDialog.Builder(this).setTitle(L10n.t("문서 편집 종료"))
+                .setMessage(L10n.t("저장하지 않은 변경 내용은 사라질 수 있습니다. 종료하시겠습니까?"))
                 .setNegativeButton(L10n.t("계속 편집"), null)
                 .setPositiveButton(L10n.t("종료"), (dialog, which) -> finish()).show();
     }

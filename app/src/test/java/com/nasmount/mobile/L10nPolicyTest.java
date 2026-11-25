@@ -3,6 +3,16 @@ import org.junit.Test;
 import java.util.Locale;
 import static org.junit.Assert.*;
 public class L10nPolicyTest {
+    @Test public void manualChoiceOverridesSystemAndInvalidChoiceReturnsToSystem(){
+        assertEquals("ja",L10n.resolve("ja",Locale.KOREA));
+        assertEquals("ko",L10n.resolve("ko",Locale.JAPAN));
+        assertEquals("zh",L10n.resolve("zh",Locale.US));
+        assertEquals("en",L10n.resolve("en",Locale.KOREA));
+        assertEquals("ja",L10n.resolve("system",Locale.JAPAN));
+        assertEquals("en",L10n.resolve("system",Locale.GERMANY));
+        assertEquals("system",L10n.normalizeMode("unsupported"));
+        assertEquals("system",L10n.normalizeMode(null));
+    }
     @Test public void followsDeviceLanguageWithEnglishFallback() {
         assertEquals("ko",L10n.language(Locale.KOREA));
         assertEquals("en",L10n.language(Locale.US));

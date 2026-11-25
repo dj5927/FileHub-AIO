@@ -36,7 +36,7 @@ import java.util.concurrent.Executors;
  * Internal text editor for local, SAF and remote files. Never exported.
  * Reads/writes run off the UI thread. No online editing server or webview.
  */
-public final class TextEditorActivity extends Activity {
+public final class TextEditorActivity extends LocalizedActivity {
     static final String EXTRA_KIND = "text_kind";
     static final String EXTRA_NAME = "text_name";
     static final String EXTRA_PATH = "text_path";
@@ -102,7 +102,7 @@ public final class TextEditorActivity extends Activity {
         column.addView(toolbar, Ui.lp(this, -1, 57));
         TextView back = Ui.text(this, "‹", 33, Color.WHITE, false);
         back.setGravity(Gravity.CENTER);
-        back.setContentDescription("편집기 닫기");
+        back.setContentDescription(L10n.t("편집기 닫기"));
         toolbar.addView(back, Ui.lp(this, 45, -1));
         back.setOnClickListener(v -> onBackPressed());
 
@@ -113,12 +113,12 @@ public final class TextEditorActivity extends Activity {
 
         saveButton = Ui.text(this, L10n.t("저장"), 16, 0xFF4CC8B8, true);
         saveButton.setGravity(Gravity.CENTER);
-        saveButton.setContentDescription("문서 저장");
+        saveButton.setContentDescription(L10n.t("문서 저장"));
         saveButton.setEnabled(false);
         toolbar.addView(saveButton, Ui.lp(this, 64, -1));
         saveButton.setOnClickListener(v -> saveDocument());
 
-        status = Ui.text(this, "문서를 읽는 중...", 12, Ui.MUTED, false);
+        status = Ui.text(this, L10n.t("문서를 읽는 중..."), 12, Ui.MUTED, false);
         status.setPadding(dp(15), 0, dp(15), 0);
         column.addView(status, Ui.lp(this, -1, 34));
         editor = new EditText(this);
@@ -156,7 +156,7 @@ public final class TextEditorActivity extends Activity {
     private int dp(int value) { return Ui.dp(this, value); }
 
     private void showFailure(String message) {
-        new AlertDialog.Builder(this).setTitle("문서 편집")
+        new AlertDialog.Builder(this).setTitle(L10n.t("문서 편집"))
                 .setMessage(message).setPositiveButton(L10n.t("확인"), null).show();
     }
 
@@ -232,7 +232,7 @@ public final class TextEditorActivity extends Activity {
         }
         saving = true;
         saveButton.setEnabled(false);
-        status.setText("원본 파일에 저장하는 중...");
+        status.setText(L10n.t("원본 파일에 저장하는 중..."));
         worker.execute(() -> {
             String error = null;
             try {
@@ -271,7 +271,7 @@ public final class TextEditorActivity extends Activity {
                 savedText = text;
                 setResult(RESULT_OK);
                 updateStatus();
-                android.widget.Toast.makeText(this, "저장했습니다.",
+                android.widget.Toast.makeText(this, L10n.t("저장했습니다."),
                         android.widget.Toast.LENGTH_SHORT).show();
             });
         });
@@ -283,10 +283,10 @@ public final class TextEditorActivity extends Activity {
             return;
         }
         if (dirty()) {
-            new AlertDialog.Builder(this).setTitle("저장하지 않은 변경사항")
-                    .setMessage("문서를 수정했지만 아직 저장하지 않았습니다.")
+            new AlertDialog.Builder(this).setTitle(L10n.t("저장하지 않은 변경사항"))
+                    .setMessage(L10n.t("문서를 수정했지만 아직 저장하지 않았습니다."))
                     .setNegativeButton(L10n.t("계속 편집"), null)
-                    .setNeutralButton("저장하지 않고 닫기", (d, w) -> finish())
+                    .setNeutralButton(L10n.t("저장하지 않고 닫기"), (d, w) -> finish())
                     .setPositiveButton(L10n.t("저장"), (d, w) -> saveDocument()).show();
             return;
         }

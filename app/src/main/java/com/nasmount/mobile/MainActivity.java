@@ -65,7 +65,7 @@ import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
 @androidx.annotation.OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)
-public class MainActivity extends Activity {
+public class MainActivity extends LocalizedActivity {
     private OtaUpdater otaUpdater;
     private static final int REQ_SD = 501;
     private static final int REQ_UPLOAD = 502;
@@ -106,6 +106,7 @@ public class MainActivity extends Activity {
     private int statusBarInsetPx;
     private int navigationBarInsetPx;
     private String currentScreen = "home";
+    private String renderedLanguage;
     private String currentTitle = "FileHub AIO";
     private File localFolder;
     private DocumentFile safFolder;
@@ -273,6 +274,7 @@ public class MainActivity extends Activity {
             return insets;
         });
         setContentView(EditionMonetization.content(this,container));
+        renderedLanguage=L10n.language();
         showHome();
         if (BuildConfig.DIRECT_EDITION) {
             otaUpdater = new OtaUpdater(this);
@@ -288,7 +290,7 @@ public class MainActivity extends Activity {
         String value = intent.getData().toString();
         intent.setData(null);
         if("relay".equalsIgnoreCase(host))
-            toast("인터넷 QR은 더 이상 지원하지 않습니다. LAN QR을 이용해 주세요.");
+            toast(L10n.t("인터넷 QR은 더 이상 지원하지 않습니다. LAN QR을 이용해 주세요."));
         else if("pair".equalsIgnoreCase(host))
             showSendToTv(value);
     }
@@ -455,11 +457,11 @@ public class MainActivity extends Activity {
         for (Throwable e=error; e!=null; e=e.getCause()) {
             if (e instanceof RemoteProvider.UntrustedHostKey && remote != null) {
                 String fp = ((RemoteProvider.UntrustedHostKey)e).fingerprint;
-                new AlertDialog.Builder(this).setTitle("SFTP 서버 신뢰 확인")
-                        .setMessage("처음 접속한 서버입니다. 관리자에게 아래 키 지문을 확인하세요.\n\n" +
-                                fp + "\n\n확인 후 이 키를 저장하고 연결할까요?")
+                new AlertDialog.Builder(this).setTitle(L10n.t("SFTP 서버 신뢰 확인"))
+                        .setMessage(L10n.t("처음 접속한 서버입니다. 관리자에게 아래 키 지문을 확인하세요.\n\n") +
+                                fp + L10n.t("\n\n확인 후 이 키를 저장하고 연결할까요?"))
                         .setNegativeButton(L10n.t("취소"), null)
-                        .setPositiveButton("확인하고 연결", (dialog, which) -> {
+                        .setPositiveButton(L10n.t("확인하고 연결"), (dialog, which) -> {
                             remote.fingerprint = fp;
                             try {
                                 store.putRemote(remote);
@@ -527,24 +529,24 @@ public class MainActivity extends Activity {
         Ui.gap(panel, this, 12);
         EditText otp = new EditText(this);
         otp.setSingleLine(true);
-        otp.setHint("6자리 인증코드");
+        otp.setHint(L10n.t("6자리 인증코드"));
         otp.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
         otp.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(6)});
         otp.setAutofillHints((String[]) null);
         panel.addView(otp, Ui.lp(this, -1, 52));
         android.widget.CheckBox trust = new android.widget.CheckBox(this);
-        trust.setText("이 기기를 신뢰하여 다음 로그인부터 코드 생략");
+        trust.setText(L10n.t("이 기기를 신뢰하여 다음 로그인부터 코드 생략"));
         trust.setChecked(false);
         panel.addView(trust, Ui.lp(this, -1, -2));
         TextView safety = Ui.text(this,
-                "코드는 저장하지 않습니다. '이 기기 신뢰'를 선택하면 DSM에서 발급한 기기 식별자만 암호화 저장합니다.",
+                L10n.t("코드는 저장하지 않습니다. '이 기기 신뢰'를 선택하면 DSM에서 발급한 기기 식별자만 암호화 저장합니다."),
                 12, Ui.MUTED, false);
         panel.addView(safety, Ui.lp(this, -1, -2));
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("DSM 2단계 인증")
+                .setTitle(L10n.t("DSM 2단계 인증"))
                 .setView(panel)
                 .setNegativeButton(L10n.t("취소"), null)
-                .setPositiveButton("인증하고 계속", null)
+                .setPositiveButton(L10n.t("인증하고 계속"), null)
                 .create();
         dialog.setOnShowListener(ignored ->
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
@@ -646,11 +648,11 @@ public class MainActivity extends Activity {
         // Keep the menu button in exactly the same position on every screen.
         ToolbarIconView hamburger = new ToolbarIconView(this, ToolbarIconView.MENU);
         top.addView(hamburger, Ui.lp(this, 40, -1));
-        hamburger.setContentDescription("왼쪽 탐색 메뉴");
+        hamburger.setContentDescription(L10n.t("왼쪽 탐색 메뉴"));
         hamburger.setOnClickListener(v -> showDrawer());
         if (!"home".equals(currentScreen)) {
             ToolbarIconView home = new ToolbarIconView(this, ToolbarIconView.HOME);
-            home.setContentDescription("홈으로 이동");
+            home.setContentDescription(L10n.t("홈으로 이동"));
             top.addView(home, Ui.lp(this, 40, -1));
             home.setOnClickListener(v -> showHome());
         }
@@ -665,7 +667,7 @@ public class MainActivity extends Activity {
             // with the hamburger glyph (the icon itself is centered).
             wordmark.setScaleType(ImageView.ScaleType.FIT_CENTER);
             wordmark.setAdjustViewBounds(false);
-            wordmark.setContentDescription("FileHub AIO 홈");
+            wordmark.setContentDescription(L10n.t("FileHub AIO 홈"));
             LinearLayout brandSlot = Ui.horizontal(this);
             brandSlot.setGravity(Gravity.CENTER_VERTICAL);
             brandSlot.addView(wordmark, Ui.lp(this,
@@ -685,27 +687,27 @@ public class MainActivity extends Activity {
             if ("local".equals(currentScreen) || "saf".equals(currentScreen) ||
                     "remote".equals(currentScreen)) {
                 toolbarFavorite = new ToolbarIconView(this, ToolbarIconView.FAVORITE);
-                toolbarFavorite.setContentDescription("현재 폴더 즐겨찾기 추가");
+                toolbarFavorite.setContentDescription(L10n.t("현재 폴더 즐겨찾기 추가"));
                 top.addView(toolbarFavorite, Ui.lp(this, 40, -1));
                 toolbarFavorite.setOnClickListener(v -> toggleCurrentFolderFavorite());
                 updateFavoriteIndicators();
             }
             ToolbarIconView refresh =
                     new ToolbarIconView(this, ToolbarIconView.REFRESH);
-            refresh.setContentDescription("현재 폴더 새로고침");
+            refresh.setContentDescription(L10n.t("현재 폴더 새로고침"));
             top.addView(refresh, Ui.lp(this, 40, -1));
             refresh.setOnClickListener(v -> refreshCurrentFolderFromToolbar());
             ToolbarIconView search =
                     new ToolbarIconView(this, ToolbarIconView.SEARCH);
-            search.setContentDescription("현재 폴더에서 검색");
+            search.setContentDescription(L10n.t("현재 폴더에서 검색"));
             top.addView(search, Ui.lp(this, 40, -1));
             search.setOnClickListener(v -> searchCurrentFolder());
             ToolbarIconView views = new ToolbarIconView(this, ToolbarIconView.VIEW);
-            views.setContentDescription("보기 방식 및 정렬 설정");
+            views.setContentDescription(L10n.t("보기 방식 및 정렬 설정"));
             top.addView(views, Ui.lp(this, 40, -1));
             views.setOnClickListener(v -> showViewSettings());
             ToolbarIconView actions = new ToolbarIconView(this, ToolbarIconView.MORE);
-            actions.setContentDescription("현재 폴더 작업");
+            actions.setContentDescription(L10n.t("현재 폴더 작업"));
             top.addView(actions, Ui.lp(this, 40, -1));
             actions.setOnClickListener(v -> fileActionsForCurrent());
         } else if (right != null) {
@@ -755,7 +757,7 @@ public class MainActivity extends Activity {
         int end=LargeFolderPagePolicy.end(entries.size(),offset);
         for(int i=offset;i<end;i++)showRow.accept(entries.get(i));
         if(end<entries.size()){
-            TextView more=Ui.action(this,"더 보기  ("+end+" / "+entries.size()+")");
+            TextView more=Ui.action(this,L10n.t("더 보기  (")+end+" / "+entries.size()+")");
             LinearLayout.LayoutParams lp=Ui.lp(this,-1,49);
             lp.topMargin=dp(9);
             page.addView(more,lp);
@@ -786,7 +788,7 @@ public class MainActivity extends Activity {
     private void musicAction(String action){
         try{
             startService(new Intent(this,MusicPlaybackService.class).setAction(action));
-        }catch(Exception e){showError("음악 재생 조작에 실패했습니다.");}
+        }catch(Exception e){showError(L10n.t("음악 재생 조작에 실패했습니다."));}
     }
 
     private void createMiniPlayerBar(){
@@ -805,12 +807,12 @@ public class MainActivity extends Activity {
         controls.addView(miniTitle,new LinearLayout.LayoutParams(0,-1,1));
         miniToggle=Ui.text(this,"Ⅱ",23,Color.WHITE,true);
         miniToggle.setGravity(Gravity.CENTER);
-        miniToggle.setContentDescription("음악 일시정지 또는 재생");
+        miniToggle.setContentDescription(L10n.t("음악 일시정지 또는 재생"));
         controls.addView(miniToggle,Ui.lp(this,42,-1));
         miniToggle.setOnClickListener(v->musicAction(MusicPlaybackService.ACTION_TOGGLE));
         TextView stop=Ui.text(this,"×",25,Color.WHITE,false);
         stop.setGravity(Gravity.CENTER);
-        stop.setContentDescription("음악 재생 종료");
+        stop.setContentDescription(L10n.t("음악 재생 종료"));
         controls.addView(stop,Ui.lp(this,38,-1));
         stop.setOnClickListener(v->musicAction(MusicPlaybackService.ACTION_STOP));
         miniProgress=new SeekBar(this);
@@ -937,7 +939,7 @@ public class MainActivity extends Activity {
             selectionToolbar.setPadding(dp(8), 0, dp(8), 0);
             TextView cancel = Ui.text(this, "×", 32, Color.WHITE, false);
             cancel.setGravity(Gravity.CENTER);
-            cancel.setContentDescription("파일 선택 취소");
+            cancel.setContentDescription(L10n.t("파일 선택 취소"));
             selectionToolbar.addView(cancel, Ui.lp(this, 46, -1));
             cancel.setOnClickListener(v -> {
                 selection.clear();
@@ -1021,14 +1023,14 @@ public class MainActivity extends Activity {
 
     private void stageSelected(boolean moving) {
         if (FileTransferService.snapshot().active) {
-            showError("파일 전송 중에는 새 복사·이동을 시작할 수 없습니다.");
+            showError(L10n.t("파일 전송 중에는 새 복사·이동을 시작할 수 없습니다."));
             return;
         }
         if (selection.isEmpty()) return;
         List<FileTransferEngine.Item> items = selection.snapshot();
         if (moving) for (FileTransferEngine.Item item : items)
             if (!item.writable()) {
-                showError("읽기 전용 저장소의 파일은 이동할 수 없습니다. 복사를 사용하세요.");
+                showError(L10n.t("읽기 전용 저장소의 파일은 이동할 수 없습니다. 복사를 사용하세요."));
                 return;
             }
         stagedFiles = items;
@@ -1058,12 +1060,12 @@ public class MainActivity extends Activity {
 
     private void pasteStagedFiles() {
         if (FileTransferService.snapshot().active) {
-            showError("기존 파일 전송이 완료된 뒤 붙여넣기를 사용할 수 있습니다.");
+            showError(L10n.t("기존 파일 전송이 완료된 뒤 붙여넣기를 사용할 수 있습니다."));
             return;
         }
         FileTransferEngine.Destination dest = currentPasteDestination();
         if (dest == null) {
-            showError("붙여넣을 파일 탐색기 폴더로 이동하세요.");
+            showError(L10n.t("붙여넣을 파일 탐색기 폴더로 이동하세요."));
             return;
         }
         List<FileTransferEngine.Item> sources = new ArrayList<>(stagedFiles);
@@ -1083,7 +1085,7 @@ public class MainActivity extends Activity {
                     if (conflicts.size() > 4)
                         names.append("\n외 ").append(conflicts.size() - 4).append("개");
                     new AlertDialog.Builder(this)
-                            .setTitle("같은 이름의 파일이 " + conflicts.size() + "개 있습니다")
+                            .setTitle(L10n.t("같은 이름의 파일이 ") + conflicts.size() + "개 있습니다")
                             .setMessage(names + "\n\n기존 파일을 덮어쓸까요? " +
                                     "폴더가 포함된 경우 하위 동일 이름의 파일도 교체됩니다. " +
                                     "원본 파일은 덮어쓰기 전에 백업해 두는 것이 안전합니다.")
@@ -1104,7 +1106,7 @@ public class MainActivity extends Activity {
                                 FileTransferEngine.Destination dest,
                                 boolean moving, boolean overwrite) {
         if (FileTransferService.snapshot().active) {
-            showError("이미 파일 전송 중입니다. 진행률 아이콘에서 확인하세요.");
+            showError(L10n.t("이미 파일 전송 중입니다. 진행률 아이콘에서 확인하세요."));
             return;
         }
         if (Build.VERSION.SDK_INT >= 33 &&
@@ -1117,7 +1119,7 @@ public class MainActivity extends Activity {
         }
         try {
             if (!FileTransferService.begin(this, sources, dest, moving, overwrite)) {
-                showError("이미 파일 전송 중입니다.");
+                showError(L10n.t("이미 파일 전송 중입니다."));
                 return;
             }
             transferSourceCache = new ArrayList<>(sources);
@@ -1128,7 +1130,7 @@ public class MainActivity extends Activity {
             updateFileOperationChrome();
             showTransferDialog();
         } catch (RuntimeException error) {
-            showError("백그라운드 전송 서비스를 시작하지 못했습니다: " + safeError(error));
+            showError(L10n.t("백그라운드 전송 서비스를 시작하지 못했습니다: ") + safeError(error));
         }
     }
 
@@ -1158,17 +1160,17 @@ public class MainActivity extends Activity {
         LinearLayout row = Ui.horizontal(this);
         transferPercent = Ui.text(this, "0%", 18, Ui.TEAL, true);
         row.addView(transferPercent, Ui.lp(this, 65, 30));
-        transferAmount = Ui.text(this, "0 B / 용량 확인 중", 13, Ui.TEXT, false);
+        transferAmount = Ui.text(this, L10n.t("0 B / 용량 확인 중"), 13, Ui.TEXT, false);
         transferAmount.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         row.addView(transferAmount, new LinearLayout.LayoutParams(0, dp(30), 1f));
         box.addView(row, Ui.lp(this, -1, 30));
         Ui.gap(box, this, 7);
-        transferFiles = Ui.text(this, "0개 완료", 12, Ui.MUTED, false);
+        transferFiles = Ui.text(this, L10n.t("0개 완료"), 12, Ui.MUTED, false);
         box.addView(transferFiles, Ui.lp(this, -1, 24));
 
         AlertDialog dialog = new AlertDialog.Builder(this).setView(box)
                 .setCancelable(false)
-                .setNegativeButton("숨기기", null)
+                .setNegativeButton(L10n.t("숨기기"), null)
                 .setPositiveButton(L10n.t("취소"), null)
                 .create();
         transferDialog = dialog;
@@ -1182,7 +1184,7 @@ public class MainActivity extends Activity {
                 if (FileTransferService.snapshot().cancelling) return;
                 FileTransferService.requestCancel(this);
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setText("취소 중...");
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setText(L10n.t("취소 중..."));
                 updateTransferUi();
             });
         });
@@ -1200,7 +1202,7 @@ public class MainActivity extends Activity {
         chip.setGravity(Gravity.CENTER);
         chip.setBackground(Ui.bg(this, Ui.TEAL, 15, 0));
         chip.setElevation(dp(10));
-        chip.setContentDescription("파일 전송 진행률, 눌러서 전송창 다시 열기");
+        chip.setContentDescription(L10n.t("파일 전송 진행률, 눌러서 전송창 다시 열기"));
         chip.setOnClickListener(v -> showTransferDialog());
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
                 dp(53), dp(34), Gravity.TOP | Gravity.RIGHT);
@@ -1239,16 +1241,16 @@ public class MainActivity extends Activity {
                 transferSourceCache = Collections.emptyList();
                 transferTargetCache = null;
             } else folderCache.clearCounts();
-            if (s.cancelled) toast("파일 전송이 취소되었습니다.");
-            else if (s.failed) showError("파일 전송 실패: " + s.error);
-            else if (s.finished) toast("파일 전송이 완료되었습니다.");
+            if (s.cancelled) toast(L10n.t("파일 전송이 취소되었습니다."));
+            else if (s.failed) showError(L10n.t("파일 전송 실패: ") + s.error);
+            else if (s.finished) toast(L10n.t("파일 전송이 완료되었습니다."));
             if (!isFinishing() && !isDestroyed()) refreshCurrent();
         }
     }
 
     private void renameSelected() {
         if (selection.size() != 1) {
-            toast("이름 변경은 파일 또는 폴더 하나만 선택하세요.");
+            toast(L10n.t("이름 변경은 파일 또는 폴더 하나만 선택하세요."));
             return;
         }
         FileTransferEngine.Item item = selection.snapshot().get(0);
@@ -1257,10 +1259,10 @@ public class MainActivity extends Activity {
         if ("local".equals(item.kind)) renameLocal(item.local, null, item.name);
         else if ("saf".equals(item.kind)) renameLocal(null, item.saf, item.name);
         else if ("remote".equals(item.kind)) {
-            if (isReadOnlyCloud(item.remote)) showError("읽기 전용 저장소입니다.");
+            if (isReadOnlyCloud(item.remote)) showError(L10n.t("읽기 전용 저장소입니다."));
             else renameRemote(item.remote,
                     new Models.Entry(item.name, item.path, item.directory));
-        } else toast("미디어 화면의 이름 변경은 저장소 폴더에서 진행하세요.");
+        } else toast(L10n.t("미디어 화면의 이름 변경은 저장소 폴더에서 진행하세요."));
     }
 
     private void deleteSelected() {
@@ -1271,12 +1273,12 @@ public class MainActivity extends Activity {
             return;
         }
         new AlertDialog.Builder(this).setTitle(sources.size() + "개 항목 삭제")
-                .setMessage("선택한 파일과 폴더를 삭제하시겠습니까? 폴더 안의 파일도 삭제되며 " +
-                        "SD·일반 NAS는 휴지통 없이 삭제될 수 있습니다. " +
-                        "네이버 MYBOX 파일은 MYBOX 휴지통으로 이동합니다.")
+                .setMessage(L10n.t("선택한 파일과 폴더를 삭제하시겠습니까? 폴더 안의 파일도 삭제되며 ") +
+                        L10n.t("SD·일반 NAS는 휴지통 없이 삭제될 수 있습니다. ") +
+                        L10n.t("네이버 MYBOX 파일은 MYBOX 휴지통으로 이동합니다."))
                 .setNegativeButton(L10n.t("취소"), null)
                 .setPositiveButton(L10n.t("삭제"), (dialog, which) ->
-                        runJob("선택 항목 삭제 중...",
+                        runJob(L10n.t("선택 항목 삭제 중..."),
                                 () -> FileTransferEngine.delete(this, sources),
                                 count -> {
                                     for (FileTransferEngine.Item item : sources)
@@ -1307,7 +1309,7 @@ public class MainActivity extends Activity {
         actions.add("선택 해제");
         new AlertDialog.Builder(this)
                 .setTitle(selection.size() + "개 선택")
-                .setItems(actions.toArray(new String[0]), (dialog, which) -> {
+                .setItems(L10n.labels(actions.toArray(new String[0])), (dialog, which) -> {
                     List<FileTransferEngine.Item> items = selection.snapshot();
                     String selectedAction = actions.get(which);
                     if (selectedAction.equals("즐겨찾기 추가/해제")) {
@@ -1325,7 +1327,7 @@ public class MainActivity extends Activity {
                         } catch (Exception error) { failure(error); }
                     } else if (selectedAction.equals("폴더 용도 설정")) {
                         if (items.size() != 1 || !items.get(0).directory) {
-                            toast("폴더 용도 설정은 폴더 하나만 선택하세요.");
+                            toast(L10n.t("폴더 용도 설정은 폴더 하나만 선택하세요."));
                             return;
                         }
                         showFolderPurposeMenu(items.get(0));
@@ -1345,10 +1347,10 @@ public class MainActivity extends Activity {
     private void openSftpChmod(FileTransferEngine.Item item) {
         if (item == null || item.remote == null ||
                 !"SFTP".equals(item.remote.protocol) || item.remote.readOnly) {
-            showError("권한 변경은 쓰기 가능한 SFTP 파일 또는 폴더 한 개를 선택하세요.");
+            showError(L10n.t("권한 변경은 쓰기 가능한 SFTP 파일 또는 폴더 한 개를 선택하세요."));
             return;
         }
-        runJob("현재 리눅스 파일 권한 확인 중...",
+        runJob(L10n.t("현재 리눅스 파일 권한 확인 중..."),
                 () -> RemoteProvider.sftpPermissions(item.remote, item.path),
                 mode -> showSftpChmodDialog(item, mode));
     }
@@ -1360,7 +1362,7 @@ public class MainActivity extends Activity {
         form.addView(filename, Ui.lp(this, -1, -2));
         Ui.gap(form, this, 10);
         TextView current = Ui.text(this,
-                "현재: " + LinuxFilePermissions.octal(initialMode) + " (" +
+                L10n.t("현재: ") + LinuxFilePermissions.octal(initialMode) + " (" +
                         LinuxFilePermissions.symbolic(initialMode) + ")",
                 13, Ui.MUTED, false);
         form.addView(current, Ui.lp(this, -1, -2));
@@ -1392,8 +1394,8 @@ public class MainActivity extends Activity {
             form.addView(group, Ui.lp(this, -1, 44));
         }
         TextView warning = Ui.text(this,
-                "쓰기/실행 권한을 제거하면 파일 수정 또는 폴더 접근이 막힐 수 있습니다. " +
-                "현재 파일의 권한만 변경하며 하위 항목에는 재귀적으로 적용되지 않습니다.",
+                L10n.t("쓰기/실행 권한을 제거하면 파일 수정 또는 폴더 접근이 막힐 수 있습니다. ") +
+                L10n.t("현재 파일의 권한만 변경하며 하위 항목에는 재귀적으로 적용되지 않습니다."),
                 12, Ui.MUTED, false);
         form.addView(warning, Ui.lp(this, -1, -2));
         final boolean[] updating = {false};
@@ -1414,7 +1416,7 @@ public class MainActivity extends Activity {
                 String value = LinuxFilePermissions.octal(mode);
                 octal.setText(value);
                 octal.setSelection(value.length());
-                preview.setText("변경할 권한: " +
+                preview.setText(L10n.t("변경할 권한: ") +
                         LinuxFilePermissions.symbolic(mode));
             } finally { updating[0] = false; }
         };
@@ -1434,15 +1436,15 @@ public class MainActivity extends Activity {
                         for (int i = 0; i < rights.length; i++)
                             rights[i].setChecked(
                                     (mode & LinuxFilePermissions.RWX_BITS[i]) != 0);
-                        preview.setText("변경할 권한: " +
+                        preview.setText(L10n.t("변경할 권한: ") +
                                 LinuxFilePermissions.symbolic(mode));
                     } finally { updating[0] = false; }
                 } catch (IllegalArgumentException invalid) {
-                    preview.setText("755, 644, 0755처럼 3~4자리 8진수를 입력하세요.");
+                    preview.setText(L10n.t("755, 644, 0755처럼 3~4자리 8진수를 입력하세요."));
                 }
             }
         });
-        preview.setText("변경할 권한: " +
+        preview.setText(L10n.t("변경할 권한: ") +
                 LinuxFilePermissions.symbolic(initialMode));
         ScrollView scroll = new ScrollView(this);
         scroll.addView(form);
@@ -1463,27 +1465,27 @@ public class MainActivity extends Activity {
                     }
                     if (mode == initialMode) {
                         dialog.dismiss();
-                        toast("파일 권한이 변경되지 않았습니다.");
+                        toast(L10n.t("파일 권한이 변경되지 않았습니다."));
                         return;
                     }
                     Runnable apply = () -> {
                         dialog.dismiss();
-                        runJob("SFTP chmod 권한 변경 중...",
+                        runJob(L10n.t("SFTP chmod 권한 변경 중..."),
                                 () -> RemoteProvider.sftpChmod(item.remote, item.path,
                                         initialMode, mode), verified -> {
                                     selection.clear();
                                     updateFileOperationChrome();
                                     folderCache.invalidateProfile(item.remote);
-                                    toast("권한 변경 완료: " +
+                                    toast(L10n.t("권한 변경 완료: ") +
                                             LinuxFilePermissions.octal(verified));
                                     refreshCurrent();
                                 });
                     };
                     if (item.directory && (mode & 0100) == 0) {
                         new AlertDialog.Builder(this)
-                                .setTitle("폴더 접근 권한 주의")
-                                .setMessage("폴더 소유자의 실행(x) 권한을 제거하면 " +
-                                        "이 폴더에 다시 들어가지 못할 수 있습니다. 적용할까요?")
+                                .setTitle(L10n.t("폴더 접근 권한 주의"))
+                                .setMessage(L10n.t("폴더 소유자의 실행(x) 권한을 제거하면 ") +
+                                        L10n.t("이 폴더에 다시 들어가지 못할 수 있습니다. 적용할까요?"))
                                 .setNegativeButton(L10n.t("취소"), null)
                                 .setPositiveButton(L10n.t("적용"), (d, w) -> apply.run())
                                 .show();
@@ -1495,16 +1497,16 @@ public class MainActivity extends Activity {
     private void chooseCompression(List<FileTransferEngine.Item> sources) {
         FileTransferEngine.Destination destination = currentPasteDestination();
         if (destination == null) {
-            showError("압축파일을 저장할 파일관리자 폴더에서 선택해 주세요.");
+            showError(L10n.t("압축파일을 저장할 파일관리자 폴더에서 선택해 주세요."));
             return;
         }
         if (destination.remote != null &&
                 CloudProvider.isReadOnly(destination.remote)) {
-            showError("읽기 전용 저장소에는 압축 파일을 생성할 수 없습니다.");
+            showError(L10n.t("읽기 전용 저장소에는 압축 파일을 생성할 수 없습니다."));
             return;
         }
         new AlertDialog.Builder(this)
-                .setTitle("선택한 " + sources.size() + "개 항목 압축하기")
+                .setTitle(L10n.t("선택한 ") + sources.size() + "개 항목 압축하기")
                 .setItems(new String[]{L10n.t("ZIP 만들기"), L10n.t("7z 만들기")}, (dialog, formatIndex) -> {
                     String format = formatIndex == 0 ? "zip" : "7z";
                     EditText name = new EditText(this);
@@ -1513,18 +1515,18 @@ public class MainActivity extends Activity {
                             sources.get(0).name + "." + format : "선택파일." + format);
                     name.selectAll();
                     new AlertDialog.Builder(this)
-                            .setTitle("압축파일 이름")
+                            .setTitle(L10n.t("압축파일 이름"))
                             .setView(name)
-                            .setMessage("압축파일은 현재 폴더에 만들어집니다. " +
-                                    "암호화 및 RAR 생성은 지원하지 않습니다.")
+                            .setMessage(L10n.t("압축파일은 현재 폴더에 만들어집니다. ") +
+                                    L10n.t("암호화 및 RAR 생성은 지원하지 않습니다."))
                             .setNegativeButton(L10n.t("취소"), null)
-                            .setPositiveButton("압축하기", (d, w) -> {
+                            .setPositiveButton(L10n.t("압축하기"), (d, w) -> {
                                 String outputName = name.getText().toString().trim();
                                 if (outputName.isEmpty()) {
-                                    showError("압축파일 이름을 입력하세요.");
+                                    showError(L10n.t("압축파일 이름을 입력하세요."));
                                     return;
                                 }
-                                runJob("파일 압축·저장 중...", () ->
+                                runJob(L10n.t("파일 압축·저장 중..."), () ->
                                                 ArchiveWorkflows.compress(this,
                                                         sources, destination,
                                                         outputName, format),
@@ -1534,7 +1536,7 @@ public class MainActivity extends Activity {
                                             if (destination.remote != null)
                                                 folderCache.invalidateProfile(destination.remote);
                                             folderCache.clearCounts();
-                                            toast("압축 파일 생성: " + result.destinationName);
+                                            toast(L10n.t("압축 파일 생성: ") + result.destinationName);
                                             refreshCurrent();
                                         });
                             }).show();
@@ -1544,12 +1546,12 @@ public class MainActivity extends Activity {
     private void offerExtractArchive(FileTransferEngine.Item archive) {
         FileTransferEngine.Destination destination = currentPasteDestination();
         if (destination == null) {
-            showError("압축 파일이 있는 저장소 폴더에서 압축을 해제하세요.");
+            showError(L10n.t("압축 파일이 있는 저장소 폴더에서 압축을 해제하세요."));
             return;
         }
         if (destination.remote != null &&
                 CloudProvider.isReadOnly(destination.remote)) {
-            showError("읽기 전용 저장소에서 압축해제할 수 없습니다.");
+            showError(L10n.t("읽기 전용 저장소에서 압축해제할 수 없습니다."));
             return;
         }
         String newFolder = ArchiveCodec.baseFolder(archive.name);
@@ -1563,13 +1565,13 @@ public class MainActivity extends Activity {
                         "임시 저장 공간과 추출 용량에 제한이 있습니다.")
                 .setNegativeButton(L10n.t("취소"), null)
                 .setPositiveButton(L10n.t("압축 해제"), (d, which) ->
-                        runJob("압축 해제·파일 업로드 중...", () ->
+                        runJob(L10n.t("압축 해제·파일 업로드 중..."), () ->
                                 ArchiveWorkflows.extract(this, archive, destination),
                                 result -> {
                                     if (destination.remote != null)
                                         folderCache.invalidateProfile(destination.remote);
                                     folderCache.clearCounts();
-                                    toast("압축 " + result.entries + "개 항목 해제했습니다.");
+                                    toast(L10n.t("압축 ") + result.entries + "개 항목 해제했습니다.");
                                     refreshCurrent();
                                 })).show();
     }
@@ -1705,7 +1707,7 @@ public class MainActivity extends Activity {
             upgrade.setOnClickListener(v->EditionMonetization.showUpgrade(this));
             Ui.gap(page,this,6);
         }
-        heading("저장소", 0);
+        heading(L10n.t("저장소"), 0);
         LinearLayout r1 = Ui.horizontal(this);
         page.addView(r1, Ui.lp(this, -1, expandedLayout() ? 195 : 158));
         boolean sdPresent = hasSd();
@@ -1713,7 +1715,7 @@ public class MainActivity extends Activity {
                 capacity(), () -> browseLocal(Environment.getExternalStorageDirectory()));
         if (sdPresent)
             tile(r1, L10n.t("SD 저장소"), "sd", 0xFF6B8CBE,
-                    "외장 메모리", this::openSd);
+                    L10n.t("외장 메모리"), this::openSd);
         else
             tile(r1, L10n.t("다운로드"), "download", ICON_BLUE, "",
                     () -> browseLocal(Environment.getExternalStoragePublicDirectory(
@@ -1742,7 +1744,7 @@ public class MainActivity extends Activity {
         dividerLayout.leftMargin=dp(6);
         dividerLayout.rightMargin=dp(6);
         page.addView(sectionDivider,dividerLayout);
-        heading("추가기능", 17);
+        heading(L10n.t("추가기능"), 17);
         LinearLayout features=Ui.horizontal(this);
         page.addView(features,Ui.lp(this,-1,expandedLayout()?195:158));
         tile(features,L10n.t("동영상"),"video",0xFFDD7662,"",
@@ -1752,7 +1754,7 @@ public class MainActivity extends Activity {
         tile(features,L10n.t("소설책"),"book",0xFF6B99C2,"",
                 ()->showAssignedFolders(AssignedFolderCatalog.TEXT));
         Ui.gap(page,this,14);
-        heading("원격 저장소", 15);
+        heading(L10n.t("원격 저장소"), 15);
         LinearLayout remoteEntry = Ui.horizontal(this);
         remoteEntry.setPadding(dp(16), dp(12), dp(12), dp(12));
         remoteEntry.setBackground(Ui.bg(this, Ui.SURFACE, 17, Ui.BORDER));
@@ -1769,7 +1771,7 @@ public class MainActivity extends Activity {
             text.addView(Ui.text(this, count == 0 ? "연결 추가하기" :
                     "저장된 연결 " + count + "개", 12, Ui.MUTED, false));
         } catch (Exception error) {
-            text.addView(Ui.text(this, "설정을 확인해 주세요", 12, Ui.MUTED, false));
+            text.addView(Ui.text(this, L10n.t("설정을 확인해 주세요"), 12, Ui.MUTED, false));
         }
         TextView arrow = Ui.text(this, "›", 28, Ui.MUTED, false);
         remoteEntry.addView(arrow, Ui.lp(this, 20, 42));
@@ -1797,11 +1799,11 @@ public class MainActivity extends Activity {
             List<AssignedFolderCatalog.Folder> roots=
                     AssignedFolderCatalog.collect(mode,videos,readerFolders.all());
             if(roots.isEmpty()){
-                muted("아직 "+title+"으로 지정한 폴더가 없습니다.");
-                muted("오른쪽 위 + 를 눌러 로컬·SD·네트워크 폴더를 찾아 지정하세요.");
+                muted(L10n.t("아직 ")+title+"으로 지정한 폴더가 없습니다.");
+                muted(L10n.t("오른쪽 위 + 를 눌러 로컬·SD·네트워크 폴더를 찾아 지정하세요."));
                 return;
             }
-            TextView loading=muted("지정한 폴더의 하위 폴더를 찾는 중...");
+            TextView loading=muted(L10n.t("지정한 폴더의 하위 폴더를 찾는 중..."));
             worker.execute(()->{
                 Map<String,AssignedFolderCatalog.Folder> unique=new LinkedHashMap<>();
                 List<Models.RemoteProfile> profiles;
@@ -1834,15 +1836,15 @@ public class MainActivity extends Activity {
                         return;
                     page.removeView(loading);
                     if(visible.isEmpty()){
-                        muted("표시할 하위 폴더가 없습니다. + 버튼으로 폴더를 추가하세요.");
+                        muted(L10n.t("표시할 하위 폴더가 없습니다. + 버튼으로 폴더를 추가하세요."));
                         return;
                     }
-                    muted("폴더 "+visible.size()+"개 · 길게 누르면 해당 폴더의 용도 지정 해제");
+                    muted(L10n.t("폴더 ")+visible.size()+"개 · 길게 누르면 해당 폴더의 용도 지정 해제");
                     appendAssignedFolderPage(visible,accounts,roots,mode,0,screen);
                 });
             });
         }catch(Exception error){
-            showError("지정 폴더를 표시하지 못했습니다: "+error.getMessage());
+            showError(L10n.t("지정 폴더를 표시하지 못했습니다: ")+error.getMessage());
         }
     }
 
@@ -1870,7 +1872,7 @@ public class MainActivity extends Activity {
                     ()->confirmRemoveAssignedRole(mode,folder));
         }
         if(end<folders.size()){
-            TextView more=Ui.action(this,"폴더 더 보기  ("+end+" / "+folders.size()+")");
+            TextView more=Ui.action(this,L10n.t("폴더 더 보기  (")+end+" / "+folders.size()+")");
             page.addView(more,Ui.lp(this,-1,50));
             nextDirectoryPage=more;
             more.setOnClickListener(v->{
@@ -1901,13 +1903,13 @@ public class MainActivity extends Activity {
                                            AssignedFolderCatalog.Folder folder){
         String label=AssignedFolderCatalog.VIDEO.equals(mode)?"동영상":
                 AssignedFolderCatalog.COMIC.equals(mode)?"만화책":"소설책";
-        new AlertDialog.Builder(this).setTitle("폴더 용도 지정 해제")
+        new AlertDialog.Builder(this).setTitle(L10n.t("폴더 용도 지정 해제"))
                 .setMessage(folder.name()+"\n\n"+label+
                         " 폴더 용도 지정을 해제할까요?\n"+
                         "상위 폴더에서 상속된 지정도 이 폴더부터 적용되지 않습니다."+
                         "\n파일이나 폴더 자체는 삭제되지 않습니다.")
                 .setNegativeButton(L10n.t("취소"),null)
-                .setPositiveButton("제외하기",(dialog,which)->{
+                .setPositiveButton(L10n.t("제외하기"),(dialog,which)->{
                     try{
                         if(AssignedFolderCatalog.VIDEO.equals(mode)){
                             String scope=assignedVideoScope(folder);
@@ -2051,7 +2053,7 @@ public class MainActivity extends Activity {
         void show(){
             LinearLayout panel=Ui.vertical(MainActivity.this);
             panel.setPadding(dp(14),dp(9),dp(14),dp(4));
-            pathLabel=Ui.text(MainActivity.this,"저장소를 선택하세요",13,Ui.MUTED,false);
+            pathLabel=Ui.text(MainActivity.this,L10n.t("저장소를 선택하세요"),13,Ui.MUTED,false);
             pathLabel.setPadding(dp(4),dp(5),dp(4),dp(11));
             panel.addView(pathLabel,Ui.lp(MainActivity.this,-1,-2));
             ScrollView scroll=new ScrollView(MainActivity.this);
@@ -2059,10 +2061,10 @@ public class MainActivity extends Activity {
             scroll.addView(entries);
             panel.addView(scroll,Ui.lp(MainActivity.this,-1,410));
             dialog=new AlertDialog.Builder(MainActivity.this)
-                    .setTitle("폴더 추가 · 탐색기")
+                    .setTitle(L10n.t("폴더 추가 · 탐색기"))
                     .setView(panel)
                     .setNegativeButton(L10n.t("취소"),null)
-                    .setPositiveButton("현재 폴더 지정",null)
+                    .setPositiveButton(L10n.t("현재 폴더 지정"),null)
                     .create();
             dialog.setOnDismissListener(ignored->generation++);
             dialog.setOnShowListener(ignored->{
@@ -2083,7 +2085,7 @@ public class MainActivity extends Activity {
         void roots(){
             ++generation;
             current=null;base=null;
-            pathLabel.setText("저장소를 선택한 뒤 원하는 하위 폴더로 이동하세요.");
+            pathLabel.setText(L10n.t("저장소를 선택한 뒤 원하는 하위 폴더로 이동하세요."));
             emptyRows();
             updateSelection();
             File main=Environment.getExternalStorageDirectory();
@@ -2122,7 +2124,7 @@ public class MainActivity extends Activity {
                 }
             }catch(Exception error){
                 entries.addView(Ui.text(MainActivity.this,
-                        "네트워크 계정을 읽지 못했습니다.",12,Ui.MUTED,false));
+                        L10n.t("네트워크 계정을 읽지 못했습니다."),12,Ui.MUTED,false));
             }
         }
         void back(){
@@ -2145,7 +2147,7 @@ public class MainActivity extends Activity {
             updateSelection();
             rowItem("〈 상위 폴더","뒤로 이동",this::back);
             TextView loading=Ui.text(MainActivity.this,
-                    "하위 폴더 목록을 읽는 중...",13,Ui.MUTED,false);
+                    L10n.t("하위 폴더 목록을 읽는 중..."),13,Ui.MUTED,false);
             loading.setPadding(dp(12),dp(15),dp(4),dp(12));
             entries.addView(loading,Ui.lp(MainActivity.this,-1,-2));
             worker.execute(()->{
@@ -2163,12 +2165,12 @@ public class MainActivity extends Activity {
                     entries.removeView(loading);
                     if(issue!=null){
                         entries.addView(Ui.text(MainActivity.this,
-                                "폴더를 읽지 못했습니다: "+issue,12,Ui.MUTED,false));
+                                L10n.t("폴더를 읽지 못했습니다: ")+issue,12,Ui.MUTED,false));
                         return;
                     }
                     if(children.isEmpty()){
                         entries.addView(Ui.text(MainActivity.this,
-                                "하위 폴더가 없습니다. 이 폴더를 지정할 수 있습니다.",
+                                L10n.t("하위 폴더가 없습니다. 이 폴더를 지정할 수 있습니다."),
                                 12,Ui.MUTED,false));
                     }
                     appendPickerFolderPage(children,0,token);
@@ -2185,7 +2187,7 @@ public class MainActivity extends Activity {
             }
             if(end<children.size()){
                 TextView next=Ui.action(MainActivity.this,
-                        "하위 폴더 더 보기  ("+end+" / "+children.size()+")");
+                        L10n.t("하위 폴더 더 보기  (")+end+" / "+children.size()+")");
                 entries.addView(next,Ui.lp(MainActivity.this,-1,49));
                 next.setOnClickListener(v->{
                     if(token!=generation||next.getParent()!=entries)return;
@@ -2219,7 +2221,7 @@ public class MainActivity extends Activity {
                 }
                 folderCache.clearCounts();
                 dialog.dismiss();
-                toast("폴더 용도를 지정했습니다.");
+                toast(L10n.t("폴더 용도를 지정했습니다."));
                 showAssignedFolders(mode);
             }catch(Exception error){failure(error);}
         }
@@ -2232,7 +2234,7 @@ public class MainActivity extends Activity {
             case "local":{
                 File target=new File(folder.path);
                 if(!target.isDirectory()){
-                    showError("지정한 로컬 폴더를 찾을 수 없습니다: "+folder.path);
+                    showError(L10n.t("지정한 로컬 폴더를 찾을 수 없습니다: ")+folder.path);
                     return;
                 }
                 browseLocal(target);
@@ -2250,7 +2252,7 @@ public class MainActivity extends Activity {
                             return;
                         }
                     }
-                    showError("원격 연결 정보가 없거나 삭제되었습니다.");
+                    showError(L10n.t("원격 연결 정보가 없거나 삭제되었습니다."));
                 }catch(Exception error){failure(error);}
                 return;
             case "saf":
@@ -2328,7 +2330,7 @@ public class MainActivity extends Activity {
         try{
             if(treeUri==null||treeUri.isEmpty()||
                     !hasPersistedTreeRead(Uri.parse(treeUri))){
-                showError("SD·USB 폴더 접근 권한이 없습니다. 저장소에서 권한을 다시 설정해 주세요.");
+                showError(L10n.t("SD·USB 폴더 접근 권한이 없습니다. 저장소에서 권한을 다시 설정해 주세요."));
                 return;
             }
             activeTreeUri=treeUri;
@@ -2374,7 +2376,7 @@ public class MainActivity extends Activity {
                 }
             }
         }
-        showError("영상 폴더에 접근할 수 없습니다. SD·USB 또는 폴더 접근 권한을 다시 지정해 주세요.");
+        showError(L10n.t("영상 폴더에 접근할 수 없습니다. SD·USB 또는 폴더 접근 권한을 다시 지정해 주세요."));
     }
     private void tileEmpty(LinearLayout row) {
         View empty = new View(this);
@@ -2529,7 +2531,7 @@ public class MainActivity extends Activity {
         ImageView logoIcon = new ImageView(this);
         logoIcon.setImageResource(R.drawable.filehub_aio_icon);
         logoIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        logoIcon.setContentDescription("FileHub AIO 아이콘");
+        logoIcon.setContentDescription(L10n.t("FileHub AIO 아이콘"));
         drawerLeadingSlot.addView(logoIcon, new FrameLayout.LayoutParams(
                 dp(30), dp(33), Gravity.CENTER));
         ImageView logoText = new ImageView(this);
@@ -2548,7 +2550,7 @@ public class MainActivity extends Activity {
         drawerLink(inside, L10n.t("홈"), "drive", () -> showHome());
 
         LinearLayout favoriteEntries = drawerSection(inside,
-                "즐겨찾기", "star", DrawerSectionState.FAVORITES);
+                L10n.t("즐겨찾기"), "star", DrawerSectionState.FAVORITES);
         try {
             List<Models.Favorite> favorites = store.activeFavorites();
             if (favorites.isEmpty())
@@ -2562,7 +2564,7 @@ public class MainActivity extends Activity {
         }
 
         LinearLayout networkEntries = drawerSection(inside,
-                "네트워크 폴더", "remote", DrawerSectionState.NETWORK);
+                L10n.t("네트워크 폴더"), "remote", DrawerSectionState.NETWORK);
         try {
             for (Models.RemoteProfile p : store.activeRemotes())
                 drawerNestedLink(networkEntries, p.label(), "remote",
@@ -2754,10 +2756,10 @@ public class MainActivity extends Activity {
     }
     private void showFavorites() {
         currentScreen = "favorites";
-        render("즐겨찾기", true, null, null);
+        render(L10n.t("즐겨찾기"), true, null, null);
         try {
             List<Models.Favorite> items = store.activeFavorites();
-            if (items.isEmpty()) muted("즐겨찾기한 폴더가 없습니다.");
+            if (items.isEmpty()) muted(L10n.t("즐겨찾기한 폴더가 없습니다."));
             for (Models.Favorite favorite : items) favoriteRow(page, favorite);
         } catch (Exception e) { failure(e); }
     }
@@ -2834,24 +2836,24 @@ public class MainActivity extends Activity {
         EditText input = new EditText(this);
         input.setSingleLine(true);
         input.setTextSize(16);
-        input.setHint("즐겨찾기에 표시할 이름");
+        input.setHint(L10n.t("즐겨찾기에 표시할 이름"));
         input.setText(favorite.displayTitle());
         input.setSelection(input.length());
         LinearLayout content = Ui.vertical(this);
         content.setPadding(dp(20), dp(8), dp(20), dp(2));
-        TextView original = Ui.text(this, "실제 폴더명: " + favorite.title,
+        TextView original = Ui.text(this, L10n.t("실제 폴더명: ") + favorite.title,
                 12, Ui.MUTED, false);
         content.addView(original, Ui.lp(this, -1, -2));
         content.addView(input, Ui.lp(this, -1, 54));
         TextView note = Ui.text(this,
-                "즐겨찾기에 표시되는 이름만 변경되며 실제 폴더명은 그대로입니다.",
+                L10n.t("즐겨찾기에 표시되는 이름만 변경되며 실제 폴더명은 그대로입니다."),
                 11, Ui.MUTED, false);
         content.addView(note, Ui.lp(this, -1, -2));
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(L10n.t("즐겨찾기 이름 변경"))
                 .setView(content)
                 .setNegativeButton(L10n.t("취소"), null)
-                .setNeutralButton("원래 이름", null)
+                .setNeutralButton(L10n.t("원래 이름"), null)
                 .setPositiveButton(L10n.t("저장"), null)
                 .create();
         dialog.setOnShowListener(ignored -> {
@@ -2860,7 +2862,7 @@ public class MainActivity extends Activity {
                     store.renameFavorite(favorite, input.getText().toString());
                     dialog.dismiss();
                     refreshFavoriteSurfaces();
-                    toast("즐겨찾기 이름을 변경했습니다.");
+                    toast(L10n.t("즐겨찾기 이름을 변경했습니다."));
                 } catch (IllegalArgumentException invalid) {
                     input.setError(invalid.getMessage());
                 } catch (Exception error) { failure(error); }
@@ -2870,7 +2872,7 @@ public class MainActivity extends Activity {
                     store.renameFavorite(favorite, "");
                     dialog.dismiss();
                     refreshFavoriteSurfaces();
-                    toast("원래 폴더명으로 표시합니다.");
+                    toast(L10n.t("원래 폴더명으로 표시합니다."));
                 } catch (Exception error) { failure(error); }
             });
         });
@@ -2882,7 +2884,7 @@ public class MainActivity extends Activity {
             try {
                 for (Models.RemoteProfile item : store.activeRemotes())
                     if (item.id.equals(f.remoteId)) { openRemote(item, f.path); return; }
-                showError("삭제된 원격 연결입니다.");
+                showError(L10n.t("삭제된 원격 연결입니다."));
             } catch (Exception ex) { failure(ex); }
         } else if ("saf".equals(f.kind)) {
             activeTreeUri = f.remoteId;
@@ -3385,7 +3387,7 @@ public class MainActivity extends Activity {
                 date.setSingleLine(true);
                 date.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
                 date.setMinWidth(dp(77));
-                date.setContentDescription("파일 수정 또는 생성 날짜 " +
+                date.setContentDescription(L10n.t("파일 수정 또는 생성 날짜 ") +
                         shortDate(entry.modified));
                 LinearLayout.LayoutParams dateParams = Ui.lp(this, -2, 19);
                 dateParams.leftMargin = dp(8);
@@ -3430,7 +3432,7 @@ public class MainActivity extends Activity {
                 this,thisFolder);
         LinearLayout form = Ui.vertical(this);
         form.setPadding(dp(20), dp(12), dp(20), dp(8));
-        form.addView(Ui.text(this, "보기 방식", 15, Ui.TEAL, true));
+        form.addView(Ui.text(this, L10n.t("보기 방식"), 15, Ui.TEAL, true));
         RadioGroup layouts = new RadioGroup(this);
         layouts.setOrientation(LinearLayout.HORIZONTAL);
         String[] modes = {"☷ 목록", "▦ 격자", "≡ 자세히"};
@@ -3446,7 +3448,7 @@ public class MainActivity extends Activity {
         layouts.check(layoutIds[Math.max(0, Math.min(2, layoutMode))]);
         form.addView(layouts, Ui.lp(this, -1, 56));
         Ui.gap(form, this, 8);
-        form.addView(Ui.text(this, "정렬", 15, Ui.TEAL, true));
+        form.addView(Ui.text(this, L10n.t("정렬"), 15, Ui.TEAL, true));
         RadioGroup sorting = new RadioGroup(this);
         sorting.setOrientation(LinearLayout.VERTICAL);
         String[] choices = {
@@ -3467,7 +3469,7 @@ public class MainActivity extends Activity {
                 hasFolder?currentFolderSortMode():sortMode))]);
         form.addView(sorting);
         CheckBox onlyHere=new CheckBox(this);
-        onlyHere.setText("이 폴더에만 적용 (하위 폴더 제외)");
+        onlyHere.setText(L10n.t("이 폴더에만 적용 (하위 폴더 제외)"));
         onlyHere.setChecked(overridden);
         onlyHere.setEnabled(hasFolder);
         form.addView(onlyHere,Ui.lp(this,-1,49));
@@ -3480,26 +3482,26 @@ public class MainActivity extends Activity {
         Ui.gap(form, this, 8);
         form.addView(Ui.text(this, L10n.t("기타"), 15, Ui.TEAL, true));
         CheckBox hidden = new CheckBox(this);
-        hidden.setText("숨겨진 파일 표시");
+        hidden.setText(L10n.t("숨겨진 파일 표시"));
         hidden.setChecked(showHidden);
         form.addView(hidden, Ui.lp(this, -1, 49));
         CheckBox thumbs = new CheckBox(this);
-        thumbs.setText("썸네일 표시 (이미지)");
+        thumbs.setText(L10n.t("썸네일 표시 (이미지)"));
         thumbs.setChecked(showThumbnails);
         form.addView(thumbs, Ui.lp(this, -1, 49));
         CheckBox videoThumbs = new CheckBox(this);
-        videoThumbs.setText("동영상 실제 장면 미리보기 (기본 켜짐)");
+        videoThumbs.setText(L10n.t("동영상 실제 장면 미리보기 (기본 켜짐)"));
         videoThumbs.setChecked(showVideoThumbnails);
         form.addView(videoThumbs, Ui.lp(this, -1, 49));
         TextView hint = Ui.text(this,
-                "원격 썸네일은 1MB 이하 이미지에서만 다운로드합니다. " +
-                        "NAS 동영상은 구간 읽기로 일부만 가져오며, " +
-                        "지원되지 않는 영상은 기본 재생 아이콘으로 표시합니다.",
+                L10n.t("원격 썸네일은 1MB 이하 이미지에서만 다운로드합니다. ") +
+                        L10n.t("NAS 동영상은 구간 읽기로 일부만 가져오며, ") +
+                        L10n.t("지원되지 않는 영상은 기본 재생 아이콘으로 표시합니다."),
                 12, Ui.MUTED, false);
         form.addView(hint, Ui.lp(this, -1, -2));
         ScrollView content = new ScrollView(this);
         content.addView(form);
-        new AlertDialog.Builder(this).setTitle("보기 및 정렬")
+        new AlertDialog.Builder(this).setTitle(L10n.t("보기 및 정렬"))
                 .setView(content)
                 .setNegativeButton(L10n.t("취소"), null)
                 .setPositiveButton(L10n.t("적용"), (d, which) -> {
@@ -3539,10 +3541,10 @@ public class MainActivity extends Activity {
         EditText query = new EditText(this);
         query.setSingleLine(true);
         query.setTextSize(16);
-        query.setHint("현재 폴더에서 파일명 검색");
+        query.setHint(L10n.t("현재 폴더에서 파일명 검색"));
         content.addView(query, Ui.lp(this, -1, 53));
         CheckBox recursive=new CheckBox(this);
-        recursive.setText("하위 폴더 포함 검색");
+        recursive.setText(L10n.t("하위 폴더 포함 검색"));
         recursive.setEnabled(canRecurse);
         recursive.setChecked(false);
         content.addView(recursive,Ui.lp(this,-1,49));
@@ -3555,7 +3557,7 @@ public class MainActivity extends Activity {
         scroller.addView(results);
         content.addView(scroller, Ui.lp(this, -1, 330));
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("검색")
+                .setTitle(L10n.t("검색"))
                 .setView(content)
                 .setNegativeButton(L10n.t("닫기"), null).create();
         Runnable update = () -> {
@@ -3571,7 +3573,7 @@ public class MainActivity extends Activity {
             }
             if (keyword.isEmpty()) {
                 TextView notice = Ui.text(this,
-                        "파일명 일부를 입력하세요. 현재 폴더의 항목에서 검색합니다.",
+                        L10n.t("파일명 일부를 입력하세요. 현재 폴더의 항목에서 검색합니다."),
                         13, Ui.MUTED, false);
                 results.addView(notice, Ui.lp(this, -1, 60));
                 return;
@@ -3594,13 +3596,13 @@ public class MainActivity extends Activity {
                 results.addView(line, Ui.lp(this, -1, 1));
             }
             if (matching == 0) {
-                TextView empty = Ui.text(this, "검색 결과가 없습니다.",
+                TextView empty = Ui.text(this, L10n.t("검색 결과가 없습니다."),
                         13, Ui.MUTED, false);
                 results.addView(empty, Ui.lp(this, -1, 56));
             }
             if (matching > 100) {
                 TextView more = Ui.text(this,
-                        "일치하는 파일 " + matching + "개 · 앞의 100개만 표시",
+                        L10n.t("일치하는 파일 ") + matching + "개 · 앞의 100개만 표시",
                         12, Ui.MUTED, false);
                 results.addView(more, Ui.lp(this, -1, 40));
             }
@@ -3629,7 +3631,7 @@ public class MainActivity extends Activity {
             final boolean includeHidden=showHidden;
             results.removeAllViews();
             results.addView(Ui.text(this,
-                    "하위 폴더를 검색하고 있습니다…",
+                    L10n.t("하위 폴더를 검색하고 있습니다…"),
                     14,Ui.MUTED,false),Ui.lp(this,-1,55));
             recursiveSearchTask=recursiveSearchWorker.submit(()->{
                 RecursiveSearchBatch batch=recursiveSearchMatches(
@@ -3648,7 +3650,7 @@ public class MainActivity extends Activity {
                     results.addView(Ui.text(this,summary,12,Ui.MUTED,false),
                             Ui.lp(this,-1,42));
                     if(batch.hits.isEmpty())
-                        results.addView(Ui.text(this,"일치하는 파일이 없습니다.",
+                        results.addView(Ui.text(this,L10n.t("일치하는 파일이 없습니다."),
                                 14,Ui.MUTED,false),Ui.lp(this,-1,55));
                     for(SearchResult hit:batch.hits){
                         TextView item=Ui.text(this,hit.name,14,Ui.TEXT,false);
@@ -3859,12 +3861,12 @@ public class MainActivity extends Activity {
     private void showFolderPurposeMenu(FileTransferEngine.Item item) {
         if (item == null || !item.directory ||
                 readerScopeForFolder(item, ReaderFolders.COMIC) == null) {
-            toast("폴더 하나를 선택해 주세요.");
+            toast(L10n.t("폴더 하나를 선택해 주세요."));
             return;
         }
-        new AlertDialog.Builder(this).setTitle("폴더 용도 설정 · " + item.name)
+        new AlertDialog.Builder(this).setTitle(L10n.t("폴더 용도 설정 · ") + item.name)
                 .setItems(new String[]{L10n.t("동영상 폴더 설정/해제"),
-                        "독서용 폴더 설정/해제"},
+                        L10n.t("독서용 폴더 설정/해제")},
                         (dialog, which) -> {
                             // Multi-selection hides the top menu; honor its
                             // bottom More operation before presenting settings.
@@ -3884,7 +3886,7 @@ public class MainActivity extends Activity {
         ReaderFolders.Scope comic=readerScopeForFolder(folder,ReaderFolders.COMIC);
         ReaderFolders.Scope text=readerScopeForFolder(folder,ReaderFolders.TEXT);
         if(comic==null||text==null){
-            showError("책 폴더는 폴더 하나를 선택해 지정해 주세요.");
+            showError(L10n.t("책 폴더는 폴더 하나를 선택해 지정해 주세요."));
             return;
         }
         boolean comicActive=readerFolders.exact(comic.mode,comic.kind,comic.owner,comic.path);
@@ -3896,7 +3898,7 @@ public class MainActivity extends Activity {
         // AlertDialog.Builder.setMessage() overrides setItems() when
         // both are supplied: the v0.1.42 dialog showed only Cancel.
         new AlertDialog.Builder(this)
-                .setTitle("독서용 폴더 설정/해제 · " + folder.name)
+                .setTitle(L10n.t("독서용 폴더 설정/해제 · ") + folder.name)
                 .setItems(modes,(dialog,index)->{
                     try{
                         ReaderFolders.Scope target=index==0?comic:text;
@@ -3929,8 +3931,8 @@ public class MainActivity extends Activity {
                                     "폴더 용도 설정"} :
                             new String[]{"새로 만들기", "즐겨찾기 추가/해제",
                                     "새로고침", "폴더 용도 설정"});
-            new AlertDialog.Builder(this).setTitle("현재 폴더")
-                    .setItems(entries,
+            new AlertDialog.Builder(this).setTitle(L10n.t("현재 폴더"))
+                    .setItems(L10n.labels(entries),
                             (dialog, which) -> {
                                 if (which == 0) chooseNewEntry();
                                 else if (which == 1) {
@@ -3954,7 +3956,7 @@ public class MainActivity extends Activity {
     private void reindexCurrentLocalFolder() {
         File folder = localFolder;
         if (folder == null || !folder.isDirectory()) return;
-        runJob("갤러리 미디어 등록 요청 중...",
+        runJob(L10n.t("갤러리 미디어 등록 요청 중..."),
                 () -> MediaIndexing.requestFolderScan(this, folder),
                 count -> toast(count == 0 ?
                         "이 폴더에서 등록할 미디어를 찾지 못했습니다." :
@@ -3963,7 +3965,7 @@ public class MainActivity extends Activity {
     private void chooseNewEntry() {
         if ("remote".equals(currentScreen) &&
                 (remote == null || isReadOnlyCloud(remote))) {
-            showError("클라우드 베타 연결은 읽기 전용입니다.");
+            showError(L10n.t("클라우드 베타 연결은 읽기 전용입니다."));
             return;
         }
         new AlertDialog.Builder(this).setTitle(L10n.t("새로 만들기"))
@@ -4016,7 +4018,7 @@ public class MainActivity extends Activity {
                             } else throw new IOException("현재 저장소에서는 생성할 수 없습니다.");
                             return true;
                         }, ignored -> {
-                            toast("생성했습니다.");
+                            toast(L10n.t("생성했습니다."));
                             if (remoteTarget != null)
                                 folderCache.invalidateProfile(remoteTarget);
                             if (screen == renderGeneration) refreshCurrent();
@@ -4029,14 +4031,14 @@ public class MainActivity extends Activity {
     private void requestAllFiles() {
         if (Build.VERSION.SDK_INT >= 30) {
             if (Environment.isExternalStorageManager()) {
-                toast("이미 저장소 접근 권한이 허용되어 있습니다.");
+                toast(L10n.t("이미 저장소 접근 권한이 허용되어 있습니다."));
                 return;
             }
             new AlertDialog.Builder(this).setTitle(L10n.t("저장소 접근 권한"))
-                    .setMessage("메인 저장소와 다운로드의 모든 폴더를 탐색하려면 파일관리자 접근 권한이 필요합니다. 보호된 시스템·앱 개인 폴더는 제외됩니다.")
+                    .setMessage(L10n.t("메인 저장소와 다운로드의 모든 폴더를 탐색하려면 파일관리자 접근 권한이 필요합니다. 보호된 시스템·앱 개인 폴더는 제외됩니다."))
                     .setNegativeButton(L10n.t("취소"), null)
-                    .setNeutralButton("폴더 직접 선택", (d,w) -> pickTree(REQ_FOLDER))
-                    .setPositiveButton("설정에서 허용", (d,w) -> {
+                    .setNeutralButton(L10n.t("폴더 직접 선택"), (d,w) -> pickTree(REQ_FOLDER))
+                    .setPositiveButton(L10n.t("설정에서 허용"), (d,w) -> {
                         try {
                             startActivity(new Intent(
                                     Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
@@ -4061,8 +4063,8 @@ public class MainActivity extends Activity {
         try {
             startActivityForResult(i, code);
         } catch (ActivityNotFoundException e) {
-            showError("기기에 폴더 선택 앱이 없어 SD카드를 선택할 수 없습니다. " +
-                    "시스템 파일 관리자 앱을 확인해 주세요.");
+            showError(L10n.t("기기에 폴더 선택 앱이 없어 SD카드를 선택할 수 없습니다. ") +
+                    L10n.t("시스템 파일 관리자 앱을 확인해 주세요."));
         }
     }
     private void browseLocal(File directory) {
@@ -4086,7 +4088,7 @@ public class MainActivity extends Activity {
             return;
         }
         if (!directory.isDirectory()) {
-            showError("이 폴더를 열 수 없습니다. 저장소 접근 권한을 확인하세요.");
+            showError(L10n.t("이 폴더를 열 수 없습니다. 저장소 접근 권한을 확인하세요."));
             return;
         }
         currentScreen = "local";
@@ -4099,14 +4101,14 @@ public class MainActivity extends Activity {
         showLocalBreadcrumb(directory);
         final int screen=renderGeneration;
         final int requestedSort=currentFolderSortMode();
-        TextView loading=muted("파일 목록을 읽는 중...");
+        TextView loading=muted(L10n.t("파일 목록을 읽는 중..."));
         worker.execute(()->{
             File[] raw=directory.listFiles();
             if(raw==null){
                 runOnUiThread(()->{
                     if(screen==renderGeneration){
                         page.removeView(loading);
-                        muted("폴더 읽기 권한이 없습니다.");
+                        muted(L10n.t("폴더 읽기 권한이 없습니다."));
                     }
                 });
                 return;
@@ -4138,7 +4140,7 @@ public class MainActivity extends Activity {
                 siblingSubtitleIndex=SubtitleInventory.fromSiblings(siblings);
                 visibleEpisodeQueue=queue;
                 ImageFolderSequence.showFolder("local", "", items, showHidden);
-                if(items.isEmpty())muted("이 폴더는 비어 있습니다.");
+                if(items.isEmpty())muted(L10n.t("이 폴더는 비어 있습니다."));
                 indexFullFolderSearch(items,item->()->{
                     File file=item.file;
                     if(item.directory)browseLocal(file);
@@ -4168,13 +4170,13 @@ public class MainActivity extends Activity {
     private void showSdAccessOptions() {
         StorageVolume volume = sdVolume();
         if (volume == null) {
-            showError("장착된 SD카드를 찾지 못했습니다. 카드가 마운트되었는지 확인해 주세요.");
+            showError(L10n.t("장착된 SD카드를 찾지 못했습니다. 카드가 마운트되었는지 확인해 주세요."));
             return;
         }
         if (Build.VERSION.SDK_INT < 30) {
             new AlertDialog.Builder(this).setTitle(L10n.t("SD카드 접근 설정"))
-                    .setMessage("SD카드의 원하는 폴더를 선택하고 접근을 허용해 주세요. " +
-                            "선택한 폴더와 하위 폴더를 사용할 수 있습니다.")
+                    .setMessage(L10n.t("SD카드의 원하는 폴더를 선택하고 접근을 허용해 주세요. ") +
+                            L10n.t("선택한 폴더와 하위 폴더를 사용할 수 있습니다."))
                     .setNegativeButton(L10n.t("취소"), null)
                     .setPositiveButton(L10n.t("SD 폴더 선택"), (d,w) -> pickTree(REQ_SD))
                     .show();
@@ -4193,7 +4195,7 @@ public class MainActivity extends Activity {
                         "그 폴더 밖은 사용할 수 없습니다.")
                 .setNegativeButton(L10n.t("취소"), null)
                 .setNeutralButton(L10n.t("SD 폴더 선택"), (d,w) -> pickTree(REQ_SD))
-                .setPositiveButton("전체 접근 설정", (d,w) -> openSdAllFilesSettings())
+                .setPositiveButton(L10n.t("전체 접근 설정"), (d,w) -> openSdAllFilesSettings())
                 .show();
     }
 
@@ -4214,8 +4216,8 @@ public class MainActivity extends Activity {
                 startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
             } catch (ActivityNotFoundException unsupported) {
                 sdPermissionRequestPending = false;
-                showError("이 기기에서는 전체 파일 접근 설정 화면을 열 수 없습니다. " +
-                        "SD 폴더 선택을 사용해 주세요.");
+                showError(L10n.t("이 기기에서는 전체 파일 접근 설정 화면을 열 수 없습니다. ") +
+                        L10n.t("SD 폴더 선택을 사용해 주세요."));
             }
         }
     }
@@ -4230,7 +4232,7 @@ public class MainActivity extends Activity {
     private void openSd() {
         StorageVolume volume = sdVolume();
         if (volume == null) {
-            toast("SD카드가 장착되어 있지 않습니다.");
+            toast(L10n.t("SD카드가 장착되어 있지 않습니다."));
             return;
         }
         if (Build.VERSION.SDK_INT >= 30 &&
@@ -4282,7 +4284,7 @@ public class MainActivity extends Activity {
                     throw new IOException("하위 폴더 없음");
             }
             browseSaf(folder, relative);
-        } catch (Exception e) { showError("즐겨찾기한 SD 폴더를 찾을 수 없습니다."); }
+        } catch (Exception e) { showError(L10n.t("즐겨찾기한 SD 폴더를 찾을 수 없습니다.")); }
     }
     private void browseSaf(DocumentFile folder, String relative) {
         currentScreen = "saf";
@@ -4295,7 +4297,7 @@ public class MainActivity extends Activity {
         final int screen=renderGeneration;
         final String requestedRelative=safRelative;
         final int requestedSort=currentFolderSortMode();
-        TextView loading=muted("SD 폴더를 읽는 중...");
+        TextView loading=muted(L10n.t("SD 폴더를 읽는 중..."));
         worker.execute(()->{
             List<Models.Entry> entries=new ArrayList<>();
             List<String> siblings=new ArrayList<>();
@@ -4330,11 +4332,11 @@ public class MainActivity extends Activity {
                         safFolder!=folder || !requestedRelative.equals(safRelative) ||
                         isFinishing())return;
                 page.removeView(loading);
-                if(failure!=null){muted("SD 폴더를 읽지 못했습니다.");return;}
+                if(failure!=null){muted(L10n.t("SD 폴더를 읽지 못했습니다."));return;}
                 siblingSubtitleIndex=SubtitleInventory.fromSiblings(siblings);
                 visibleEpisodeQueue=queue;
                 ImageFolderSequence.showFolder("uri", "", entries, showHidden);
-                if(entries.isEmpty())muted("이 폴더는 비어 있습니다.");
+                if(entries.isEmpty())muted(L10n.t("이 폴더는 비어 있습니다."));
                 indexFullFolderSearch(entries,item->()->{
                     DocumentFile file=item.document;
                     if(item.directory)browseSaf(file,
@@ -4381,7 +4383,7 @@ public class MainActivity extends Activity {
         currentScreen = "media";
         render(type.equals("image") ? "이미지" : type.equals("audio") ? "오디오" : "동영상",
                 true, null, null);
-        muted("기기에 저장된 파일 · 보기 설정에서 정렬 변경 가능");
+        muted(L10n.t("기기에 저장된 파일 · 보기 설정에서 정렬 변경 가능"));
         Uri collection = type.equals("image") ?
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI :
                 type.equals("audio") ? MediaStore.Audio.Media.EXTERNAL_CONTENT_URI :
@@ -4412,11 +4414,11 @@ public class MainActivity extends Activity {
                 items.add(item);
             }
         } catch (SecurityException e) {
-            muted("미디어 조회 권한이 없습니다. 설정에서 접근을 허용해 주세요.");
+            muted(L10n.t("미디어 조회 권한이 없습니다. 설정에서 접근을 허용해 주세요."));
             return;
         }
-        if (items.isEmpty()) muted("찾은 파일이 없습니다.");
-        else muted("총 " + items.size() + "개");
+        if (items.isEmpty()) muted(L10n.t("찾은 파일이 없습니다."));
+        else muted(L10n.t("총 ") + items.size() + "개");
         Map<String, List<VideoEpisodeQueue.Episode>> grouped = new LinkedHashMap<>();
         for (Models.Entry item : items)
             if (VideoEpisodeQueue.isVideo(item.name) && item.uri != null &&
@@ -4451,7 +4453,7 @@ public class MainActivity extends Activity {
                     }, null);
         }
         if (end < items.size()) {
-            TextView more = Ui.action(this, "더 보기  (" + end + " / " + items.size() + ")");
+            TextView more = Ui.action(this, L10n.t("더 보기  (") + end + " / " + items.size() + ")");
             LinearLayout.LayoutParams p = Ui.lp(this, -1, 48);
             p.topMargin = dp(8);
             page.addView(more, p);
@@ -4526,7 +4528,7 @@ public class MainActivity extends Activity {
                 }
             }
         }catch(Exception exception){
-            showError("음악 재생 서비스를 실행하지 못했습니다: "+
+            showError(L10n.t("음악 재생 서비스를 실행하지 못했습니다: ")+
                     exception.getClass().getSimpleName());
         }
     }
@@ -4779,9 +4781,9 @@ public class MainActivity extends Activity {
         boolean activeInherited=inherited&&
                 AssignedRoleExclusions.videoAllowed(this,normalized,selected);
         if (activeInherited) {
-            new AlertDialog.Builder(this).setTitle("동영상 폴더")
-                    .setMessage("이 폴더는 이미 상위 폴더의 동영상 폴더 설정을 적용받고 있어요. " +
-                            "상위 폴더의 설정을 해제하면 하위 폴더도 함께 해제됩니다.")
+            new AlertDialog.Builder(this).setTitle(L10n.t("동영상 폴더"))
+                    .setMessage(L10n.t("이 폴더는 이미 상위 폴더의 동영상 폴더 설정을 적용받고 있어요. ") +
+                            L10n.t("상위 폴더의 설정을 해제하면 하위 폴더도 함께 해제됩니다."))
                     .setPositiveButton(L10n.t("확인"), null).show();
             return;
         }
@@ -4845,13 +4847,13 @@ public class MainActivity extends Activity {
     private void showRemoteList() {
         currentScreen = "remotes";
         remote = null;
-        render("원격 저장소", true, "+", () -> remoteForm(null));
-        muted("NAS · TeraBox · 네이버 MYBOX 연결");
+        render(L10n.t("원격 저장소"), true, "+", () -> remoteForm(null));
+        muted(L10n.t("NAS · TeraBox · 네이버 MYBOX 연결"));
         try {
             List<Models.RemoteProfile> profiles = store.activeRemotes();
             if (profiles.isEmpty()) {
                 Ui.gap(page, this, 16);
-                muted("연결을 추가하면 여기에 표시돼요.");
+                muted(L10n.t("연결을 추가하면 여기에 표시돼요."));
             }
             for (Models.RemoteProfile profile : profiles) {
                 row(page, profile.label(), profile.summary(), "remote",
@@ -4877,7 +4879,7 @@ public class MainActivity extends Activity {
                 }
             }
         } catch (Exception e) {
-            showError("저장된 연결 설정을 읽을 수 없습니다. 암호화 키를 확인하세요.");
+            showError(L10n.t("저장된 연결 설정을 읽을 수 없습니다. 암호화 키를 확인하세요."));
         }
         Ui.gap(page, this, 12);
         TextView add = Ui.action(this, L10n.t("+  원격 저장소 추가"));
@@ -4902,7 +4904,7 @@ public class MainActivity extends Activity {
         file.setSingleLine(true);
         file.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         layout.addView(file, Ui.lp(this, -1, 40));
-        TextView label = Ui.text(this, "유효기간", 12, Ui.MUTED, true);
+        TextView label = Ui.text(this, L10n.t("유효기간"), 12, Ui.MUTED, true);
         layout.addView(label, Ui.lp(this, -1, 24));
         Spinner expiry = new Spinner(this);
         expiry.setAdapter(new ArrayAdapter<>(this,
@@ -4929,15 +4931,15 @@ public class MainActivity extends Activity {
                 android.text.InputType.TYPE_CLASS_TEXT |
                         android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         TextView hint = Ui.text(this,
-                "링크를 받은 사람이 NAS에 로그인하지 않고 다운로드할 수 있습니다. " +
-                        "외부 접속 가능 여부는 NAS HTTPS/QuickConnect/myQNAPcloud 설정에 따라 다릅니다.",
+                L10n.t("링크를 받은 사람이 NAS에 로그인하지 않고 다운로드할 수 있습니다. ") +
+                        L10n.t("외부 접속 가능 여부는 NAS HTTPS/QuickConnect/myQNAPcloud 설정에 따라 다릅니다."),
                 12, Ui.MUTED, false);
         layout.addView(hint, Ui.lp(this, -1, -2));
         ScrollView scroll = new ScrollView(this);
         scroll.addView(layout);
         new AlertDialog.Builder(this).setTitle(L10n.t("공유 링크 생성"))
                 .setView(scroll).setNegativeButton(L10n.t("닫기"), null)
-                .setPositiveButton("링크 생성", (d, w) -> {
+                .setPositiveButton(L10n.t("링크 생성"), (d, w) -> {
                     int[] days = {1, 3, 7, 30, 0, -1};
                     int selected = days[expiry.getSelectedItemPosition()];
                     String custom = date.getText().toString().trim();
@@ -4946,7 +4948,7 @@ public class MainActivity extends Activity {
                         NasSharePolicy.expiryDate(selected, custom);
                         if (NasSharePolicy.SYNOLOGY.equals(p.nasVendor) && secret.length() > 16)
                             throw new IllegalArgumentException("Synology 링크 암호는 최대 16자입니다.");
-                        runJob("NAS에서 공유 링크 생성 중...",
+                        runJob(L10n.t("NAS에서 공유 링크 생성 중..."),
                                 () -> fileStationPath ?
                                         new NasShareApi(p).createFileStationPath(
                                                 path, selected, custom, secret) :
@@ -4960,11 +4962,11 @@ public class MainActivity extends Activity {
         Intent intent = new Intent(Intent.ACTION_SEND);
         intent.setType("text/plain");
         intent.putExtra(Intent.EXTRA_TEXT, url);
-        startActivity(Intent.createChooser(intent, "다운로드 링크 공유"));
+        startActivity(Intent.createChooser(intent, L10n.t("다운로드 링크 공유")));
     }
 
     private void showNasShareResult(Models.RemoteProfile p, NasShareApi.Link link) {
-        new AlertDialog.Builder(this).setTitle("다운로드 링크 생성 완료")
+        new AlertDialog.Builder(this).setTitle(L10n.t("다운로드 링크 생성 완료"))
                 .setMessage(link.url + "\n\n이 링크를 받은 사람은 파일을 다운로드할 수 있습니다. " +
                         "외부에서 접속되는지 확인한 뒤 전달하세요.")
                 .setNegativeButton(L10n.t("닫기"), null)
@@ -4975,16 +4977,16 @@ public class MainActivity extends Activity {
                             "NAS 다운로드 공유 링크", link.url));
                     toast(L10n.t("공유 링크를 복사했습니다."));
                 })
-                .setPositiveButton("공유하기", (d, w) -> shareNasUrl(link.url))
+                .setPositiveButton(L10n.t("공유하기"), (d, w) -> shareNasUrl(link.url))
                 .show();
     }
 
     private void showNasShareList(Models.RemoteProfile p) {
         if (!NasSharePolicy.supported(p)) return;
-        runJob("NAS 공유 링크 목록 확인 중...", () -> new NasShareApi(p).list(), links -> {
+        runJob(L10n.t("NAS 공유 링크 목록 확인 중..."), () -> new NasShareApi(p).list(), links -> {
             if (links.isEmpty()) {
                 new AlertDialog.Builder(this).setTitle(L10n.t("NAS 공유 링크"))
-                        .setMessage("현재 설정한 공유 폴더에 발급된 링크가 없습니다.")
+                        .setMessage(L10n.t("현재 설정한 공유 폴더에 발급된 링크가 없습니다."))
                         .setPositiveButton(L10n.t("확인"), null).show();
                 return;
             }
@@ -4998,7 +5000,7 @@ public class MainActivity extends Activity {
             }
             LinearLayout heading = Ui.vertical(this);
             heading.setPadding(dp(18), dp(14), dp(18), dp(5));
-            TextView title = Ui.text(this, "NAS 공유 링크 관리", 18, Ui.TEXT, true);
+            TextView title = Ui.text(this, L10n.t("NAS 공유 링크 관리"), 18, Ui.TEXT, true);
             heading.addView(title, Ui.lp(this, -1, 34));
             TextView selectionCount = Ui.text(this, "0 / " + links.size() + "개 선택",
                     13, Ui.MUTED, false);
@@ -5020,7 +5022,7 @@ public class MainActivity extends Activity {
                     })
                     .setNegativeButton(L10n.t("닫기"), null)
                     .setNeutralButton(L10n.t("링크 복사"), null)
-                    .setPositiveButton("선택 링크 해제", null)
+                    .setPositiveButton(L10n.t("선택 링크 해제"), null)
                     .create();
             manager.setOnShowListener(unused -> {
                 all.setOnClickListener(view -> {
@@ -5040,7 +5042,7 @@ public class MainActivity extends Activity {
                 manager.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(view -> {
                     List<NasShareApi.Link> selected = selectedNasLinks(links, checked);
                     if (selected.size() != 1) {
-                        toast("링크 하나만 선택하면 주소를 복사할 수 있습니다.");
+                        toast(L10n.t("링크 하나만 선택하면 주소를 복사할 수 있습니다."));
                         return;
                     }
                     android.content.ClipboardManager clipboard =
@@ -5057,12 +5059,12 @@ public class MainActivity extends Activity {
                     }
                     new AlertDialog.Builder(this)
                             .setTitle(selected.size() + "개 공유 링크를 해제할까요?")
-                            .setMessage("선택한 다운로드 공유 주소만 무효화합니다. " +
-                                    "NAS에 저장된 원본 파일과 폴더는 삭제되지 않습니다.")
+                            .setMessage(L10n.t("선택한 다운로드 공유 주소만 무효화합니다. ") +
+                                    L10n.t("NAS에 저장된 원본 파일과 폴더는 삭제되지 않습니다."))
                             .setNegativeButton(L10n.t("취소"), null)
-                            .setPositiveButton("공유 링크 해제", (dialog, which) -> {
+                            .setPositiveButton(L10n.t("공유 링크 해제"), (dialog, which) -> {
                                 manager.dismiss();
-                                runJob("선택한 NAS 공유 링크 해제 중...",
+                                runJob(L10n.t("선택한 NAS 공유 링크 해제 중..."),
                                         () -> new NasShareApi(p).revokeMany(selected),
                                         report -> showNasBulkRevokeReport(p, report));
                             }).show();
@@ -5099,10 +5101,10 @@ public class MainActivity extends Activity {
             if (report.failures.size() > 8)
                 text.append("외 ").append(report.failures.size() - 8).append("개");
         }
-        new AlertDialog.Builder(this).setTitle("공유 링크 일괄 해제 결과")
+        new AlertDialog.Builder(this).setTitle(L10n.t("공유 링크 일괄 해제 결과"))
                 .setMessage(text.toString())
                 .setNegativeButton(L10n.t("닫기"), null)
-                .setPositiveButton("목록 새로고침", (dialog, which) -> showNasShareList(profile))
+                .setPositiveButton(L10n.t("목록 새로고침"), (dialog, which) -> showNasShareList(profile))
                 .show();
     }
 
@@ -5110,10 +5112,10 @@ public class MainActivity extends Activity {
         if (!NasSharePolicy.supported(p)) return;
         String current = RemoteProvider.relativePath(folder);
         if (!"/".equals(current) && !NasSharePolicy.inAllowedRoot(p, current)) {
-            showError("선택하지 않은 NAS 공유 폴더입니다.");
+            showError(L10n.t("선택하지 않은 NAS 공유 폴더입니다."));
             return;
         }
-        runJob("File Station 공유 폴더 탐색 중...", () -> {
+        runJob(L10n.t("File Station 공유 폴더 탐색 중..."), () -> {
             if ("/".equals(current)) {
                 List<NasShareApi.NasEntry> shares = new ArrayList<>();
                 for (String root : NasSharePolicy.roots(p))
@@ -5150,7 +5152,7 @@ public class MainActivity extends Activity {
                 String parent = RemoteProvider.parent(current);
                 if (!NasSharePolicy.inAllowedRoot(p, parent)) parent = "/";
                 String back = parent;
-                builder.setNegativeButton("상위 폴더", (d, w) ->
+                builder.setNegativeButton(L10n.t("상위 폴더"), (d, w) ->
                         showNasShareBrowser(p, back));
             }
             if (entries.isEmpty()) builder.setMessage(L10n.t("이 폴더는 비어 있습니다."));
@@ -5161,15 +5163,15 @@ public class MainActivity extends Activity {
     private void showNasShareSettings(Models.RemoteProfile p) {
         if (!("SMB".equals(p.protocol) || "SFTP".equals(p.protocol) ||
                 "FTP".equals(p.protocol) || "WebDAV".equals(p.protocol))) {
-            showError("공유 링크는 Synology·QNAP 개인 NAS 연결에서만 사용할 수 있습니다.");
+            showError(L10n.t("공유 링크는 Synology·QNAP 개인 NAS 연결에서만 사용할 수 있습니다."));
             return;
         }
         LinearLayout panel = Ui.vertical(this);
         panel.setPadding(dp(20), dp(8), dp(20), dp(12));
         TextView hint = Ui.text(this,
-                "DSM/QTS File Station 관리 API를 별도로 연결합니다. " +
-                        "제조사는 실제 로그인 및 File Station 응답 확인 후 활성화됩니다. " +
-                        "관리 주소는 올바른 HTTPS 인증서가 있어야 합니다.",
+                L10n.t("DSM/QTS File Station 관리 API를 별도로 연결합니다. ") +
+                        L10n.t("제조사는 실제 로그인 및 File Station 응답 확인 후 활성화됩니다. ") +
+                        L10n.t("관리 주소는 올바른 HTTPS 인증서가 있어야 합니다."),
                 12, Ui.MUTED, false);
         panel.addView(hint, Ui.lp(this, -1, -2));
         Ui.gap(panel, this, 8);
@@ -5180,7 +5182,7 @@ public class MainActivity extends Activity {
         vendor.setSelection(NasSharePolicy.SYNOLOGY.equals(p.nasVendor) ? 1 :
                 NasSharePolicy.QNAP.equals(p.nasVendor) ? 2 : 0);
         panel.addView(vendor, Ui.lp(this, -1, 48));
-        TextView qnapCloudButton = Ui.action(this, "QNAP CloudLink로 포트 개방 없이 접속 (공식 웹)");
+        TextView qnapCloudButton = Ui.action(this, L10n.t("QNAP CloudLink로 포트 개방 없이 접속 (공식 웹)"));
         panel.addView(qnapCloudButton, Ui.lp(this, -1, 48));
         qnapCloudButton.setVisibility(vendor.getSelectedItemPosition() == 2 ?
                 View.VISIBLE : View.GONE);
@@ -5191,12 +5193,12 @@ public class MainActivity extends Activity {
         address.setHint("https://nas.example.com:5001");
         EditText shareRoot = field(panel, "File Station 공유 폴더 기준 경로",
                 p.nasShareRoot, android.text.InputType.TYPE_CLASS_TEXT);
-        shareRoot.setHint("예: /video 또는 /Public");
+        shareRoot.setHint(L10n.t("예: /video 또는 /Public"));
         final List<String> checkedNasRoots = new ArrayList<>(NasSharePolicy.roots(p));
         TextView selectedRoots = Ui.text(this, "", 12, Ui.TEXT, false);
         selectedRoots.setText(checkedNasRoots.isEmpty() ? "선택된 공유 폴더 없음" :
                 "선택: " + android.text.TextUtils.join(", ", checkedNasRoots));
-        TextView findShares = Ui.action(this, "공유 폴더 목록 불러오기 · 여러 개 선택");
+        TextView findShares = Ui.action(this, L10n.t("공유 폴더 목록 불러오기 · 여러 개 선택"));
         panel.addView(findShares, Ui.lp(this, -1, 48));
         panel.addView(selectedRoots, Ui.lp(this, -1, -2));
         EditText publicHost = field(panel, "외부 공유용 HTTPS 주소 (선택 · QNAP)",
@@ -5223,7 +5225,7 @@ public class MainActivity extends Activity {
                 focused.clearFocus();
             }
             if (vendor.getSelectedItemPosition() == 0) {
-                showError("Synology 또는 QNAP 제조사를 먼저 선택하세요.");
+                showError(L10n.t("Synology 또는 QNAP 제조사를 먼저 선택하세요."));
                 return;
             }
             try {
@@ -5240,14 +5242,14 @@ public class MainActivity extends Activity {
                     candidate.nasDeviceId = verifiedDevice[0];
                 if (candidate.nasApiUser.isEmpty() || candidate.nasApiPassword.isEmpty())
                     throw new IllegalArgumentException("먼저 NAS 관리 계정과 비밀번호를 입력하세요.");
-                runJob("NAS 공유 폴더 조회 중...",
+                runJob(L10n.t("NAS 공유 폴더 조회 중..."),
                         () -> new NasShareApi(candidate).listShares(), shares -> {
                             verifiedDevice[0] = candidate.nasDeviceId;
                             verifiedAccount[0] = candidate.nasApiUser;
                             verifiedEndpoint[0] = candidate.nasApiBase;
                             verifiedPassword[0] = candidate.nasApiPassword;
                             if (shares.isEmpty()) {
-                                showError("접근 가능한 공유 폴더가 없습니다.");
+                                showError(L10n.t("접근 가능한 공유 폴더가 없습니다."));
                                 return;
                             }
                             String[] names = new String[shares.size()];
@@ -5258,11 +5260,11 @@ public class MainActivity extends Activity {
                                 chosen[i] = checkedNasRoots.contains(share.path);
                             }
                             new AlertDialog.Builder(this)
-                                    .setTitle("링크 공유를 허용할 NAS 폴더")
+                                    .setTitle(L10n.t("링크 공유를 허용할 NAS 폴더"))
                                     .setMultiChoiceItems(names, chosen,
                                             (dialog, index, isChecked) -> chosen[index] = isChecked)
                                     .setNegativeButton(L10n.t("닫기"), null)
-                                    .setPositiveButton("선택 완료", (dialog, which) -> {
+                                    .setPositiveButton(L10n.t("선택 완료"), (dialog, which) -> {
                                         checkedNasRoots.clear();
                                         for (int i = 0; i < chosen.length; i++)
                                             if (chosen[i]) checkedNasRoots.add(shares.get(i).path);
@@ -5293,9 +5295,9 @@ public class MainActivity extends Activity {
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
         });
         TextView warning = Ui.text(this,
-                "SMB 경로와 File Station 경로는 다를 수 있습니다. " +
+                L10n.t("SMB 경로와 File Station 경로는 다를 수 있습니다. ") +
                         "예: SMB 시작 경로 /video/영화 → API 기준 폴더 /video/영화. " +
-                        "기본 전송 접속 설정은 변경되지 않습니다.",
+                        L10n.t("기본 전송 접속 설정은 변경되지 않습니다."),
                 12, Ui.MUTED, false);
         Ui.gap(panel, this, 10);
         panel.addView(warning, Ui.lp(this, -1, -2));
@@ -5313,13 +5315,13 @@ public class MainActivity extends Activity {
                     p.nasShareRoot = "";
                     p.nasShareRoots.clear();
                     p.nasPublicHost = "";
-                    try { store.putRemote(p); toast("NAS 공유 기능 연결을 해제했습니다."); }
+                    try { store.putRemote(p); toast(L10n.t("NAS 공유 기능 연결을 해제했습니다.")); }
                     catch (Exception error) { failure(error); }
                 })
-                .setPositiveButton("인증 확인 후 저장", (d, w) -> {
+                .setPositiveButton(L10n.t("인증 확인 후 저장"), (d, w) -> {
                     if (vendor.getSelectedItemPosition() == 0) {
-                        showError("먼저 Synology 또는 QNAP 제조사를 선택하세요. " +
-                                "기능을 해제하려면 '연결 해제'를 누르세요.");
+                        showError(L10n.t("먼저 Synology 또는 QNAP 제조사를 선택하세요. ") +
+                                L10n.t("기능을 해제하려면 '연결 해제'를 누르세요."));
                         return;
                     }
                     try {
@@ -5351,7 +5353,7 @@ public class MainActivity extends Activity {
                             test.nasDeviceId = verifiedDevice[0];
                         if (test.nasApiUser.isEmpty() || test.nasApiPassword.isEmpty())
                             throw new IllegalArgumentException("NAS 관리 계정과 비밀번호를 입력하세요.");
-                        runJob("NAS 제조사 및 File Station 인증 확인 중...", () -> {
+                        runJob(L10n.t("NAS 제조사 및 File Station 인증 확인 중..."), () -> {
                             new NasShareApi(test).verify(); return true;
                         }, unused -> {
                             p.nasVendor = test.nasVendor;
@@ -5364,7 +5366,7 @@ public class MainActivity extends Activity {
                             p.nasDeviceId = test.nasDeviceId;
                             try {
                                 store.putRemote(p);
-                                toast("NAS 공유 링크 인증이 완료됐습니다.");
+                                toast(L10n.t("NAS 공유 링크 인증이 완료됐습니다."));
                             } catch (Exception ex) { failure(ex); }
                         });
                     } catch (Exception ex) { showError(safeError(ex)); }
@@ -5389,7 +5391,7 @@ public class MainActivity extends Activity {
         if (qnapCloud) menu.add("QNAP CloudLink (포트 개방 없이 웹 접속)");
         menu.add("연결 삭제");
         new AlertDialog.Builder(this).setTitle(p.label())
-                .setItems(menu.toArray(new String[0]),
+                .setItems(L10n.labels(menu.toArray(new String[0])),
                         (d, i) -> {
                             String choice = menu.get(i);
                             if (choice.equals("연결하기")) openRemoteStart(p);
@@ -5400,8 +5402,8 @@ public class MainActivity extends Activity {
                             else if (choice.startsWith("QNAP CloudLink")) showQnapCloudBrowser(p);
                             else if (choice.equals("연결 삭제"))
                                 new AlertDialog.Builder(this)
-                                    .setTitle("원격 연결 삭제")
-                                    .setMessage("저장한 ‘" + p.label() +
+                                    .setTitle(L10n.t("원격 연결 삭제"))
+                                    .setMessage(L10n.t("저장한 ‘") + p.label() +
                                             "’ 연결 정보만 삭제합니다. 서버 파일은 변경되지 않습니다.")
                                     .setNegativeButton(L10n.t("취소"), null)
                                     .setPositiveButton(L10n.t("삭제"), (d2, j) -> {
@@ -5417,7 +5419,7 @@ public class MainActivity extends Activity {
         browser.addCategory(Intent.CATEGORY_BROWSABLE);
         try { startActivity(browser); }
         catch (ActivityNotFoundException error) {
-            showError("myQNAPcloud 페이지를 열려면 웹 브라우저가 필요합니다.");
+            showError(L10n.t("myQNAPcloud 페이지를 열려면 웹 브라우저가 필요합니다."));
         }
     }
 
@@ -5425,26 +5427,26 @@ public class MainActivity extends Activity {
         LinearLayout box = Ui.vertical(this);
         box.setPadding(dp(20), dp(12), dp(20), dp(10));
         box.addView(Ui.text(this,
-                "공식 myQNAPcloud Link 웹 접속입니다. NAS 관리 포트 개방은 필요하지 않습니다. " +
-                        "QNAP 계정으로 로그인하여 File Station에서 공유 링크를 만드세요. " +
-                        "FileHub의 직접 NAS API 연결과는 별개이며 웹 세션을 가져오지 않습니다.",
+                L10n.t("공식 myQNAPcloud Link 웹 접속입니다. NAS 관리 포트 개방은 필요하지 않습니다. ") +
+                        L10n.t("QNAP 계정으로 로그인하여 File Station에서 공유 링크를 만드세요. ") +
+                        L10n.t("FileHub의 직접 NAS API 연결과는 별개이며 웹 세션을 가져오지 않습니다."),
                 13, Ui.TEXT, false), Ui.lp(this, -1, -2));
         Ui.gap(box, this, 12);
         EditText smartUrl = field(box, "내 NAS SmartURL (선택)",
                 profile.qnapCloudSmartUrl, android.text.InputType.TYPE_CLASS_TEXT |
                         android.text.InputType.TYPE_TEXT_VARIATION_URI);
-        smartUrl.setHint("https://qlink.to/내장치이름");
+        smartUrl.setHint(L10n.t("https://qlink.to/내장치이름"));
         box.addView(Ui.text(this,
-                "SmartURL을 모르면 '공식 포털 열기'를 선택하세요. " +
-                        "QNAP 계정 > 내 장치에서 SmartURL을 확인할 수 있습니다.",
+                L10n.t("SmartURL을 모르면 '공식 포털 열기'를 선택하세요. ") +
+                        L10n.t("QNAP 계정 > 내 장치에서 SmartURL을 확인할 수 있습니다."),
                 12, Ui.MUTED, false), Ui.lp(this, -1, -2));
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("QNAP CloudLink · 포트 개방 불필요")
+                .setTitle(L10n.t("QNAP CloudLink · 포트 개방 불필요"))
                 .setView(box)
                 .setNegativeButton(L10n.t("닫기"), null)
-                .setNeutralButton("공식 포털 열기", (d, w) ->
+                .setNeutralButton(L10n.t("공식 포털 열기"), (d, w) ->
                         openQnapOfficialSite(QnapCloudLinkPolicy.PORTAL))
-                .setPositiveButton("SmartURL 저장 후 열기", null)
+                .setPositiveButton(L10n.t("SmartURL 저장 후 열기"), null)
                 .create();
         dialog.setOnShowListener(ignored ->
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
@@ -5452,7 +5454,7 @@ public class MainActivity extends Activity {
                         String url = QnapCloudLinkPolicy.smartUrl(
                                 smartUrl.getText().toString());
                         if (QnapCloudLinkPolicy.PORTAL.equals(url)) {
-                            showError("장치 SmartURL을 입력하거나 공식 포털 열기를 선택하세요.");
+                            showError(L10n.t("장치 SmartURL을 입력하거나 공식 포털 열기를 선택하세요."));
                             return;
                         }
                         profile.qnapCloudSmartUrl = url;
@@ -5534,7 +5536,7 @@ public class MainActivity extends Activity {
                 }
                 if (!TeraBoxWebPolicy.isAllowedWebNavigation(
                         request.getUrl().toString())) {
-                    toast("외부 앱/허용되지 않은 주소로 이동하지 않습니다.");
+                    toast(L10n.t("외부 앱/허용되지 않은 주소로 이동하지 않습니다."));
                     return true;
                 }
                 // Return false to keep the official HTTPS page inside this
@@ -5543,14 +5545,14 @@ public class MainActivity extends Activity {
             }
         });
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("TeraBox 웹 로그인 · 세션 가져오기")
-                .setMessage("TeraBox 자체 계정으로 로그인한 후 세션 가져오기를 누르세요. " +
-                        "Google 계정 인증은 세션을 가져올 수 없어 지원하지 않습니다. " +
-                        "그 경우 PC에서 ndus 값을 확인해 입력하세요.")
+                .setTitle(L10n.t("TeraBox 웹 로그인 · 세션 가져오기"))
+                .setMessage(L10n.t("TeraBox 자체 계정으로 로그인한 후 세션 가져오기를 누르세요. ") +
+                        L10n.t("Google 계정 인증은 세션을 가져올 수 없어 지원하지 않습니다. ") +
+                        L10n.t("그 경우 PC에서 ndus 값을 확인해 입력하세요."))
                 .setView(web)
                 .setNegativeButton(L10n.t("닫기"), null)
-                .setNeutralButton("PC 웹 새로고침", null)
-                .setPositiveButton("세션 가져오기", null).create();
+                .setNeutralButton(L10n.t("PC 웹 새로고침"), null)
+                .setPositiveButton(L10n.t("세션 가져오기"), null).create();
         dialog.setOnShowListener(ignored -> {
             if (dialog.getWindow() != null) {
                 // Clear after show: AlertController may set this flag when
@@ -5586,9 +5588,9 @@ public class MainActivity extends Activity {
                     onCookie.accept(session);
                     dialog.dismiss();
                 } catch (Exception e) {
-                    showError("로그인 세션(ndus)을 아직 찾지 못했습니다. " +
-                            "PC 웹에서 로그인을 완료했는지 확인해 주세요. " +
-                            "웹사이트가 로그인을 차단하면 수동 ndus 입력을 사용할 수 있습니다.");
+                    showError(L10n.t("로그인 세션(ndus)을 아직 찾지 못했습니다. ") +
+                            L10n.t("PC 웹에서 로그인을 완료했는지 확인해 주세요. ") +
+                            L10n.t("웹사이트가 로그인을 차단하면 수동 ndus 입력을 사용할 수 있습니다."));
                 }
             });
         });
@@ -5605,7 +5607,7 @@ public class MainActivity extends Activity {
         final int[] defaultPorts = {445, 21, 22, 443, 0, 0};
         LinearLayout form = Ui.vertical(this);
         form.setPadding(dp(20), dp(6), dp(20), dp(12));
-        TextView protocolTitle = Ui.text(this, "연결 방식", 12, Ui.MUTED, true);
+        TextView protocolTitle = Ui.text(this, L10n.t("연결 방식"), 12, Ui.MUTED, true);
         form.addView(protocolTitle, Ui.lp(this, -1, 26));
         Spinner protocol = new Spinner(this);
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
@@ -5614,17 +5616,17 @@ public class MainActivity extends Activity {
         form.addView(protocol, Ui.lp(this, -1, 49));
         EditText title = field(form, "표시할 이름", original == null ? "" : original.name,
                 android.text.InputType.TYPE_CLASS_TEXT);
-        title.setHint("예: 집 NAS");
+        title.setHint(L10n.t("예: 집 NAS"));
         EditText host = field(form, "서버 주소", original == null ? "" : original.host,
                 android.text.InputType.TYPE_CLASS_TEXT |
                         android.text.InputType.TYPE_TEXT_VARIATION_URI);
-        host.setHint("호스트 또는 IP");
+        host.setHint(L10n.t("호스트 또는 IP"));
         EditText port = field(form, "포트", original == null ? "445" :
                 String.valueOf(original.port),
                 android.text.InputType.TYPE_CLASS_NUMBER);
         EditText root = field(form, "공유/시작 경로", original == null ? "" : original.root,
                 android.text.InputType.TYPE_CLASS_TEXT);
-        root.setHint("SMB: 공유이름    기타: /시작폴더");
+        root.setHint(L10n.t("SMB: 공유이름    기타: /시작폴더"));
         EditText username = field(form, "사용자명 (익명 FTP는 비워 두기)",
                 original == null ? "" : original.username,
                 android.text.InputType.TYPE_CLASS_TEXT);
@@ -5632,11 +5634,11 @@ public class MainActivity extends Activity {
                 android.text.InputType.TYPE_CLASS_TEXT |
                         android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         CheckBox https = new CheckBox(this);
-        https.setText("WebDAV HTTPS 보안 연결 사용");
+        https.setText(L10n.t("WebDAV HTTPS 보안 연결 사용"));
         https.setTextSize(14);
         https.setChecked(original == null || original.ssl);
         form.addView(https, Ui.lp(this, -1, 44));
-        TextView ftpTlsTitle = Ui.text(this, "FTP 연결 보안", 12, Ui.MUTED, true);
+        TextView ftpTlsTitle = Ui.text(this, L10n.t("FTP 연결 보안"), 12, Ui.MUTED, true);
         form.addView(ftpTlsTitle, Ui.lp(this, -1, 25));
         String[] ftpTlsLabels = {"일반 FTP", "FTPS Explicit TLS (21)",
                 "FTPS Implicit TLS (990)"};
@@ -5646,7 +5648,7 @@ public class MainActivity extends Activity {
         ftpTls.setSelection(original != null && original.ftpImplicitTls ? 2 :
                 original != null && original.ftpExplicitTls ? 1 : 0);
         form.addView(ftpTls, Ui.lp(this, -1, 45));
-        TextView ftpCharsetTitle = Ui.text(this, "FTP 파일명 문자셋", 12, Ui.MUTED, true);
+        TextView ftpCharsetTitle = Ui.text(this, L10n.t("FTP 파일명 문자셋"), 12, Ui.MUTED, true);
         form.addView(ftpCharsetTitle, Ui.lp(this, -1, 25));
         String[] ftpCharsetLabels = {"UTF-8", "CP949 / EUC-KR (한국어)",
                 "EUC-KR", "서버 기본"};
@@ -5662,7 +5664,7 @@ public class MainActivity extends Activity {
         }
         form.addView(ftpCharset, Ui.lp(this, -1, 45));
         TextView sftpCharsetTitle = Ui.text(this,
-                "SFTP 파일명 문자셋", 12, Ui.MUTED, true);
+                L10n.t("SFTP 파일명 문자셋"), 12, Ui.MUTED, true);
         form.addView(sftpCharsetTitle, Ui.lp(this, -1, 25));
         Spinner sftpCharset = new Spinner(this);
         sftpCharset.setAdapter(new ArrayAdapter<>(this,
@@ -5677,12 +5679,12 @@ public class MainActivity extends Activity {
         }
         form.addView(sftpCharset, Ui.lp(this, -1, 45));
         CheckBox ftpPasv = new CheckBox(this);
-        ftpPasv.setText("FTP 수동 모드(PASV)");
+        ftpPasv.setText(L10n.t("FTP 수동 모드(PASV)"));
         ftpPasv.setTextSize(14);
         ftpPasv.setChecked(original == null || original.ftpPreferPasv);
         form.addView(ftpPasv, Ui.lp(this, -1, 43));
         CheckBox readOnly = new CheckBox(this);
-        readOnly.setText("읽기 전용 (변경·삭제·업로드 차단)");
+        readOnly.setText(L10n.t("읽기 전용 (변경·삭제·업로드 차단)"));
         readOnly.setTextSize(14);
         readOnly.setChecked(original != null && original.readOnly);
         form.addView(readOnly, Ui.lp(this, -1, 43));
@@ -5700,7 +5702,7 @@ public class MainActivity extends Activity {
         TextView cloudHint = Ui.text(this, "", 12, Ui.MUTED, false);
         cloudHint.setPadding(dp(3), dp(5), dp(3), dp(5));
         form.addView(cloudHint, Ui.lp(this, -1, -2));
-        TextView teraboxAuth = Ui.action(this, "TeraBox 계정으로 웹 로그인 · 세션 가져오기");
+        TextView teraboxAuth = Ui.action(this, L10n.t("TeraBox 계정으로 웹 로그인 · 세션 가져오기"));
         form.addView(teraboxAuth, Ui.lp(this, -1, 42));
         teraboxAuth.setOnClickListener(v -> teraboxWebLogin(
                 ndus -> password.setText(ndus)));
@@ -5752,13 +5754,13 @@ public class MainActivity extends Activity {
                         "TeraBox 로그인 세션 (ndus)" : selected == 5 ?
                         "네이버 MYBOX 액세스 토큰 (PAT)" : "비밀번호");
                 if (selected == 4) {
-                    password.setHint("ndus 세션값 또는 ndus=...");
-                    cloudHint.setText("TeraBox 베타: 폴더·파일 읽기/쓰기 지원. ndus 세션값이 필요합니다. " +
+                    password.setHint(L10n.t("ndus 세션값 또는 ndus=..."));
+                    cloudHint.setText(L10n.t("TeraBox 베타: 폴더·파일 읽기/쓰기 지원. ndus 세션값이 필요합니다. ") +
                             "휴대폰 Chrome 로그인만으로는 ndus를 가져올 수 없습니다. " +
                             "PC 브라우저에서 확인해 입력하거나 위의 TeraBox 웹 로그인을 이용하세요.");
                 } else if (selected == 5) {
-                    password.setHint("mbx_pat_... 개인 액세스 토큰");
-                    cloudHint.setText("네이버 MYBOX 공식 Open API PAT가 필요합니다. " +
+                    password.setHint(L10n.t("mbx_pat_... 개인 액세스 토큰"));
+                    cloudHint.setText(L10n.t("네이버 MYBOX 공식 Open API PAT가 필요합니다. ") +
                             "폴더 탐색·업로드·다운로드·이름 변경·복사·이동·삭제를 지원합니다.");
                 } else {
                     password.setHint("");
@@ -5849,7 +5851,7 @@ public class MainActivity extends Activity {
                     store.putRemote(p);
                     dialog.dismiss();
                     showRemoteList();
-                    toast("연결 설정을 저장했습니다.");
+                    toast(L10n.t("연결 설정을 저장했습니다."));
                 } catch (Exception e) { showError(safeError(e)); }
             });
         });
@@ -5858,8 +5860,8 @@ public class MainActivity extends Activity {
 
     private void showTeraBoxPcHelp() {
         new AlertDialog.Builder(this)
-                .setTitle("PC에서 TeraBox 세션 가져오는 방법")
-                .setMessage("① PC Chrome에서 TeraBox 공식 웹사이트에 로그인합니다. " +
+                .setTitle(L10n.t("PC에서 TeraBox 세션 가져오는 방법"))
+                .setMessage(L10n.t("① PC Chrome에서 TeraBox 공식 웹사이트에 로그인합니다. ") +
                         "Google 계정으로 로그인해도 됩니다.\n\n" +
                         "② 키보드 F12를 눌러 개발자 도구를 열고 " +
                         "Application(애플리케이션) → Cookies(쿠키)를 선택합니다.\n\n" +
@@ -5877,8 +5879,8 @@ public class MainActivity extends Activity {
     private void showMyBoxPatHelp() {
         // Mirrors the Windows ModernProfileDialog MYBOX PAT instructions.
         new AlertDialog.Builder(this)
-                .setTitle("네이버 MYBOX PAT 발급 방법")
-                .setMessage("① 네이버 MYBOX에 로그인합니다.\n\n" +
+                .setTitle(L10n.t("네이버 MYBOX PAT 발급 방법"))
+                .setMessage(L10n.t("① 네이버 MYBOX에 로그인합니다.\n\n") +
                         "② 화면 하단의 [설정]을 누릅니다.\n\n" +
                         "③ [계정 및 개인 액세스 토큰 관리]로 이동합니다.\n\n" +
                         "④ [토큰 생성]을 눌러 개인 액세스 토큰(PAT)을 발급합니다.\n\n" +
@@ -5915,9 +5917,9 @@ public class MainActivity extends Activity {
         sftpHomeDiscoveryPendingId = profile.id;
         currentScreen = "remote";
         render(profile.label(), true, "⋮", this::remoteFolderActions);
-        muted("SFTP 로그인 계정의 홈 폴더를 확인하는 중...");
+        muted(L10n.t("SFTP 로그인 계정의 홈 폴더를 확인하는 중..."));
         final int screen = renderGeneration;
-        runJob("SFTP 홈 디렉터리 확인 중...", () ->
+        runJob(L10n.t("SFTP 홈 디렉터리 확인 중..."), () ->
                 RemoteProvider.sftpLoginHome(profile), path -> {
             if (renderGeneration != screen || remote != profile ||
                     !profile.id.equals(sftpHomeDiscoveryPendingId)) return;
@@ -5934,7 +5936,7 @@ public class MainActivity extends Activity {
             catch(Exception e){showError(safeError(e));return;}
         }
         if ("GoogleDrive".equals(profile.protocol)) {
-            showError("Android판에서는 Google Drive 연결을 지원하지 않습니다.");
+            showError(L10n.t("Android판에서는 Google Drive 연결을 지원하지 않습니다."));
             return;
         }
         remote = profile;
@@ -5945,7 +5947,7 @@ public class MainActivity extends Activity {
         showRemoteBreadcrumb(profile, remoteFolder);
         final int screen = renderGeneration;
         if ("WebDAV".equals(profile.protocol) && "/".equals(remoteFolder)) {
-            TextView quotaLabel = muted("서버 저장공간 확인 중...");
+            TextView quotaLabel = muted(L10n.t("서버 저장공간 확인 중..."));
             worker.execute(() -> {
                 WebDavQuota quota = null;
                 try { quota = RemoteProvider.webdavQuota(profile); }
@@ -5966,8 +5968,8 @@ public class MainActivity extends Activity {
             showRemoteContents(profile, requestedFolder, cached);
             return;
         }
-        TextView loading = muted("서버 폴더를 불러오는 중...");
-        runJob("네트워크 폴더 연결 중...", () ->
+        TextView loading = muted(L10n.t("서버 폴더를 불러오는 중..."));
+        runJob(L10n.t("네트워크 폴더 연결 중..."), () ->
                 cachedRemoteFiles(profile, requestedFolder), list -> {
             if (screen != renderGeneration ||
                     remote != profile || !currentScreen.equals("remote") ||
@@ -6063,7 +6065,7 @@ public class MainActivity extends Activity {
             segment.setPadding(dp(9), 0, dp(9), 0);
             segment.setMinWidth(dp(42));
             segment.setSingleLine(true);
-            segment.setContentDescription("폴더 이동: " +
+            segment.setContentDescription(L10n.t("폴더 이동: ") +
                     (i == 0 ? "저장소 최상위" : crumb.path));
             segment.setBackground(Ui.bg(this,
                     isCurrent ? Ui.PALE : Ui.SURFACE, 9, 0));
@@ -6080,7 +6082,7 @@ public class MainActivity extends Activity {
                                     List<Models.Entry> files) {
         final int screen=renderGeneration;
         final int requestedSort=currentFolderSortMode();
-        TextView loading=muted("파일 목록을 정리하는 중...");
+        TextView loading=muted(L10n.t("파일 목록을 정리하는 중..."));
         worker.execute(()->{
             List<String> siblings=new ArrayList<>(files.size());
             List<Models.Entry> sorted=new ArrayList<>(files);
@@ -6101,10 +6103,10 @@ public class MainActivity extends Activity {
                 siblingSubtitleIndex=SubtitleInventory.fromSiblings(siblings);
                 visibleEpisodeQueue=queue;
                 ImageFolderSequence.showFolder("remote", p.id, sorted, showHidden);
-                if(sorted.isEmpty())muted("이 폴더는 비어 있습니다.");
+                if(sorted.isEmpty())muted(L10n.t("이 폴더는 비어 있습니다."));
                 indexFullFolderSearch(sorted,file->()->{
                     if(file.symbolicLink && file.linkTargetUnavailable) {
-                        showError("심볼릭 링크가 가리키는 대상에 접근할 수 없습니다. " +
+                        showError(L10n.t("심볼릭 링크가 가리키는 대상에 접근할 수 없습니다. ") +
                                 "끊어진 링크 또는 서버 권한을 확인하세요.");
                         return;
                     }
@@ -6115,7 +6117,7 @@ public class MainActivity extends Activity {
                 appendDirectoryPage(sorted,0,screen,file->
                         fileRow(file,()->{
                             if(file.symbolicLink && file.linkTargetUnavailable) {
-                                showError("심볼릭 링크가 가리키는 대상에 접근할 수 없습니다. " +
+                                showError(L10n.t("심볼릭 링크가 가리키는 대상에 접근할 수 없습니다. ") +
                                         "끊어진 링크 또는 서버 권한을 확인하세요.");
                                 return;
                             }
@@ -6136,7 +6138,7 @@ public class MainActivity extends Activity {
     private void remoteFolderActions() {
         if (remote == null) return;
         if (isReadOnlyCloud(remote)) {
-            new AlertDialog.Builder(this).setTitle("클라우드 폴더")
+            new AlertDialog.Builder(this).setTitle(L10n.t("클라우드 폴더"))
                     .setItems(new String[]{L10n.t("즐겨찾기 추가/해제"), L10n.t("새로고침"),
                                     L10n.t("폴더 용도 설정")},
                             (dialog, which) -> {
@@ -6313,7 +6315,7 @@ public class MainActivity extends Activity {
                         String newPath = RemoteProvider.child(
                                 RemoteProvider.parent(entry.path),
                                 name.getText().toString().trim());
-                        runJob("이름 변경 중...", () -> {
+                        runJob(L10n.t("이름 변경 중..."), () -> {
                             RemoteProvider.rename(p, entry.path, newPath, entry.directory);
                             return true;
                         }, ignored -> refreshRemote(p, remoteFolder));
@@ -6321,12 +6323,12 @@ public class MainActivity extends Activity {
                 }).show();
     }
     private void deleteRemote(Models.RemoteProfile p, Models.Entry entry) {
-        new AlertDialog.Builder(this).setTitle("삭제 확인")
-                .setMessage("서버의 ‘" + entry.name + "’을(를) 삭제할까요?\\n" +
+        new AlertDialog.Builder(this).setTitle(L10n.t("삭제 확인"))
+                .setMessage(L10n.t("서버의 ‘") + entry.name + "’을(를) 삭제할까요?\\n" +
                         "이 작업은 되돌릴 수 없을 수 있습니다.")
                 .setNegativeButton(L10n.t("취소"), null)
                 .setPositiveButton(L10n.t("삭제"), (d, i) ->
-                        runJob("네트워크 파일 삭제 중...", () -> {
+                        runJob(L10n.t("네트워크 파일 삭제 중..."), () -> {
                             RemoteProvider.delete(p, entry.path, entry.directory);
                             return true;
                         }, ignored -> refreshRemote(p, remoteFolder))).show();
@@ -6379,14 +6381,14 @@ public class MainActivity extends Activity {
                 if (requestCode == REQ_SD) {
                     StorageVolume currentCard = sdVolume();
                     if (currentCard == null) {
-                        showError("SD카드가 제거되었거나 연결이 끊겼습니다. " +
+                        showError(L10n.t("SD카드가 제거되었거나 연결이 끊겼습니다. ") +
                                 "카드 장착 상태를 확인해 주세요.");
                         return;
                     }
                     String treeId = DocumentsContract.getTreeDocumentId(chosen);
                     if (!SdAccessPolicy.validSdDocumentId(chosen.getAuthority(),
                             treeId, currentCard.getUuid())) {
-                        showError("선택한 위치가 현재 SD카드의 폴더가 아닙니다. " +
+                        showError(L10n.t("선택한 위치가 현재 SD카드의 폴더가 아닙니다. ") +
                                 "SD카드에 들어가 하위 폴더를 선택해 주세요. " +
                                 "Android 11 이상에서 SD카드 최상위 폴더는 선택할 수 " +
                                 "없는 경우가 있습니다.");
@@ -6397,19 +6399,19 @@ public class MainActivity extends Activity {
                         Intent.FLAG_GRANT_READ_URI_PERMISSION |
                         Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
                 if ((grant & Intent.FLAG_GRANT_READ_URI_PERMISSION) == 0) {
-                    showError("선택한 SD/저장소 폴더의 읽기 권한을 받지 못했습니다. " +
+                    showError(L10n.t("선택한 SD/저장소 폴더의 읽기 권한을 받지 못했습니다. ") +
                             "폴더를 다시 선택해 주세요.");
                     return;
                 }
                 getContentResolver().takePersistableUriPermission(chosen, grant);
                 if (!hasPersistedTreeRead(chosen)) {
-                    showError("폴더 권한을 영구 저장하지 못했습니다. " +
+                    showError(L10n.t("폴더 권한을 영구 저장하지 못했습니다. ") +
                             "폴더 선택 화면에서 '사용 허용'을 확인해 주세요.");
                     return;
                 }
                 DocumentFile selectedRoot = DocumentFile.fromTreeUri(this, chosen);
                 if (selectedRoot == null || !selectedRoot.canRead()) {
-                    showError("폴더가 선택됐지만 읽기 권한이 없습니다. " +
+                    showError(L10n.t("폴더가 선택됐지만 읽기 권한이 없습니다. ") +
                             "다른 폴더를 선택하거나 전체 파일 접근 권한을 허용해 주세요.");
                     return;
                 }
@@ -6424,7 +6426,7 @@ public class MainActivity extends Activity {
                 }
                 openSafPath("/");
             } catch (Exception error) {
-                showError("SD/저장소 폴더 권한을 저장하는 중 오류가 발생했습니다. " +
+                showError(L10n.t("SD/저장소 폴더 권한을 저장하는 중 오류가 발생했습니다. ") +
                         "다시 선택하거나 전체 파일 접근 권한을 확인해 주세요. (" +
                         error.getClass().getSimpleName() + ")");
             }
@@ -6448,8 +6450,8 @@ public class MainActivity extends Activity {
                     return;
                 }
                 new AlertDialog.Builder(this)
-                        .setTitle("기존 파일 덮어쓰기")
-                        .setMessage("대상 폴더에 '" + display + "' 파일이 이미 있습니다.\n\n" +
+                        .setTitle(L10n.t("기존 파일 덮어쓰기"))
+                        .setMessage(L10n.t("대상 폴더에 '") + display + "' 파일이 이미 있습니다.\n\n" +
                                 "기존 파일을 새 파일로 덮어쓸까요? " +
                                 "취소하면 기존 파일을 그대로 유지합니다.")
                         .setNegativeButton(L10n.t("취소"), null)
@@ -6464,7 +6466,7 @@ public class MainActivity extends Activity {
     private void uploadSelectedDocument(Uri chosen, Models.RemoteProfile target,
                                         String destination, String display,
                                         long byteLength, boolean overwrite) {
-            runJob("네트워크 저장소에 업로드 중...", () -> {
+            runJob(L10n.t("네트워크 저장소에 업로드 중..."), () -> {
                 try (InputStream in = getContentResolver().openInputStream(chosen)) {
                     if (in == null) throw new IOException("선택한 파일을 읽을 수 없습니다.");
                     RemoteProvider.upload(target, destination, display, in, byteLength,
@@ -6472,7 +6474,7 @@ public class MainActivity extends Activity {
                 }
                 return true;
             }, result -> {
-                toast("업로드를 완료했습니다.");
+                toast(L10n.t("업로드를 완료했습니다."));
                 refreshRemote(target, destination);
             });
     }
@@ -6507,14 +6509,14 @@ public class MainActivity extends Activity {
             if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
                 if (action != null) action.run();
             } else {
-                showError("백그라운드 전송 진행률을 알림바에 표시하려면 알림 권한이 필요합니다.");
+                showError(L10n.t("백그라운드 전송 진행률을 알림바에 표시하려면 알림 권한이 필요합니다."));
             }
             return;
         }
         if (requestCode == REQ_MEDIA && mediaKind != null) {
             if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED)
                 openMedia(mediaKind);
-            else showError("선택한 미디어를 표시하려면 파일 접근 권한이 필요합니다.");
+            else showError(L10n.t("선택한 미디어를 표시하려면 파일 접근 권한이 필요합니다."));
         } else if (requestCode == REQ_MEDIA && permissionPendingFile != null &&
                 results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
             File pending = permissionPendingFile;
@@ -6525,6 +6527,12 @@ public class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        String language=L10n.language();
+        if(!language.equals(renderedLanguage)){
+            renderedLanguage=language;
+            if(drawerShown)closeDrawer();
+            refreshCurrent();
+        }
         transferHadActive |= FileTransferService.snapshot().active;
         transferHandler.removeCallbacks(transferTicker);
         transferHandler.post(transferTicker);
@@ -6540,8 +6548,8 @@ public class MainActivity extends Activity {
                 openSd();
             } else {
                 new AlertDialog.Builder(this)
-                        .setTitle("SD카드 접근 권한")
-                        .setMessage("전체 파일 접근 권한이 허용되지 않았습니다.\n\n" +
+                        .setTitle(L10n.t("SD카드 접근 권한"))
+                        .setMessage(L10n.t("전체 파일 접근 권한이 허용되지 않았습니다.\n\n") +
                                 "SD카드 전체 대신 특정 하위 폴더만 이용하려면 " +
                                 "'SD 폴더 선택'을 누르세요. " +
                                 "Android 11 이상에서는 SD카드 최상위 폴더를 " +
