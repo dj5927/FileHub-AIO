@@ -272,7 +272,7 @@ public class MainActivity extends Activity {
             updateSystemBarLayout();
             return insets;
         });
-        setContentView(container);
+        setContentView(EditionMonetization.content(this,container));
         showHome();
         if (BuildConfig.DIRECT_EDITION) {
             otaUpdater = new OtaUpdater(this);
@@ -1699,6 +1699,12 @@ public class MainActivity extends Activity {
         safFolder = null;
         mediaKind = null;
         render("FileHub AIO", false, "⋮", this::menu);
+        if(!EditionMonetization.full(this)){
+            TextView upgrade=Ui.action(this,L10n.t("풀버전으로 업그레이드"));
+            page.addView(upgrade,Ui.lp(this,-1,43));
+            upgrade.setOnClickListener(v->EditionMonetization.showUpgrade(this));
+            Ui.gap(page,this,6);
+        }
         heading("저장소", 0);
         LinearLayout r1 = Ui.horizontal(this);
         page.addView(r1, Ui.lp(this, -1, expandedLayout() ? 195 : 158));
@@ -4729,6 +4735,9 @@ public class MainActivity extends Activity {
     }
     private void openBuiltInOffice(String kind, String name, String path,
                                   Uri uri, Models.RemoteProfile provider) {
+        if(!EditionMonetization.full(this)){
+            EditionMonetization.showUpgrade(this);return;
+        }
         Intent edit = new Intent(this, BuiltInOfficeActivity.class);
         edit.putExtra(BuiltInOfficeActivity.EXTRA_KIND, kind);
         edit.putExtra(BuiltInOfficeActivity.EXTRA_NAME, name);
@@ -4848,6 +4857,24 @@ public class MainActivity extends Activity {
                 row(page, profile.label(), profile.summary(), "remote",
                         Ui.TEAL, () -> openRemoteStart(profile),
                         () -> remoteMenu(profile));
+            }
+            if(!EditionMonetization.full(this)){
+                muted(L10n.t("무료 버전에서는 연결 종류별로 1개만 사용할 수 있습니다."));
+                for(Models.RemoteProfile locked:store.supportedRemotes()){
+                    if(store.remoteAllowed(locked.id))continue;
+                    row(page,locked.label(),locked.summary()+" · "+L10n.t("풀버전 필요"),
+                            "remote",Ui.MUTED,()->EditionMonetization.showUpgrade(this),
+                            ()->new AlertDialog.Builder(this)
+                                    .setTitle(locked.label())
+                                    .setMessage(L10n.t("풀버전 구매 후 이 연결을 사용할 수 있습니다."))
+                                    .setNegativeButton(L10n.t("닫기"),null)
+                                    .setNeutralButton(L10n.t("삭제"),(d,w)->{
+                                        try {store.deleteRemote(locked.id);showRemoteList();}
+                                        catch(Exception e){showError(safeError(e));}
+                                    })
+                                    .setPositiveButton(L10n.t("풀버전 구매"),(d,w)->EditionMonetization.showUpgrade(this))
+                                    .show());
+                }
             }
         } catch (Exception e) {
             showError("저장된 연결 설정을 읽을 수 없습니다. 암호화 키를 확인하세요.");
@@ -5789,6 +5816,9 @@ public class MainActivity extends Activity {
                     if (selected == 5 &&
                             !CloudProvider.validMyBoxToken(password.getText().toString()))
                         throw new IllegalArgumentException("MYBOX PAT는 mbx_pat_로 시작해야 합니다.");
+                    if(!store.canSaveRemote(original==null?null:original.id,types[selected])){
+                        EditionMonetization.showUpgrade(this);return;
+                    }
                     Models.RemoteProfile p = original == null ? new Models.RemoteProfile() : original;
                     if (original != null && (!address.equalsIgnoreCase(original.host) ||
                             selectedPort != original.port || !types[selected].equals(original.protocol)))
@@ -5863,6 +5893,10 @@ public class MainActivity extends Activity {
      * Navigation to '/' via the breadcrumb remains explicit and unchanged. */
     private void openRemoteStart(Models.RemoteProfile profile) {
         if (profile == null) { showRemoteList(); return; }
+        if(!EditionMonetization.full(this)){
+            try{if(!store.remoteAllowed(profile.id)){EditionMonetization.showUpgrade(this);return;}}
+            catch(Exception e){showError(safeError(e));return;}
+        }
         if (!RemoteProvider.sftpUsesLoginHome(profile)) {
             sftpHomeDiscoveryPendingId = "";
             openRemote(profile, "/");
@@ -5895,6 +5929,10 @@ public class MainActivity extends Activity {
 
     private void openRemote(Models.RemoteProfile profile, String folder) {
         if (profile == null) { showRemoteList(); return; }
+        if(!EditionMonetization.full(this)){
+            try{if(!store.remoteAllowed(profile.id)){EditionMonetization.showUpgrade(this);return;}}
+            catch(Exception e){showError(safeError(e));return;}
+        }
         if ("GoogleDrive".equals(profile.protocol)) {
             showError("Android판에서는 Google Drive 연결을 지원하지 않습니다.");
             return;
@@ -6530,6 +6568,15 @@ public class MainActivity extends Activity {
             permissionPendingFile = null;
             browseLocal(target);
         }
+    }
+
+    void onEditionEntitlementChanged(){
+        if(isFinishing()||isDestroyed()||store==null)return;
+        try{
+            if(remote!=null&&!store.remoteAllowed(remote.id)){showRemoteList();return;}
+            if("home".equals(currentScreen)||"remotes".equals(currentScreen))
+                refreshCurrent();
+        }catch(Exception ignored){}
     }
 
     @Override protected void onPause(){

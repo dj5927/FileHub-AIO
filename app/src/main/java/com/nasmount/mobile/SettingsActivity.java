@@ -71,7 +71,7 @@ public final class SettingsActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Ui.BG);
-        setContentView(root);
+        setContentView(EditionMonetization.content(this,root));
         ViewCompat.setOnApplyWindowInsetsListener(root, (view, insets) -> {
             Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
             view.setPadding(0, bars.top, 0, bars.bottom);
@@ -220,6 +220,7 @@ public final class SettingsActivity extends Activity {
         if(selectedTab==2){renderComicDefaults();return;}
         if(selectedTab==3){renderTextDefaults();return;}
         if(selectedTab==0){
+        EditionMonetization.settings(this);
         section(L10n.t("인터페이스"), "FileHub AIO 파일관리자와 설정 화면의 밝기 및 색상 테마를 선택합니다.");
         action(L10n.t("화면 테마"), AppearanceSettings.LABELS[AppearanceSettings.mode(this)],
                 () -> new AlertDialog.Builder(this)

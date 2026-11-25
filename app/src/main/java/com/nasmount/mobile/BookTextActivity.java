@@ -101,7 +101,7 @@ public final class BookTextActivity extends Activity {
             column.setPadding(0,safe.top,0,safe.bottom);
             return insets;
         });
-        setContentView(column);
+        setContentView(EditionMonetization.content(this,column));
         header=Ui.horizontal(this);
         header.setPadding(dp(6),0,dp(6),0);
         column.addView(header,Ui.lp(this,-1,47));

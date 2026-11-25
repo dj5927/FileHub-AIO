@@ -93,7 +93,7 @@ public final class TextEditorActivity extends Activity {
             return insets;
         });
         window.addView(column, new FrameLayout.LayoutParams(-1, -1));
-        setContentView(window);
+        setContentView(EditionMonetization.content(this,window));
         ViewCompat.requestApplyInsets(column);
 
         LinearLayout toolbar = Ui.horizontal(this);

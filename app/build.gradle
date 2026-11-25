@@ -70,6 +70,50 @@ if (releaseSigningFile.exists()) {
     releaseSigningFile.withInputStream { stream -> releaseSigning.load(stream) }
 }
 
+// Play monetization is isolated from Direct. Public identifiers are supplied
+// by the publisher outside source control. Unconfigured release builds never
+// request live or demo ads. Debug builds use Google's dedicated demo units.
+def adApp = providers.gradleProperty('filehubAdMobAppId').getOrElse('')
+def adBanner = providers.gradleProperty('filehubAdMobBannerId').getOrElse('')
+def adInterstitial = providers.gradleProperty('filehubAdMobInterstitialId').getOrElse('')
+def billingKey = providers.gradleProperty('filehubPlayBillingPublicKey').getOrElse('')
+def liveAds = [adApp, adBanner, adInterstitial].every { it != '' } &&
+        (adApp ==~ /ca-app-pub-\d{16}~\d{10}/) &&
+        ([adBanner, adInterstitial].every { it ==~ /ca-app-pub-\d{16}\/\d{10}/ }) &&
+        ![adApp,adBanner,adInterstitial].any { it.startsWith('ca-app-pub-3940256099942544') }
+if (billingKey && !(billingKey ==~ /[A-Za-z0-9+\/=]+/))
+    throw new GradleException('Invalid Play billing public key format')
+def playSigningFile = rootProject.file(
+        providers.gradleProperty('filehubPlayReleaseSigningConfig')
+                .getOrElse('../signing/play-signing.properties'))
+def playSigning = new Properties()
+if (playSigningFile.exists())
+    playSigningFile.withInputStream { stream -> playSigning.load(stream) }
+
+tasks.register('verifyPlayProductionConfiguration') {
+    doLast {
+        if (!liveAds) throw new GradleException('Configure production AdMob app/banner/interstitial IDs')
+        if (!billingKey) throw new GradleException('Configure the Play app licensing public key')
+        try {
+            java.security.KeyFactory.getInstance('RSA').generatePublic(
+                    new java.security.spec.X509EncodedKeySpec(java.util.Base64.decoder.decode(billingKey)))
+        } catch (Exception ignored) {
+            throw new GradleException('Invalid Play app licensing public key')
+        }
+        if (!playSigningFile.isFile() ||
+                !['storeFile','storePassword','keyAlias','keyPassword'].every { playSigning.getProperty(it) })
+            throw new GradleException('Configure independent Play upload signing key')
+        if (playSigningFile.canonicalFile == releaseSigningFile.canonicalFile)
+            throw new GradleException('Do not reuse the Direct signing configuration')
+        if (!file(playSigning.getProperty('storeFile')).isFile())
+            throw new GradleException('Play upload keystore not found')
+        if (releaseSigning.getProperty('storeFile') &&
+                file(playSigning.getProperty('storeFile')).canonicalFile ==
+                file(releaseSigning.getProperty('storeFile')).canonicalFile)
+            throw new GradleException('Do not reuse the Direct keystore')
+    }
+}
+
 android {
     namespace 'com.nasmount.mobile'
     // AndroidX Core 1.19.1 and OkHttp Android 5.5.1 require API 37
@@ -81,6 +125,14 @@ android {
         targetSdk 35
     }
     signingConfigs {
+        playUpload {
+            if (playSigningFile.exists()) {
+                storeFile file(playSigning.getProperty('storeFile'))
+                storePassword playSigning.getProperty('storePassword')
+                keyAlias playSigning.getProperty('keyAlias')
+                keyPassword playSigning.getProperty('keyPassword')
+            }
+        }
         release {
             if (releaseSigningFile.exists()) {
                 storeFile file(releaseSigning.getProperty('storeFile'))
@@ -108,11 +160,17 @@ android {
             dimension 'distribution'
             applicationId 'com.filehubaio.mobile'
             targetSdk 36
-            versionCode 1
-            versionName '1.0.0'
+            versionCode 2
+            versionName '1.0.1'
             buildConfigField 'boolean', 'DIRECT_EDITION', 'false'
             buildConfigField 'String', 'PAIR_SCHEME', '"filehubaio-play"'
-            manifestPlaceholders = [pairScheme: 'filehubaio-play']
+            buildConfigField 'boolean', 'LIVE_ADS_CONFIGURED', liveAds.toString()
+            buildConfigField 'String', 'AD_BANNER_ID', '"' + (liveAds ? adBanner : '') + '"'
+            buildConfigField 'String', 'AD_INTERSTITIAL_ID', '"' + (liveAds ? adInterstitial : '') + '"'
+            buildConfigField 'String', 'PLAY_BILLING_PUBLIC_KEY', '"' + billingKey + '"'
+            manifestPlaceholders = [pairScheme: 'filehubaio-play',
+                adMobAppId: liveAds ? adApp : 'ca-app-pub-3940256099942544~3347511713']
+            if (playSigningFile.exists()) signingConfig signingConfigs.playUpload
         }
     }
     buildTypes {
@@ -147,6 +205,9 @@ dependencies {
     // renderer + ABI-matched native codecs for AC3/EAC3/DTS/MLP/TrueHD/etc.
     // GPL-3.0: redistribution of this combined build requires compliance.
     directImplementation "io.github.anilbeesetti:nextlib-media3ext:1.11.1-0.19.0"
+    playImplementation 'com.android.billingclient:billing:9.1.0'
+    playImplementation 'com.google.android.gms:play-services-ads:25.5.0'
+    playImplementation 'com.google.android.ump:user-messaging-platform:4.0.0'
     implementation 'androidx.documentfile:documentfile:1.1.0'
     implementation 'androidx.core:core:1.19.1'
     implementation 'com.squareup.okhttp3:okhttp:5.5.1'

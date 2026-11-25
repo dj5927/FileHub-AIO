@@ -100,7 +100,7 @@ public final class ComicBookActivity extends Activity {
             column.setPadding(0,safe.top,0,safe.bottom);
             return insets;
         });
-        setContentView(column);
+        setContentView(EditionMonetization.content(this,column));
         top=Ui.horizontal(this);
         top.setPadding(dp(7),0,dp(8),0);
         top.setBackgroundColor(0xFF101923);
@@ -463,6 +463,10 @@ public final class ComicBookActivity extends Activity {
     }
     private void offerNextVolume(){
         if(endPromptVisible || logicalPages==null)return;
+        EditionMonetization.contentBreak(this,this::showNextVolumePrompt);
+    }
+    private void showNextVolumePrompt(){
+        if(isFinishing()||isDestroyed()||endPromptVisible||logicalPages==null)return;
         String currentLocation=getIntent().getStringExtra(ReaderSource.URI);
         if(currentLocation==null)currentLocation=
                 getIntent().getStringExtra(ReaderSource.PATH);

@@ -6,5 +6,6 @@ public final class FileHubApplication extends Application {
     @Override public void onCreate() {
         super.onCreate();
         L10n.init(this);
+        EditionMonetization.init(this);
     }
 }

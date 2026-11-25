@@ -54,6 +54,9 @@ public final class OfficeBridgeActivity extends Activity {
         Ui.applyAppearance(this);
         setTheme(Ui.darkMode ? R.style.AppThemeDark : R.style.AppTheme);
         super.onCreate(state);
+        if(!EditionMonetization.full(this)){
+            finish();return;
+        }
         kind = getIntent().getStringExtra(EXTRA_KIND);
         filename = getIntent().getStringExtra(EXTRA_NAME);
         path = getIntent().getStringExtra(EXTRA_PATH);

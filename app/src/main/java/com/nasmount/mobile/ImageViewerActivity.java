@@ -96,7 +96,7 @@ public final class ImageViewerActivity extends Activity {
             root.setPadding(0,safe.top,0,safe.bottom);
             return insets;
         });
-        setContentView(root);
+        setContentView(EditionMonetization.content(this,root));
         String token=getIntent().getStringExtra(EXTRA_SEQUENCE);
         sequence=ImageFolderSequence.resolve(token);
         if(sequence!=null) {

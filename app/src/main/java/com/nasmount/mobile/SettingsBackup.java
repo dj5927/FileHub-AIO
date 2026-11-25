@@ -52,11 +52,11 @@ final class SettingsBackup {
         root.put("version",VERSION);
         root.put("created",System.currentTimeMillis());
         JSONArray remotes=new JSONArray();
-        for(Models.RemoteProfile profile:store.activeRemotes())
+        for(Models.RemoteProfile profile:store.supportedRemotes())
             remotes.put(profileToJson(profile));
         root.put("remotes",remotes);
         root.put("favorites",new JSONArray(SecureStore.encodeFavorites(
-                store.activeFavorites())));
+                store.supportedFavorites())));
         JSONObject settings=new JSONObject();
         for(String name:FILES) {
             SharedPreferences pref=context.getSharedPreferences(name,Context.MODE_PRIVATE);

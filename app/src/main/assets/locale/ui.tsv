@@ -277,3 +277,38 @@ Direct 업데이트	Direct updates	Direct アップデート	Direct 更新
 개인 접근 코드	Personal access code	個人アクセスコード	个人访问码
 공개 OTA 사용	Use public OTA	公開 OTA を使用	使用公开 OTA
 서버 주소 또는 접근 코드를 확인하세요.	Check the server address or access code.	サーバーアドレスまたはアクセスコードを確認してください。	请检查服务器地址或访问码。
+무료 버전에서는 연결 종류별로 1개만 사용할 수 있습니다.	The free edition supports one connection per storage type.	無料版では接続方式ごとに1件のみ利用できます。	免费版每种存储类型仅支持一个连接。
+풀버전 필요	Full version required	フル版が必要	需要完整版
+풀버전 구매 후 이 연결을 사용할 수 있습니다.	Unlock the full version to use this connection.	フル版の購入後にこの接続を利用できます。	购买完整版后可使用此连接。
+풀버전 구매	Buy full version	フル版を購入	购买完整版
+FileHub 풀버전	FileHub Full Version	FileHub フル版	FileHub 完整版
+한 번 구매하면 모든 광고가 제거되고 Play 버전의 제한 기능이 열립니다.	One purchase removes all ads and unlocks the restricted Play edition features.	一度の購入ですべての広告がなくなり、Play版の制限機能が利用可能になります。	一次购买即可移除所有广告并解锁 Play 版受限功能。
+풀버전 사용 중	Full version active	フル版を利用中	正在使用完整版
+광고 없음 · 기능 제한 없음	No ads · No feature limits	広告なし・機能制限なし	无广告 · 无功能限制
+한국 기준 출시 예정가 ₩3,900	Planned Korea launch price: ₩3,900	韓国での発売予定価格：₩3,900	韩国计划上市价格：₩3,900
+일회성 구매	One-time purchase	買い切り	一次性购买
+일회성 구매 · 구독 아님	One-time purchase · No subscription	買い切り・サブスクリプションではありません	一次性购买 · 非订阅
+구매 복원	Restore purchase	購入を復元	恢复购买
+현재 Google Play 계정의 구매 내역을 확인합니다.	Check purchases on your current Google Play account.	現在のGoogle Playアカウントの購入履歴を確認します。	检查当前 Google Play 账号的购买记录。
+광고 개인정보 설정	Ad privacy settings	広告のプライバシー設定	广告隐私设置
+광고 개인정보 보호 선택을 확인하거나 변경합니다.	Review or change your advertising privacy choices.	広告のプライバシー設定を確認・変更します。	查看或更改广告隐私选项。
+무료: 종류별 원격 연결 1개, 배너 광고, 콘텐츠 이용 10분 후 전환 시 전면 광고, 내장 오피스·한글 뷰어 제한.	Free: one connection per type, banner ads, full-screen ads at transitions after 10 minutes of content use, and restricted Office/HWP viewers.	無料：方式ごとに接続1件、バナー広告、コンテンツ利用10分後の切り替え時に全画面広告、Office・HWPビューア制限。	免费：每种连接类型一个连接、横幅广告、内容使用满10分钟后在切换时显示全屏广告、Office/HWP 查看器受限。
+모든 광고 제거\n종류별 원격 연결 제한 해제\n내장 오피스·한글 뷰어 및 편집 기능 사용	Remove all ads\nUnlimited connections per type\nUse built-in Office/HWP viewers and editing	すべての広告を削除\n接続方式ごとの件数制限を解除\nOffice・HWPの内蔵ビューアと編集機能を利用	移除所有广告\n解除每种连接类型的数量限制\n使用内置 Office/HWP 查看和编辑功能
+풀버전 구매를 복원했습니다.	Full version purchase restored.	フル版の購入を復元しました。	已恢复完整版购买。
+복원할 구매 내역이 없습니다.	No purchase to restore.	復元できる購入履歴がありません。	没有可恢复的购买记录。
+Google Play 구매 내역을 확인할 수 없습니다.	Unable to check Google Play purchases.	Google Playの購入履歴を確認できません。	无法检查 Google Play 购买记录。
+이미 풀버전을 사용 중입니다.	You already have the full version.	すでにフル版を利用しています。	您已拥有完整版。
+결제 설정이 완료되지 않았습니다.	Billing setup is not complete.	決済設定が完了していません。	结算设置尚未完成。
+Google Play 상품 정보를 불러올 수 없습니다.	Unable to load Google Play product information.	Google Playの商品情報を取得できません。	无法加载 Google Play 商品信息。
+Google Play 결제 화면을 열 수 없습니다.	Unable to open Google Play checkout.	Google Playの決済画面を開けません。	无法打开 Google Play 结算页面。
+Google Play 결제를 완료하지 못했습니다.	Google Play purchase could not be completed.	Google Playでの購入を完了できませんでした。	无法完成 Google Play 购买。
+구매 확인에 실패했습니다. 구매 복원을 다시 시도하세요.	Purchase confirmation failed. Please try restoring the purchase.	購入確認に失敗しました。購入の復元を再試行してください。	购买确认失败，请重试恢复购买。
+결제 승인 대기 중입니다. 승인 완료 후 풀버전이 열립니다.	Payment is pending. The full version unlocks after approval.	決済承認待ちです。承認完了後にフル版が解除されます。	付款等待批准，批准后将解锁完整版。
+구매 서명을 확인할 수 없습니다.	Unable to verify the purchase signature.	購入の署名を検証できません。	无法验证购买签名。
+풀버전 구매가 완료되었습니다.	Full version purchase complete.	フル版の購入が完了しました。	完整版购买完成。
+광고가 비활성화되어 있습니다.	Advertising is disabled.	広告は無効になっています。	广告已停用。
+현재 추가 광고 개인정보 설정이 필요하지 않습니다.	No additional ad privacy choices are required right now.	現在、追加の広告プライバシー設定は不要です。	目前无需额外广告隐私设置。
+콘텐츠 이용 10분 후 전환 시 광고가 표시됩니다.	Ads may appear at a content transition after 10 minutes of use.	コンテンツ利用10分後の切り替え時に広告が表示されます。	内容使用满10分钟后，在切换时可能显示广告。
+풀버전으로 업그레이드	Upgrade to full version	フル版にアップグレード	升级至完整版
+무료 버전	Free edition	無料版	免费版
+풀버전	Full version	フル版	完整版

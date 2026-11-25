@@ -23,7 +23,9 @@ import javax.crypto.spec.GCMParameterSpec;
 final class SecureStore {
     private static final String KEY_ALIAS = "NASMount_Mobile_Credentials_v1";
     private final SharedPreferences preferences;
+    private final Context context;
     SecureStore(Context context) {
+        this.context=context.getApplicationContext();
         preferences = context.getSharedPreferences("nasmount_settings_v1",
                 Context.MODE_PRIVATE);
     }
@@ -119,14 +121,24 @@ final class SecureStore {
     }
 
     /** Unsupported desktop-only clouds stay preserved but hidden on Android. */
-    List<Models.RemoteProfile> activeRemotes() throws Exception {
+    List<Models.RemoteProfile> supportedRemotes() throws Exception {
         List<Models.RemoteProfile> result = remotes();
         result.removeIf(p -> "GoogleDrive".equals(p.protocol) ||
                 "OneDrive".equals(p.protocol));
         return result;
     }
 
-    List<Models.Favorite> activeFavorites() throws Exception {
+    List<Models.RemoteProfile> activeRemotes() throws Exception {
+        return MonetizationPolicy.accessible(supportedRemotes(),EditionMonetization.full(context));
+    }
+    boolean canSaveRemote(String id,String protocol) throws Exception {
+        return MonetizationPolicy.canSave(supportedRemotes(),id,protocol,EditionMonetization.full(context));
+    }
+    boolean remoteAllowed(String id) throws Exception {
+        return MonetizationPolicy.allowed(supportedRemotes(),id,EditionMonetization.full(context));
+    }
+
+    List<Models.Favorite> supportedFavorites() throws Exception {
         List<Models.Favorite> result = favorites();
         Set<String> retiredIds = new HashSet<>();
         for (Models.RemoteProfile profile : remotes()) {
@@ -141,11 +153,28 @@ final class SecureStore {
         return result;
     }
 
+    List<Models.Favorite> activeFavorites() throws Exception {
+        List<Models.Favorite> result=supportedFavorites();
+        if(!EditionMonetization.full(context)) {
+            Set<String> allowed=new HashSet<>();
+            for(Models.RemoteProfile p:activeRemotes())allowed.add(p.id);
+            result.removeIf(f->"remote".equals(f.kind)&&!allowed.contains(f.remoteId));
+        }
+        return result;
+    }
+
     void putRemote(Models.RemoteProfile item) throws Exception {
-        List<Models.RemoteProfile> all = remotes();
-        all.removeIf(x -> x.id.equals(item.id));
-        all.add(item);
-        writeRemotes(all);
+        synchronized(SecureStore.class){
+            List<Models.RemoteProfile> all=remotes();
+            if(!MonetizationPolicy.canSave(all,item.id,item.protocol,EditionMonetization.full(context)))
+                throw new IllegalStateException(L10n.t("무료 버전에서는 연결 종류별로 1개만 사용할 수 있습니다."));
+            // Preserve ordering so editing the free slot never changes which
+            // restored profile is accessible after a downgrade.
+            int index=-1;
+            for(int i=0;i<all.size();i++)if(all.get(i).id.equals(item.id)){index=i;break;}
+            if(index>=0)all.set(index,item);else all.add(item);
+            writeRemotes(all);
+        }
     }
     void deleteRemote(String id) throws Exception {
         List<Models.RemoteProfile> all = remotes();
@@ -208,8 +237,9 @@ final class SecureStore {
         int changed=0;
         for(Models.RemoteProfile next:imported) {
             // Importing an existing ID intentionally updates its credentials.
-            all.removeIf(old -> old.id.equals(next.id));
-            all.add(next);
+            int index=-1;
+            for(int i=0;i<all.size();i++)if(all.get(i).id.equals(next.id)){index=i;break;}
+            if(index>=0)all.set(index,next);else all.add(next);
             changed++;
         }
         List<Models.Favorite> favorites=replace?new ArrayList<>():favorites();

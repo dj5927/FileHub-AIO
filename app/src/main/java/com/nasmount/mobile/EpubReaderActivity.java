@@ -134,7 +134,7 @@ public final class EpubReaderActivity extends Activity {
             column.setPadding(0,safe.top,0,safe.bottom);
             return insets;
         });
-        setContentView(column);
+        setContentView(EditionMonetization.content(this,column));
         toolbar=Ui.horizontal(this);
         toolbar.setGravity(Gravity.CENTER_VERTICAL);
         toolbar.setBackgroundColor(0xFF101923);
@@ -1214,8 +1214,10 @@ public final class EpubReaderActivity extends Activity {
             recordProgress();
             final int nextChapter=chapterIndex+direction;
             final int nextLocation=direction<0?-1:0;
-            animatePageTurn(direction,
+            Runnable next=()->animatePageTurn(direction,
                     ()->openChapter(nextChapter,nextLocation),true);
+            if(direction>0)EditionMonetization.contentBreak(this,next);
+            else next.run();
         }else if(direction>0){
             new AlertDialog.Builder(this).setTitle(L10n.t("책을 모두 읽었습니다."))
                     .setPositiveButton(L10n.t("확인"),null).show();

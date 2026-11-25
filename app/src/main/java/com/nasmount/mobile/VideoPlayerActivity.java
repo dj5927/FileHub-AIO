@@ -277,7 +277,7 @@ public final class VideoPlayerActivity extends Activity {
         FrameLayout root = new FrameLayout(this);
         playerRoot = root;
         root.setBackgroundColor(Color.BLACK);
-        setContentView(root);
+        setContentView(EditionMonetization.content(this,root));
         hideSystemBars();
         videoView = new PlayerView(this);
         videoView.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);
@@ -579,6 +579,7 @@ public final class VideoPlayerActivity extends Activity {
                                     problem.getErrorCodeName() + ")", Toast.LENGTH_LONG).show();
                 }
                 @Override public void onIsPlayingChanged(boolean isPlaying){
+                    EditionMonetization.videoPlaying(VideoPlayerActivity.this,isPlaying);
                     refreshPictureInPictureParams();
                 }
             });
@@ -748,7 +749,7 @@ public final class VideoPlayerActivity extends Activity {
                 SystemClock.elapsedRealtime())) return;
         player.pause();
         PlaybackProgressStore.clear(this, progressId);
-        promptNextEpisodeAfterEnd();
+        EditionMonetization.contentBreak(this,this::promptNextEpisodeAfterEnd);
     }
 
     private int dp(int value) {
@@ -2460,6 +2461,7 @@ public final class VideoPlayerActivity extends Activity {
         super.onPictureInPictureModeChanged(
                 inPictureInPictureMode,newConfig);
         popupUiActive=inPictureInPictureMode;
+        EditionMonetization.pictureInPicture(this,inPictureInPictureMode);
         if(videoView==null)return;
         if(inPictureInPictureMode){
             pipWasEntered=true;
