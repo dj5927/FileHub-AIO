@@ -89,6 +89,14 @@ public class OneDriveApiTest {
             req(s,true);req(s,true);assertEquals(2,s.getRequestCount());
         }
     }
+    @Test public void registeredPublicClientUsesExactNativeRedirects(){
+        assertEquals("com.nasmount.mobile://oauth2redirect",OneDriveAuth.redirectForPackage("com.nasmount.mobile"));
+        assertEquals("com.filehubaio.mobile://oauth2redirect",OneDriveAuth.redirectForPackage("com.filehubaio.mobile"));
+        assertTrue(BuildConfig.ONEDRIVE_CLIENT_ID.isEmpty() || BuildConfig.ONEDRIVE_CLIENT_ID.matches("[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"));
+        assertTrue(OneDriveAuth.SCOPES.contains("https://graph.microsoft.com/Files.ReadWrite"));
+        assertTrue(OneDriveAuth.SCOPES.contains("https://graph.microsoft.com/User.Read"));
+        assertTrue(OneDriveAuth.SCOPES.contains("offline_access"));
+    }
     @Test public void linkedProfilesRejectLegacyPasswords(){
         Models.RemoteProfile p=new Models.RemoteProfile();p.protocol="OneDrive";p.host="graph.microsoft.com";p.username="test@example.test";
         assertFalse(OneDriveAuth.linked(p));p.fingerprint=OneDriveAuth.marker("user","drive");assertTrue(OneDriveAuth.linked(p));

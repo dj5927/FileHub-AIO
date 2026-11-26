@@ -98,7 +98,7 @@ def directOtaKey = directOtaKeyFile ? file(directOtaKeyFile).getText('UTF-8').tr
 if (directOtaKey && !(directOtaKey ==~ /[A-Za-z0-9_-]{32,128}/))
     throw new GradleException('Invalid private OTA key')
 // A public application ID, never a client secret. Supplied by the publisher.
-def oneDriveClientId = providers.gradleProperty('filehubOneDriveClientId').orElse('').get().trim()
+def oneDriveClientId = providers.gradleProperty('filehubOneDriveClientId').orElse('3f9925ba-c774-4f21-9ebc-6fa836770de5').get().trim()
 if (oneDriveClientId && !(oneDriveClientId ==~ /[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}/))
     throw new GradleException('Invalid OneDrive application ID')
 def playInternal = providers.gradleProperty('filehubPlayInternalTest').getOrElse('false') == 'true'
@@ -210,8 +210,8 @@ android {
             dimension 'distribution'
             applicationId 'com.nasmount.mobile'
             targetSdk 35
-            versionCode 150
-            versionName '0.1.149'
+            versionCode 151
+            versionName '0.1.150'
             buildConfigField 'boolean', 'DIRECT_EDITION', 'true'
             buildConfigField 'String', 'DIRECT_OTA_KEY', groovy.json.JsonOutput.toJson(directOtaKey)
             buildConfigField 'boolean', 'R8_TRIAL', 'false'
@@ -223,8 +223,8 @@ android {
             dimension 'distribution'
             applicationId 'com.filehubaio.mobile'
             targetSdk 36
-            versionCode 33
-            versionName '1.0.32'
+            versionCode 34
+            versionName '1.0.33'
             buildConfigField 'boolean', 'DIRECT_EDITION', 'false'
             buildConfigField 'boolean', 'R8_TRIAL', 'false'
             buildConfigField 'String', 'PAIR_SCHEME', '"filehubaio-play"'

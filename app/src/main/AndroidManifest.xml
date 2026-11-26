@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
     <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
     <uses-feature android:name="android.software.leanback" android:required="false"/>
@@ -42,6 +42,16 @@
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"/>
         <activity android:name=".GoogleDriveConnectActivity" android:exported="false"/>
         <activity android:name=".OneDriveConnectActivity" android:exported="false"/>
+        <!-- Exact native callback registered in Microsoft Entra. -->
+        <activity android:name="net.openid.appauth.RedirectUriReceiverActivity"
+            android:exported="true" tools:node="replace">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="${appAuthRedirectScheme}" android:host="oauth2redirect"/>
+            </intent-filter>
+        </activity>
         <activity android:name=".QrScanActivity" android:exported="false"
             android:screenOrientation="unspecified"/>
         <!-- Comics handle live Fold width changes without downloading a huge

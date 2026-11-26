@@ -20,7 +20,10 @@ final class OneDriveAuth {
     private static volatile Context app;
     static void init(Context c){app=c.getApplicationContext();}
     static boolean configured(){return !BuildConfig.ONEDRIVE_CLIENT_ID.isEmpty();}
-    static Uri redirect(Context c){return Uri.parse(c.getPackageName()+":/oauth2redirect");}
+    static String redirectForPackage(String packageName){
+        return packageName+"://oauth2redirect";
+    }
+    static Uri redirect(Context c){return Uri.parse(redirectForPackage(c.getPackageName()));}
     static AuthorizationRequest request(Context c,String hint){
         AuthorizationRequest.Builder b=new AuthorizationRequest.Builder(config(),BuildConfig.ONEDRIVE_CLIENT_ID,
             ResponseTypeValues.CODE,redirect(c)).setScope(SCOPES);
