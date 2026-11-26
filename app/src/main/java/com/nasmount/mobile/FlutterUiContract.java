@@ -26,10 +26,10 @@ final class FlutterUiContract {
     private static final Set<String> GLOBAL_ACTIONS =
             actions("add", "backup", "upgrade", "nativeList");
     private static final Set<String> HOME_ACTIONS = actions(
-            "storage", "sd", "downloads", "images", "audio", "videos",
+            "storage", "sd", "trash", "downloads", "images", "audio", "videos",
             "videoShelf", "comicShelf", "textShelf", "connections", "upgrade");
     private static final Set<String> DRAWER_ACTIONS = actions(
-            "home", "connections", "settings", "favorites", "close",
+            "home", "trash", "connections", "settings", "favorites", "close",
             "toggleFavorites", "toggleNetwork", "nativeDrawer", "upgrade");
     private FlutterUiContract() {}
     private static Set<String> actions(String... values) {

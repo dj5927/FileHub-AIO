@@ -394,6 +394,7 @@ final class FileTransferEngine {
                         boolean move, boolean overwrite,
                         ProgressListener listener, TransferControl control) throws Exception {
         if (control != null) { control.bindCurrentThread(); control.check(); }
+        for(Item item:sources)LocalTrash.guard(context,item);
         preflight(sources, destination, move, overwrite);
         if (control != null) control.check();
         TransferMeter meter = listener == null ? null :
@@ -477,6 +478,7 @@ final class FileTransferEngine {
             try {
                 if (!item.writable())
                     throw new IOException("읽기 전용 파일은 삭제할 수 없습니다: " + item.name);
+                LocalTrash.guard(context,item);
                 deleteOne(item, budget, 0, true);
                 success++;
             } catch (Exception failure) {
@@ -719,7 +721,7 @@ final class FileTransferEngine {
                 deleteOne(child, budget, depth + 1, explicitDelete);
         switch (item.kind) {
             case "local":
-                if (item.directory)
+                if (item.directory && !Files.isSymbolicLink(item.local.toPath()))
                     for (Item child : children(item))
                         deleteOne(child, budget, depth + 1, explicitDelete);
                 if (!item.local.delete())

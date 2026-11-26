@@ -29,6 +29,7 @@ final class FlutterHomeSnapshot {
         catch (Exception ignored) {}
         data.put("freeBytes",free);
         Map<String,String> labels = new LinkedHashMap<>();
+        labels.put("trash",L10n.t("휴지통"));
         labels.put("home",L10n.t("홈"));
         labels.put("storageHeading",L10n.t("저장소"));
         labels.put("storage",L10n.t("메인 저장소"));

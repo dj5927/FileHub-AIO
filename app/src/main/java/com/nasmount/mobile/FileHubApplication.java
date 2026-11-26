@@ -13,5 +13,6 @@ public final class FileHubApplication extends Application {
         GoogleDriveAuth.init(this);
         OneDriveAuth.init(this);
         EditionMonetization.init(this);
+        TrashJobService.schedule(this);
     }
 }

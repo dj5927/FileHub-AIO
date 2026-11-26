@@ -217,6 +217,10 @@ final class SettingsContent extends android.content.ContextWrapper {
                 },"filehub-crash-report").start();
             });
         }
+        section(L10n.t("휴지통"),L10n.t("내부 저장소 및 외장 저장소의 삭제 항목을 보관합니다."));
+        select("휴지통 자동 삭제 기간",new String[]{"3일","5일","7일","15일","30일","자동 삭제 안 함"},
+            LocalTrash.retentionIndex(this),index->LocalTrash.retention(this,index));
+        action(L10n.t("휴지통"),"",()->activity.startActivity(new Intent(activity,TrashActivity.class)));
         section(L10n.t("인터페이스"), L10n.t("FileHub AIO 파일관리자와 설정 화면의 밝기 및 색상 테마를 선택합니다."));
         select(L10n.t("표시 언어"),L10n.choices(),L10n.selectedIndex(this),which->{
             if(which!=L10n.selectedIndex(this)){

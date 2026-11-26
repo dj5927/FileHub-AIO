@@ -2,7 +2,7 @@ import 'package:flutter/services.dart' show HapticFeedback;
 import 'compact_text.dart';
 import 'package:material_ui/material_ui.dart';
 import 'main.dart';
-import 'remote_editor.dart' show CloudLogo;
+import 'remote_editor.dart' show ProtocolIcon;
 
 typedef Navigate = Future<void> Function(String action, [String? id]);
 
@@ -67,6 +67,7 @@ class HomeNavigation extends StatelessWidget {
           Wrap(spacing:10,runSpacing:10,children:[
             _tile('storage',Icons.storage_rounded,const Color(0xff0b8f83),width,subtitle:_capacity()),
             if (data.hasSd) _tile('sd',Icons.sd_storage_outlined,const Color(0xff6b8cbe),width),
+            _tile('trash',Icons.delete_outline,const Color(0xff00877c),width),
             _tile('downloads',Icons.download_rounded,const Color(0xff4989cf),width),
             _tile('images',Icons.photo_library_outlined,const Color(0xffa66bc4),width),
             _tile('audio',Icons.library_music_outlined,const Color(0xff159e90),width),
@@ -123,6 +124,7 @@ class DrawerNavigation extends StatelessWidget {
         leading:const Icon(Icons.home_outlined,size:24),
         title:Text(data.t('home'),style:const TextStyle(fontSize:15,fontWeight:FontWeight.w600)),
         onTap:busy?null:()=>action('home')),
+      _link('trash',Icons.delete_outline),
       const Divider(height:1),
       _section('favorites',Icons.star_border,'toggleFavorites',data.favoritesExpanded),
       ]),
@@ -184,7 +186,7 @@ class DrawerNavigation extends StatelessWidget {
           ListTile(key:ValueKey('drawer-profile-${p.id}'),
             dense:true,minTileHeight:44,visualDensity:VisualDensity.compact,
             contentPadding:const EdgeInsets.only(left:28,right:12),
-            leading:CloudLogo(p.protocol,size:20,fallback:const Icon(Icons.folder_shared_outlined,size:20)),
+            leading:ProtocolIcon(p.protocol),
             title:Text(p.label,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:13)),
             subtitle:Text(p.protocol=='GoogleDrive'?'Google Drive':p.protocol,style:const TextStyle(fontSize:11)),
             onTap:busy?null:()=>action(p.allowed?'open':'connections',p.allowed?p.id:null)),

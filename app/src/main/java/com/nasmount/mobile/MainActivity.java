@@ -1676,6 +1676,30 @@ public class MainActivity extends LocalizedActivity {
             return;
         }
         String title=L10n.f("%1$d개 항목 삭제",sources.size());
+        boolean localTrash=true;
+        for(FileTransferEngine.Item item:sources)
+            if(!"local".equals(item.kind)&&!"saf".equals(item.kind)){localTrash=false;break;}
+        if(localTrash){
+            LinearLayout content=Ui.vertical(this);content.setPadding(dp(24),dp(8),dp(24),dp(8));
+            TextView message=Ui.text(this,"",15,Ui.TEXT,false);content.addView(message,Ui.lp(this,-1,-2));
+            CheckBox permanent=new CheckBox(this);permanent.setText(L10n.t("완전히 삭제하기"));
+            content.addView(permanent,Ui.lp(this,-1,-2));
+            String normal=L10n.t("선택한 파일과 폴더를 휴지통으로 이동할까요?");
+            int days=LocalTrash.retention(this);
+            if(days>0)normal+=" "+L10n.f("%d일 후 자동 삭제",days);
+            final String normalMessage=normal;
+            message.setText(normalMessage);
+            AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setView(content)
+                .setNegativeButton(L10n.t("취소"),null).setPositiveButton(L10n.t("삭제"),(d,w)->{
+                    if(permanent.isChecked())commitSelectedDelete(sources);
+                    else commitTrash(sources);
+                }).create();
+            permanent.setOnCheckedChangeListener((v,checked)->{
+                message.setText(checked?L10n.t("완전히 삭제하면 복원할 수 없습니다."):normalMessage);
+                if(dialog.isShowing())dialog.getButton(AlertDialog.BUTTON_POSITIVE).setText(L10n.t(checked?"완전히 삭제":"삭제"));
+            });
+            dialog.show();return;
+        }
         boolean allOneDrive=true;
         for(FileTransferEngine.Item item:sources)
             if(item.remote==null||!OneDriveAuth.PROTOCOL.equals(item.remote.protocol)){allOneDrive=false;break;}
@@ -1691,6 +1715,16 @@ public class MainActivity extends LocalizedActivity {
         new AlertDialog.Builder(this).setTitle(title).setMessage(message)
                 .setNegativeButton(L10n.t("취소"), null)
                 .setPositiveButton(L10n.t("삭제"), (dialog, which) ->commitSelectedDelete(sources)).show();
+    }
+    private static final int TRASH_REQUEST=7397;
+    private void openTrash(){startActivityForResult(new Intent(this,TrashActivity.class),TRASH_REQUEST);}
+    private void commitTrash(List<FileTransferEngine.Item> sources){
+        if(sources.isEmpty())return;
+        runJob(L10n.t("휴지통으로 이동 중..."),()->LocalTrash.move(getApplicationContext(),sources),out->{
+            folderCache.clearCounts();refreshCurrent();
+            if(out.count>0)toast(L10n.f("%d개 항목을 휴지통으로 이동했습니다.",out.count));
+            if(out.failed>0)showError(L10n.f("%d개 항목을 처리하지 못했습니다.",out.failed)+"\n"+out.first);
+        });
     }
     private void commitSelectedDelete(List<FileTransferEngine.Item> sources){
         if(sources.isEmpty()||!validateOperationProfiles(sources,null,true))return;
@@ -2146,6 +2180,7 @@ public class MainActivity extends LocalizedActivity {
         mediaKind = null;
         render("FileHub AIO", false, "⋮", this::menu);
         heading(L10n.t("저장소"), 0);
+        row(page,L10n.t("휴지통"),"","trash",Ui.TEAL,this::openTrash,null);
         LinearLayout r1 = Ui.horizontal(this);
         page.addView(r1, Ui.lp(this, -1, expandedLayout() ? 195 : 158));
         boolean sdPresent = hasSd();
@@ -2620,6 +2655,7 @@ public class MainActivity extends LocalizedActivity {
         if (FlutterUiContract.HOME.equals(route)) {
             if (!"home".equals(currentScreen) || drawerShown) return;
             switch (action) {
+                case "trash": openTrash(); break;
                 case "storage": browseLocal(Environment.getExternalStorageDirectory()); break;
                 case "sd": openSd(); break;
                 case "downloads": browseLocal(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)); break;
@@ -2649,6 +2685,7 @@ public class MainActivity extends LocalizedActivity {
         try {
             switch (action) {
                 case "home": showHome(); break;
+                case "trash": openTrash(); break;
                 case "connections": openFlutterConnections(); break;
                 case "settings": openSettings(); break;
                 case "upgrade": if(!BuildConfig.DIRECT_EDITION)EditionMonetization.showUpgrade(this);break;
@@ -3560,6 +3597,7 @@ public class MainActivity extends LocalizedActivity {
         LinearLayout inside = Ui.vertical(this);
         scroller.addView(inside);
         drawerLink(inside, L10n.t("홈"), "drive", () -> showHome());
+        drawerLink(inside,L10n.t("휴지통"),"trash",this::openTrash);
 
         LinearLayout favoriteEntries = drawerSection(inside,
                 L10n.t("즐겨찾기"), "star", DrawerSectionState.FAVORITES);
@@ -3640,7 +3678,7 @@ public class MainActivity extends LocalizedActivity {
         LinearLayout row = Ui.horizontal(this);
         row.setPadding(dp(18), 0, dp(12), 0);
         parent.addView(row, Ui.lp(this, -1, 57));
-        row.addView(new Ui.Icon(this, kind, Ui.TEAL), Ui.lp(this, 32, 32));
+        row.addView(providerIcon(kind,Ui.TEAL), Ui.lp(this, 32, 32));
         TextView label = Ui.text(this, text, 15, Ui.TEXT, false);
         LinearLayout.LayoutParams lp = Ui.lp(this, -1, -1);
         lp.leftMargin = dp(15);
@@ -3997,13 +4035,18 @@ public class MainActivity extends LocalizedActivity {
     }
     private static String cloudIconKind(String protocol){
         switch(protocol){
-            case "GoogleDrive":case "OneDrive":case "MYBOX":case "TeraBox":return protocol;
+            case "SMB":case "FTP":case "SFTP":case "WebDAV":case "GoogleDrive":case "OneDrive":case "MYBOX":case "TeraBox":return protocol;
             default:return "remote";
         }
     }
     private View providerIcon(String kind,int color){
         int res=0;
         switch(kind){
+            case "SMB":res=R.drawable.protocol_smb;break;
+            case "FTP":res=R.drawable.protocol_ftp;break;
+            case "SFTP":res=R.drawable.protocol_sftp;break;
+            case "WebDAV":res=R.drawable.protocol_webdav;break;
+            case "trash":res=R.drawable.local_trash;break;
             case "GoogleDrive":res=R.drawable.cloud_google_drive;break;
             case "OneDrive":res=R.drawable.cloud_onedrive;break;
             case "MYBOX":res=R.drawable.cloud_mybox;break;
@@ -5250,6 +5293,7 @@ public class MainActivity extends LocalizedActivity {
             showError(L10n.t("이 폴더를 열 수 없습니다. 저장소 접근 권한을 확인하세요."));
             return;
         }
+        if(LocalTrash.reservedPath(directory.getAbsolutePath())){showError(L10n.t("휴지통은 휴지통 화면에서 관리해 주세요."));return;}
         currentScreen = "local";
         localFolder = directory; safFolder = null; remote = null;
         render(directory.equals(Environment.getExternalStorageDirectory()) ?
@@ -5277,6 +5321,7 @@ public class MainActivity extends LocalizedActivity {
             List<VideoEpisodeQueue.Episode> episodes=new ArrayList<>();
             for(File file:raw){
                 String name=file.getName();
+                if(LocalTrash.reserved(name))continue;
                 boolean folder=file.isDirectory();
                 Models.Entry entry=new Models.Entry(name,file.getAbsolutePath(),folder);
                 entry.file=file;
@@ -5446,6 +5491,7 @@ public class MainActivity extends LocalizedActivity {
         } catch (Exception e) { showError(L10n.t("즐겨찾기한 SD 폴더를 찾을 수 없습니다.")); }
     }
     private void browseSaf(DocumentFile folder, String relative) {
+        if(LocalTrash.reservedPath(relative)){showError(L10n.t("휴지통은 휴지통 화면에서 관리해 주세요."));return;}
         currentScreen = "saf";
         localFolder = null; safFolder = folder; safRelative = RemoteProvider.relativePath(relative);
         remote = null;
@@ -5467,6 +5513,7 @@ public class MainActivity extends LocalizedActivity {
                 // call; never enumerate or sort them on the main thread.
                 for(DocumentFile file:folder.listFiles()){
                     String childName=file.getName();
+                    if(LocalTrash.reserved(childName))continue;
                     if(childName==null)childName="이름 없음";
                     boolean isFolder=file.isDirectory();
                     Models.Entry item=new Models.Entry(
@@ -6072,7 +6119,7 @@ public class MainActivity extends LocalizedActivity {
                 for(Models.RemoteProfile locked:store.supportedRemotes()){
                     if(store.remoteAllowed(locked.id))continue;
                     row(page,locked.label(),locked.summary()+" · "+L10n.t("풀버전 필요"),
-                            "remote",Ui.MUTED,()->EditionMonetization.showUpgrade(this),
+                            cloudIconKind(locked.protocol),Ui.MUTED,()->EditionMonetization.showUpgrade(this),
                             ()->new AlertDialog.Builder(this)
                                     .setTitle(locked.label())
                                     .setMessage(L10n.t("풀버전 구매 후 이 연결을 사용할 수 있습니다."))
@@ -7550,6 +7597,7 @@ public class MainActivity extends LocalizedActivity {
     @android.annotation.SuppressLint("WrongConstant")
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if(requestCode==TRASH_REQUEST){if(resultCode==RESULT_OK){folderCache.clearCounts();refreshCurrent();}return;}
         if(requestCode==OneDriveConnectActivity.REQUEST){
             if(embeddedRemoteEditor!=null){
                 try{embeddedRemoteEditor.googleActivityResult(requestCode,resultCode);}

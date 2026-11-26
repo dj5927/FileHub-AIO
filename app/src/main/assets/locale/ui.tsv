@@ -1191,3 +1191,32 @@ OneDrive 인증 결과를 받지 못했습니다. 브라우저 인증을 다시 
 브라우저에서 다시 인증	Sign in again in browser	ブラウザーで再認証	在浏览器中重新授权
 전체 %d개 항목	Total %d items	全%d件	共 %d 项
 선택한 파일과 폴더를 OneDrive 휴지통으로 이동할까요? 폴더 안의 파일도 함께 이동됩니다.	Move the selected files and folders to the OneDrive recycle bin? Files inside folders will be moved too.	選択したファイルとフォルダーをOneDriveのごみ箱に移動しますか？フォルダー内のファイルも一緒に移動します。	将选中的文件和文件夹移至 OneDrive 回收站吗？文件夹中的文件也将一并移入。
+휴지통	Recycle bin	ごみ箱	回收站
+복원	Restore	復元	恢复
+완전히 삭제	Delete permanently	完全に削除	永久删除
+완전히 삭제하기	Delete permanently	完全に削除する	永久删除
+3일	3 days	3日	3 天
+5일	5 days	5日	5 天
+7일	7 days	7日	7 天
+15일	15 days	15日	15 天
+30일	30 days	30日	30 天
+자동 삭제 안 함	Never delete automatically	自動削除しない	不自动删除
+휴지통 자동 삭제 기간	Recycle bin retention	ごみ箱の自動削除期間	回收站保留时间
+내부 저장소 및 외장 저장소의 삭제 항목을 보관합니다.	Keep deleted items from internal and removable storage.	内部および外部ストレージの削除項目を保管します。	保留内部和外部存储中删除的项目。
+휴지통 비우기	Empty recycle bin	ごみ箱を空にする	清空回收站
+휴지통이 비어 있습니다.	The recycle bin is empty.	ごみ箱は空です。	回收站为空。
+휴지통을 확인하는 중...	Checking recycle bin...	ごみ箱を確認中...	正在检查回收站...
+미확인 용량	Unknown size	不明な容量	大小未知
+%d일 후 자동 삭제	Automatically delete after %d days	%d日後に自動削除	%d 天后自动删除
+저장소가 분리되었거나 접근 권한이 없습니다.	Storage is disconnected or inaccessible.	ストレージが取り外されているかアクセスできません。	存储设备已断开或无访问权限。
+원래 위치에 같은 이름이 있습니다. 먼저 이름을 변경해 주세요.	An item with the same name exists at the original location. Rename it first.	元の場所に同名の項目があります。先に名前を変更してください。	原位置存在同名项目，请先重命名。
+휴지통으로 이동할 수 없습니다. 원본을 확인해 주세요.	Unable to move to the recycle bin. Check the original file.	ごみ箱に移動できません。元のファイルを確認してください。	无法移入回收站，请检查原文件。
+%d개 항목을 원래 위치로 복원할까요?	Restore %d items to their original locations?	%d件を元の場所に復元しますか？	将 %d 个项目恢复到原位置？
+%d개 항목을 완전히 삭제할까요? 삭제 후에는 복원할 수 없습니다.	Permanently delete %d items? This cannot be undone.	%d件を完全に削除しますか？元に戻せません。	永久删除 %d 个项目？此操作无法撤销。
+일부 항목 처리 실패	Some items could not be processed	一部の項目を処理できませんでした	部分项目处理失败
+선택한 파일과 폴더를 휴지통으로 이동할까요?	Move the selected files and folders to the recycle bin?	選択したファイルとフォルダーをごみ箱に移動しますか？	将所选文件和文件夹移入回收站？
+완전히 삭제하면 복원할 수 없습니다.	Permanently deleted items cannot be restored.	完全に削除すると復元できません。	永久删除后无法恢复。
+휴지통으로 이동 중...	Moving to recycle bin...	ごみ箱に移動中...	正在移入回收站...
+%d개 항목을 휴지통으로 이동했습니다.	Moved %d items to the recycle bin.	%d件をごみ箱に移動しました。	已将 %d 个项目移入回收站。
+%d개 항목을 처리하지 못했습니다.	Could not process %d items.	%d件を処理できませんでした。	无法处理 %d 个项目。
+휴지통은 휴지통 화면에서 관리해 주세요.	Manage recycle bin items from the recycle bin screen.	ごみ箱の画面で管理してください。	请在回收站页面管理。
