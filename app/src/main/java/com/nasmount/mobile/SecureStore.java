@@ -123,7 +123,7 @@ final class SecureStore {
     /** Unsupported desktop-only clouds stay preserved but hidden on Android. */
     List<Models.RemoteProfile> supportedRemotes() throws Exception {
         List<Models.RemoteProfile> result = remotes();
-        result.removeIf(p -> "GoogleDrive".equals(p.protocol) ||
+        result.removeIf(p -> ("GoogleDrive".equals(p.protocol)&&!GoogleDriveAuth.linked(p)) ||
                 "OneDrive".equals(p.protocol));
         return result;
     }
@@ -142,7 +142,7 @@ final class SecureStore {
         List<Models.Favorite> result = favorites();
         Set<String> retiredIds = new HashSet<>();
         for (Models.RemoteProfile profile : remotes()) {
-            if ("GoogleDrive".equals(profile.protocol) ||
+            if (("GoogleDrive".equals(profile.protocol)&&!GoogleDriveAuth.linked(profile)) ||
                     "OneDrive".equals(profile.protocol))
                 retiredIds.add(profile.id);
         }
@@ -166,7 +166,7 @@ final class SecureStore {
     void putRemote(Models.RemoteProfile item) throws Exception {
         synchronized(SecureStore.class){
             List<Models.RemoteProfile> all=remotes();
-            if(!MonetizationPolicy.canSave(all,item.id,item.protocol,EditionMonetization.full(context)))
+            if(!MonetizationPolicy.canSave(supportedRemotes(),item.id,item.protocol,EditionMonetization.full(context)))
                 throw new IllegalStateException(L10n.t("무료 버전에서는 연결 종류별로 1개만 사용할 수 있습니다."));
             // Preserve ordering so editing the free slot never changes which
             // restored profile is accessible after a downgrade.
@@ -178,6 +178,7 @@ final class SecureStore {
     }
     void deleteRemote(String id) throws Exception {
         List<Models.RemoteProfile> all = remotes();
+        for(Models.RemoteProfile p:all)if(id.equals(p.id)&&GoogleDriveAuth.linked(p))GoogleDriveApi.forget(p);
         all.removeIf(x -> x.id.equals(id));
         writeRemotes(all);
         List<Models.Favorite> favorites = favorites();

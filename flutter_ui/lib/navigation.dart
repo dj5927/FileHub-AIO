@@ -185,7 +185,7 @@ class DrawerNavigation extends StatelessWidget {
             contentPadding:const EdgeInsets.only(left:28,right:12),
             leading:const Icon(Icons.folder_shared_outlined,size:20),
             title:Text(p.label,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:13)),
-            subtitle:Text(p.protocol,style:const TextStyle(fontSize:11)),
+            subtitle:Text(p.protocol=='GoogleDrive'?'Google Drive':p.protocol,style:const TextStyle(fontSize:11)),
             onTap:busy?null:()=>action(p.allowed?'open':'connections',p.allowed?p.id:null)),
         Padding(padding:const EdgeInsets.only(left:20),
           child:_link('connections',Icons.add_circle_outline,label:data.t('networkManage'))),

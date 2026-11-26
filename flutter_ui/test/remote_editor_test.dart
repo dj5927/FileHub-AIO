@@ -55,7 +55,7 @@ void main(){
       data:data(),labels:const {'editorAdd':'Add storage','networkHeading':'Network','cloudHeading':'Cloud','advanced':'Advanced','save':'Save'},
       host:host,onClose:()=>closed=true))));
     await tester.pumpAndSettle();
-    expect(find.byType(ProtocolIcon),findsNWidgets(6));
+    expect(find.byType(ProtocolIcon),findsNWidgets(7));
     await tester.tap(find.byKey(const ValueKey('choose-WebDAV')));await tester.pumpAndSettle();
     expect(key('host'),findsOneWidget);
     expect(tester.widget<TextField>(key('port')).controller!.text,'443');
@@ -126,6 +126,16 @@ void main(){
     await selectProtocol(tester,'MYBOX');
     expect(key('root'),findsNothing);expect(key('host'),findsNothing);expect(key('login'),findsNothing);
     await see(tester,key('secret'));expect(key('secret'),findsOneWidget);
+  });
+  testWidgets('Google Drive uses account authorization without password or host fields',(tester)async{
+    final host=FakeEditor();await mount(tester,host,data(protocol:'GoogleDrive'));
+    expect(key('host'),findsNothing);expect(key('username'),findsNothing);
+    expect(key('secret'),findsNothing);expect(key('name'),findsOneWidget);
+    await tester.enterText(key('name'),'My Google Drive');
+    await tester.tap(key('save'));await tester.pumpAndSettle();
+    expect(host.saved!['protocol'],'GoogleDrive');
+    expect(host.saved!['name'],'My Google Drive');
+    expect(host.saved!['secret'],anyOf(isNull,''));
   });
   testWidgets('native validation failure retains the form',(tester)async{
     final host=FakeEditor()..fail=true;await mount(tester,host,data());

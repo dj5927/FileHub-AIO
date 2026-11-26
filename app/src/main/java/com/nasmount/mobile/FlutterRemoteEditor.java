@@ -18,6 +18,7 @@ final class FlutterRemoteEditor {
     private Models.RemoteProfile baseline;
     private boolean initialized, busy;
     private String session;
+    private MethodChannel.Result googleResult;
     FlutterRemoteEditor(Activity activity,ExecutorService worker) {
         this(activity,worker,activity.getIntent().getStringExtra(FlutterUiContract.PROFILE_ID),null);
     }
@@ -73,6 +74,23 @@ final class FlutterRemoteEditor {
                 }
                 busy=true;
                 final Map<?,?> draft=new HashMap<>((Map<?,?>)call.arguments);
+                if(GoogleDriveAuth.PROTOCOL.equals(draft.get("protocol"))){
+                    if((baseline!=null&&!GoogleDriveAuth.linked(baseline))||
+                        !(draft.get("name") instanceof String)||((String)draft.get("name")).length()>512||
+                        !(draft.get("readOnly") instanceof Boolean)){
+                        busy=false;result.error("invalid",null,null);return true;
+                    }
+                    try{
+                        googleResult=result;
+                        activity.startActivityForResult(GoogleDriveConnectActivity.intent(activity,id,
+                            (String)draft.get("name"),(Boolean)draft.get("readOnly")),GoogleDriveConnectActivity.REQUEST);
+                    }catch(RuntimeException e){googleResult=null;busy=false;result.error("googleFailed",null,null);}
+                    finally{draft.clear();}
+                    return true;
+                }
+                if(baseline!=null&&GoogleDriveAuth.PROTOCOL.equals(baseline.protocol)){
+                    busy=false;draft.clear();result.error("invalid",null,null);return true;
+                }
                 final String capturedSession=session;
                 worker.execute(()->{
                     String error=null;
@@ -127,9 +145,23 @@ final class FlutterRemoteEditor {
             default:return false;
         }
     }
+    boolean googleActivityResult(int request,int code){
+        if(request!=GoogleDriveConnectActivity.REQUEST||googleResult==null)return false;
+        MethodChannel.Result result=googleResult;googleResult=null;busy=false;
+        if(alive()){
+            if(code==Activity.RESULT_OK){result.success(null);finish("saved");}
+            else result.error("googleCanceled",null,null);
+        }
+        return true;
+    }
     boolean isBusy(){return busy;}
-    void close(){closed=true;session=null;baseline=null;}
+    void close(){closed=true;session=null;baseline=null;googleResult=null;}
     static void labels(Map<String,String> m) {
+        m.put("googleConnect",L10n.t("Google 계정 연결"));
+        m.put("googleHint",L10n.t("휴대폰의 Google 계정을 선택하고 접근 권한을 허용하세요."));
+        m.put("googleReconnect",L10n.t("기존 Google 계정으로 다시 로그인합니다."));
+        m.put("err_googleCanceled",L10n.t("Google 계정 연결이 취소되었습니다."));
+        m.put("err_googleFailed",L10n.t("Google Drive 연결에 실패했습니다. 앱 인증 및 네트워크를 확인하세요."));
         m.put("editorAdd",L10n.t("원격 저장소 추가"));
         m.put("networkHeading",L10n.t("네트워크 폴더"));
         m.put("cloudHeading",L10n.t("클라우드 저장소"));

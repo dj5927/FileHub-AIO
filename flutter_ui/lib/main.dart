@@ -537,7 +537,7 @@ class _FileHubUiState extends State<FileHubUi> with WidgetsBindingObserver {
         key: ValueKey('profile-${p.id}'),
         leading: Icon(p.allowed ? Icons.dns_outlined : Icons.lock_outline),
         title: Text(p.label, maxLines: 2, overflow: TextOverflow.ellipsis),
-        subtitle: Text([p.protocol, if (p.readOnly) d.t('readOnly'),
+        subtitle: Text([p.protocol=='GoogleDrive'?'Google Drive':p.protocol, if (p.readOnly) d.t('readOnly'),
           if (!p.allowed) d.t('locked')].join(' · ')),
         enabled: !busy,
         onTap: () => _action(p.allowed ? 'open' : 'upgrade', p.id),

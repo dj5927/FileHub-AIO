@@ -9,8 +9,8 @@ abstract interface class RemoteEditorHost {
   Future<void> classicEditor();
 }
 
-const remoteProtocols=['SMB','FTP','SFTP','WebDAV','TeraBox','MYBOX'];
-const remotePorts=[445,21,22,443,0,0];
+const remoteProtocols=['SMB','FTP','SFTP','WebDAV','TeraBox','MYBOX','GoogleDrive'];
+const remotePorts=[445,21,22,443,0,0,0];
 
 class RemoteEditorScreen extends StatefulWidget {
   const RemoteEditorScreen({super.key,required this.data,required this.labels,
@@ -33,6 +33,8 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   bool busy=false,advanced=false,anonymous=false;
   bool get canAnonymous=>protocol=="SMB"||protocol=="FTP";
   String? error;
+  bool get google=>protocol=='GoogleDrive';
+  String protocolTitle(String value)=>value=='GoogleDrive'?'Google Drive':value;
   String t(String key)=>widget.labels[key]??key;
   bool get ordinary=>remoteProtocols.indexOf(protocol)<4;
   String get secretLabel=>t(protocol=='TeraBox'?'ndus':protocol=='MYBOX'?'pat':'password');
@@ -159,9 +161,16 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   List<Widget> fields(){
     final ftp=options('ftpOptions',['UTF-8']);
     final sftp=options('sftpOptions',['UTF-8']);
+    if(google){return [
+      field('name',name),
+      if(editing&&username.text.isNotEmpty)Text(username.text,maxLines:1,overflow:TextOverflow.ellipsis),
+      Padding(padding:const EdgeInsets.symmetric(vertical:12),child:Text(t(editing?'googleReconnect':'googleHint'),style:const TextStyle(fontSize:13))),
+      toggle('readOnly',readOnly,(v)=>setState(()=>readOnly=v)),
+    ];}
+    final available=editing?remoteProtocols.where((p)=>p!='GoogleDrive').toList():remoteProtocols;
     return [
       field('name',name),
-      if(!widget.compact||editing)select<String>('protocol',protocol,remoteProtocols,remoteProtocols,changeProtocol),
+      if(!widget.compact||editing)select<String>('protocol',protocol,available,available.map(protocolTitle).toList(),changeProtocol),
       if(ordinary)...[
         field('host',host,hint:t('hostHint'),endpoint:true),
         field('port',port,numeric:true,endpoint:true),
@@ -223,7 +232,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   @override
   Widget build(BuildContext context){
     if(widget.compact){return AlertDialog(
-      title:Row(children:[ProtocolIcon(protocol),const SizedBox(width:10),Expanded(child:Text(protocol,style:const TextStyle(fontSize:18,fontWeight:FontWeight.w600)))]),
+      title:Row(children:[ProtocolIcon(protocol),const SizedBox(width:10),Expanded(child:Text(protocolTitle(protocol),style:const TextStyle(fontSize:18,fontWeight:FontWeight.w600)))]),
       titlePadding:const EdgeInsets.fromLTRB(20,18,20,8),
       contentPadding:const EdgeInsets.fromLTRB(20,4,20,4),
       insetPadding:const EdgeInsets.symmetric(horizontal:20,vertical:16),
@@ -232,7 +241,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         if(busy)const LinearProgressIndicator(minHeight:2),errorLine(),...fields(),
       ]))),
       actions:[TextButton(onPressed:busy?null:widget.onCancel,child:Text(t('cancel'))),
-        TextButton(key:const ValueKey('editor-save'),onPressed:busy?null:save,child:Text(t('save')))],
+        TextButton(key:const ValueKey('editor-save'),onPressed:busy?null:save,child:Text(t(google?'googleConnect':'save')))],
     );}
     return PopScope(canPop:!busy,child:Scaffold(
       appBar:AppBar(title:Text(t(editing?'editorEdit':'editorAdd')),
@@ -247,7 +256,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         Padding(padding:const EdgeInsets.fromLTRB(16,8,16,12),child:Row(children:[
           Expanded(child:OutlinedButton(onPressed:busy?null:widget.onCancel,child:Text(t('cancel')))),
           const SizedBox(width:10),
-          Expanded(child:FilledButton(key:const ValueKey('editor-save'),onPressed:busy?null:save,child:Text(t('save')))),
+          Expanded(child:FilledButton(key:const ValueKey('editor-save'),onPressed:busy?null:save,child:Text(t(google?'googleConnect':'save')))),
         ])),
       ])),
     ));
@@ -264,6 +273,7 @@ class ProtocolIcon extends StatelessWidget {
       'FTP'=>(Icons.swap_horiz_rounded,const Color(0xffb58a42)),
       'SFTP'=>(Icons.lock_outline_rounded,const Color(0xff568b83)),
       'WebDAV'=>(Icons.language_rounded,const Color(0xff8174bc)),
+      'GoogleDrive'=>(Icons.change_history_rounded,const Color(0xff4285f4)),
       'MYBOX'=>(Icons.cloud_outlined,const Color(0xff219765)),
       'TeraBox'=>(Icons.cloud_queue_rounded,const Color(0xff4785c9)),
       _=>(Icons.storage_rounded,Theme.of(context).colorScheme.primary),
@@ -298,11 +308,11 @@ class _RemoteEditorOverlayState extends State<RemoteEditorOverlay>{
     return AlertDialog(title:Text(t('editorAdd'),style:const TextStyle(fontSize:18,fontWeight:FontWeight.w600)),insetPadding:const EdgeInsets.symmetric(horizontal:20,vertical:16),constraints:const BoxConstraints(maxWidth:420),
       contentPadding:const EdgeInsets.fromLTRB(16,6,16,4),
       content:SizedBox(width:360,child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
-        for(final group in [['SMB','FTP','SFTP','WebDAV'],['MYBOX','TeraBox']])...[
+        for(final group in [['SMB','FTP','SFTP','WebDAV'],['GoogleDrive','MYBOX','TeraBox']])...[
           Align(alignment:Alignment.centerLeft,child:Padding(padding:const EdgeInsets.only(left:8,top:6,bottom:2),
             child:Text(t(group.first=='SMB'?'networkHeading':'cloudHeading'),style:Theme.of(context).textTheme.labelMedium))),
           for(final protocol in group)ListTile(key:ValueKey('choose-$protocol'),dense:true,
-            minTileHeight:44,visualDensity:VisualDensity.compact,contentPadding:const EdgeInsets.symmetric(horizontal:8),leading:ProtocolIcon(protocol),title:Text(protocol,style:const TextStyle(fontSize:14)),onTap:()=>setState(()=>chosen=protocol)),
+            minTileHeight:44,visualDensity:VisualDensity.compact,contentPadding:const EdgeInsets.symmetric(horizontal:8),leading:ProtocolIcon(protocol),title:Text(protocol=='GoogleDrive'?'Google Drive':protocol,style:const TextStyle(fontSize:14)),onTap:()=>setState(()=>chosen=protocol)),
           if(group.first=='SMB')const Divider(),
         ],
       ]))),actions:[TextButton(onPressed:widget.onClose,child:Text(t('cancel')))]);

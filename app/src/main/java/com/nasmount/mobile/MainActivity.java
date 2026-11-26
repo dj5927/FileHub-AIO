@@ -6010,7 +6010,7 @@ public class MainActivity extends LocalizedActivity {
         currentScreen = "remotes";
         remote = null;
         render(L10n.t("원격 저장소"), true, "+", () -> remoteForm(null));
-        muted(L10n.t("NAS · TeraBox · 네이버 MYBOX 연결"));
+        muted(L10n.t("NAS · Google Drive · TeraBox · MYBOX"));
         try {
             List<Models.RemoteProfile> profiles = store.activeRemotes();
             if (profiles.isEmpty()) {
@@ -6744,6 +6744,28 @@ public class MainActivity extends LocalizedActivity {
         else openFlutterEditor(original==null?null:original.id,false);
     }
     private void nativeRemoteForm(Models.RemoteProfile original) {
+        if(original!=null&&GoogleDriveAuth.linked(original)){
+            nativeGoogleForm(original);return;
+        }
+        if(original==null){
+            new AlertDialog.Builder(this).setTitle(L10n.t("원격 저장소 추가"))
+                .setItems(new String[]{"Google Drive",L10n.t("기타 원격 저장소")},(d,w)->{
+                    if(w==0)nativeGoogleForm(null);else nativeTraditionalRemoteForm(null);
+                }).show();return;
+        }
+        nativeTraditionalRemoteForm(original);
+    }
+    private void nativeGoogleForm(Models.RemoteProfile original){
+        LinearLayout form=Ui.vertical(this);form.setPadding(dp(20),dp(8),dp(20),dp(8));
+        EditText name=field(form,"표시할 이름",original==null?"":original.name,android.text.InputType.TYPE_CLASS_TEXT);
+        CheckBox ro=new CheckBox(this);ro.setText(L10n.t("읽기 전용 (변경·삭제·업로드 차단)"));
+        ro.setChecked(original!=null&&original.readOnly);form.addView(ro,Ui.lp(this,-1,44));
+        form.addView(Ui.text(this,L10n.t(original==null?"휴대폰의 Google 계정을 선택하고 접근 권한을 허용하세요.":"기존 Google 계정으로 다시 로그인합니다."),13,Ui.MUTED,false));
+        new AlertDialog.Builder(this).setTitle("Google Drive").setView(form)
+            .setNegativeButton(L10n.t("취소"),null).setPositiveButton(L10n.t("Google 계정 연결"),(d,w)->
+                startActivityForResult(GoogleDriveConnectActivity.intent(this,original==null?null:original.id,name.getText().toString(),ro.isChecked()),GoogleDriveConnectActivity.REQUEST)).show();
+    }
+    private void nativeTraditionalRemoteForm(Models.RemoteProfile original) {
         String[] types = {"SMB", "FTP", "SFTP", "WebDAV",
                 "TeraBox", "MYBOX"};
         final int[] defaultPorts = {445, 21, 22, 443, 0, 0};
@@ -7046,10 +7068,6 @@ public class MainActivity extends LocalizedActivity {
         if(!EditionMonetization.full(this)){
             try{if(!store.remoteAllowed(profile.id)){EditionMonetization.showUpgrade(this);return;}}
             catch(Exception e){showError(safeError(e));return;}
-        }
-        if ("GoogleDrive".equals(profile.protocol)) {
-            showError(L10n.t("Android판에서는 Google Drive 연결을 지원하지 않습니다."));
-            return;
         }
         remote = profile;
         remoteFolder = RemoteProvider.relativePath(folder);
@@ -7476,6 +7494,11 @@ public class MainActivity extends LocalizedActivity {
     @android.annotation.SuppressLint("WrongConstant")
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if(requestCode==GoogleDriveConnectActivity.REQUEST){
+            if(embeddedRemoteEditor!=null&&embeddedRemoteEditor.googleActivityResult(requestCode,resultCode))return;
+            if(resultCode==RESULT_OK){folderCache.clearCounts();showRemoteList();}
+            return;
+        }
         if(SettingsContent.handlesResult(requestCode)){
             if(settingsContent!=null)settingsContent.onActivityResult(requestCode,resultCode,data);
             return;

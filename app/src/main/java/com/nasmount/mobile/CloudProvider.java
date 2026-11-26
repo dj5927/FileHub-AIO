@@ -30,8 +30,7 @@ import java.util.concurrent.TimeUnit;
  *
  * MYBOX: official personal-access-token REST API, read/write.
  * TeraBox: unofficial ndus session API for listing, reading and writes.
- * Google Drive: use Android's own SAF DocumentsProvider in MainActivity;
- * no embedded third-party OAuth client IDs or Google passwords.
+ * Google Drive: official Google authorization and Drive v3 via GoogleDriveApi.
  *
  * Never redirect bearer tokens/cookies to a server returned in API data.
  * Calls run on MainActivity's executor only, not the main thread.
@@ -84,7 +83,7 @@ final class CloudProvider {
             "terabox;1.37.0.7;PC;PC-Windows;10.0.22631;WindowsTeraBox";
 
     static boolean isCloud(Models.RemoteProfile p) {
-        return "MYBOX".equals(p.protocol) || "TeraBox".equals(p.protocol);
+        return "MYBOX".equals(p.protocol) || "TeraBox".equals(p.protocol) || GoogleDriveAuth.PROTOCOL.equals(p.protocol);
     }
     static boolean isReadOnly(Models.RemoteProfile p) {
         return false; // MYBOX and TeraBox both have write transports.

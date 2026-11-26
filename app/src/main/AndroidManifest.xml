@@ -40,6 +40,7 @@
             android:foregroundServiceType="dataSync"/>
         <activity android:name=".ImageViewerActivity" android:exported="false"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"/>
+        <activity android:name=".GoogleDriveConnectActivity" android:exported="false"/>
         <activity android:name=".QrScanActivity" android:exported="false"
             android:screenOrientation="unspecified"/>
         <!-- Comics handle live Fold width changes without downloading a huge

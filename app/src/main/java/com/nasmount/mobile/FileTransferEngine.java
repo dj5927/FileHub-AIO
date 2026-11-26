@@ -432,6 +432,8 @@ final class FileTransferEngine {
                     MediaIndexing.scanLocal(context, new File(destination.local, item.name));
                     if (meter != null && !item.directory) meter.directComplete(item.size);
                 } else {
+                    if(move&&"remote".equals(item.kind)&&GoogleDriveAuth.PROTOCOL.equals(item.remote.protocol))
+                        GoogleDriveApi.forProfile(item.remote).requireLosslessMove(item.path);
                     copyOne(context, item, destination, budget, 0, overwrite, meter, control);
                     if (control != null) control.check();
                     if (move) deleteOne(item, budget, 0);

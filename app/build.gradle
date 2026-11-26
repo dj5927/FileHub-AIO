@@ -205,8 +205,8 @@ android {
             dimension 'distribution'
             applicationId 'com.nasmount.mobile'
             targetSdk 35
-            versionCode 147
-            versionName '0.1.146'
+            versionCode 148
+            versionName '0.1.147'
             buildConfigField 'boolean', 'DIRECT_EDITION', 'true'
             buildConfigField 'String', 'DIRECT_OTA_KEY', groovy.json.JsonOutput.toJson(directOtaKey)
             buildConfigField 'boolean', 'R8_TRIAL', 'false'
@@ -218,8 +218,8 @@ android {
             dimension 'distribution'
             applicationId 'com.filehubaio.mobile'
             targetSdk 36
-            versionCode 30
-            versionName '1.0.29'
+            versionCode 31
+            versionName '1.0.30'
             buildConfigField 'boolean', 'DIRECT_EDITION', 'false'
             buildConfigField 'boolean', 'R8_TRIAL', 'false'
             buildConfigField 'String', 'PAIR_SCHEME', '"filehubaio-play"'
@@ -276,6 +276,7 @@ dependencies {
     debugImplementation 'com.filehubaio.filehub_flutter:flutter_debug:1.0'
     releaseImplementation 'com.filehubaio.filehub_flutter:flutter_release:1.0'
     // Official Maven Central ZXing; Dependabot can track the version.
+    implementation 'com.google.android.gms:play-services-auth:21.6.0'
     implementation 'com.google.zxing:core:3.5.4'
     def media3_version = '1.11.1'
     implementation "androidx.media3:media3-exoplayer:$media3_version"

@@ -69,6 +69,10 @@ public final class FlutterInterfaceActivity extends FlutterActivity {
         channel = null;
         super.cleanUpFlutterEngine(engine);
     }
+    @Override protected void onActivityResult(int request,int code,Intent data){
+        super.onActivityResult(request,code,data);
+        if(editor!=null)editor.googleActivityResult(request,code);
+    }
     @Override protected void onDestroy() {
         if(editor!=null)editor.close();
         worker.shutdownNow();

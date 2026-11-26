@@ -54,7 +54,7 @@ final class Models {
             return name.trim().isEmpty() ? protocol + " · " + host : name.trim();
         }
         String summary() {
-            return protocol + "  ·  " + host + (port > 0 ? ":" + port : "");
+            return "GoogleDrive".equals(protocol)?"Google Drive  ·  "+username:protocol + "  ·  " + host + (port > 0 ? ":" + port : "");
         }
     }
 

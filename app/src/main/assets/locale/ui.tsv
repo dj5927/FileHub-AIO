@@ -1151,3 +1151,18 @@ Google Play 구독 관리	Manage Google Play subscriptions	Google Playの定期�
 표시된 원화는 한국 출시 예정가입니다. 실제 상품 정보가 확인되면 구매할 수 있습니다.	KRW amounts shown are planned Korean prices. Purchasing is available when actual product details are confirmed.	表示の韓国ウォン価格は韓国での予定価格です。実際の商品情報の確認後に購入できます。	显示的韩元金额为韩国预计价格。确认实际商品信息后即可购买。
 결제 확인 대기중입니다. 확인 완료 후 풀버전이 열립니다.	Payment pending. Premium unlocks after confirmation.	決済確認待ちです。確認後にプレミアムが利用できます。	付款待确认，确认后解锁高级版。
 광고 제거 및 모든 기능 사용	Ad-free access to all features	広告なしですべての機能を利用	无广告使用所有功能
+Google 계정 연결	Connect Google account	Googleアカウントを接続	连接 Google 账号
+Google 계정 연결 중...	Connecting Google account...	Googleアカウント接続中...	正在连接 Google 账号...
+휴대폰의 Google 계정을 선택하고 접근 권한을 허용하세요.	Choose a Google account on your device and allow access.	端末のGoogleアカウントを選択し、アクセスを許可してください。	选择设备上的 Google 账号并授权访问。
+기존 Google 계정으로 다시 로그인합니다.	Reconnect the existing Google account.	既存のGoogleアカウントで再接続します。	重新连接现有 Google 账号。
+Google 계정 연결이 취소되었습니다.	Google account connection canceled.	Googleアカウント接続がキャンセルされました。	Google 账号连接已取消。
+Google Drive 연결에 실패했습니다. 앱 인증 및 네트워크를 확인하세요.	Google Drive connection failed. Check app authorization and network.	Google Drive接続に失敗しました。アプリ認証とネットワークを確認してください。	Google Drive 连接失败，请检查应用授权及网络。
+Google Play 서비스가 필요합니다.	Google Play services are required.	Google Play開発者サービスが必要です。	需要 Google Play 服务。
+Google 계정을 확인할 수 없습니다.	Could not verify the Google account.	Googleアカウントを確認できません。	无法验证 Google 账号。
+Google Drive 로그인이 필요합니다. 연결 설정에서 다시 로그인하세요.	Google Drive sign-in required. Reconnect in connection settings.	Google Driveへのログインが必要です。接続設定から再接続してください。	需要登录 Google Drive，请在连接设置中重新连接。
+이 Google 문서는 다운로드할 수 없습니다.	This Google document cannot be downloaded.	このGoogle文書はダウンロードできません。	无法下载此 Google 文档。
+Google 문서의 이름 변경 및 덮어쓰기는 지원하지 않습니다.	Renaming or overwriting native Google documents is not supported.	Googleネイティブ文書の名前変更と上書きは未対応です。	不支持重命名或覆盖 Google 原生文档。
+기타 원격 저장소	Other remote storage	その他のリモートストレージ	其他远程存储
+NAS · Google Drive · TeraBox · MYBOX	NAS · Google Drive · TeraBox · MYBOX	NAS · Google Drive · TeraBox · MYBOX	NAS · Google Drive · TeraBox · MYBOX
+API 요청	API request	APIリクエスト	API 请求
+Google 원본 문서는 다른 저장소로 이동할 수 없습니다. 복사만 가능합니다.	Native Google documents cannot be moved to another storage. Copy them instead.	Googleネイティブ文書は他のストレージに移動できません。コピーしてください。	Google 原生文档无法移动到其他存储，请使用复制。
