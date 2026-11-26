@@ -1,0 +1,74 @@
+name: Retire Android binary staging refs while preserving source
+on:
+  push:
+    branches: [maintenance/android-ota-retire-public]
+    paths: ['.github/workflows/retire-android-staging.yml']
+permissions:
+  contents: write
+jobs:
+  retire:
+    if: github.repository == 'dj5927/FileHub-AIO'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Preserve source snapshots and retire only Android staging refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, json, subprocess, re
+          repo=os.environ["GH_REPO"]
+          def api(path, method="GET", payload=None):
+              args=["gh","api","--method",method,"repos/"+repo+"/"+path]
+              if payload is not None:
+                  args+=["--input","-"]
+              r=subprocess.run(args,input=json.dumps(payload) if payload is not None else None,text=True,capture_output=True)
+              if r.returncode:
+                  raise RuntimeError(path+": "+r.stderr[:500])
+              return json.loads(r.stdout) if r.stdout.strip() else None
+          def commit(ref):
+              return api("commits/"+ref)
+          def tree(sha):
+              obj=api("git/trees/"+sha+"?recursive=1")
+              assert not obj.get("truncated")
+              return {x["path"]:(x["mode"],x["type"],x["sha"]) for x in obj["tree"] if x["type"]!="tree"}
+          def binary(path):
+              return path.startswith("release-assets/") or path.startswith(".github/release-handoffs/")
+          def clean(items):
+              return {p:v for p,v in items.items() if not binary(p)}
+          names=["v0.1."+str(i) for i in range(85,105)]+["android-v0.1.118-test"]
+          retired=0
+          preserved=0
+          for name in names:
+              ref="release-staging/"+name
+              staged=commit(ref)
+              tag="v0.1.118" if name=="android-v0.1.118-test" else name
+              source=commit(tag)
+              staged_tree=staged["commit"]["tree"]["sha"]
+              source_tree=source["commit"]["tree"]["sha"]
+              items=tree(staged_tree)
+              original=tree(source_tree)
+              assert any(binary(p) for p in items),ref
+              assert not any(binary(p) or p.lower().endswith((".apk",".aab")) for p in original),tag
+              kept=clean(items)
+              assert not any(p.lower().endswith((".apk",".aab")) for p in kept),ref
+              if kept!=original:
+                  # Save the complete source snapshot without binary directories,
+                  # using an existing clean source commit as parent.
+                  deletes=[{"path":p,"mode":v[0],"type":v[1],"sha":None} for p,v in items.items() if binary(p)]
+                  t=api("git/trees","POST",{"base_tree":staged_tree,"tree":deletes})["sha"]
+                  assert tree(t)==kept
+                  c=api("git/commits","POST",{"message":"Preserve source snapshot from "+ref,"tree":t,"parents":[source["sha"]]})["sha"]
+                  newref="refs/heads/archive/android-source/"+name
+                  api("git/refs","POST",{"ref":newref,"sha":c})
+                  assert tree(commit("archive/android-source/"+name)["commit"]["tree"]["sha"])==kept
+                  preserved+=1
+              else:
+                  print(ref,"source already retained at",tag,flush=True)
+              assert api("git/ref/heads/"+ref)["object"]["sha"]==staged["sha"]
+              api("git/refs/heads/"+ref,"DELETE")
+              retired+=1
+              print("Retired",ref,flush=True)
+          print("Retired",retired,"staging branches; additional source snapshots",preserved,flush=True)
+          PY
