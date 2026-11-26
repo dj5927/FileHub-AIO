@@ -24,7 +24,7 @@ public final class GoogleDriveConnectActivity extends LocalizedActivity {
     private static final int ACCOUNT=1,CONSENT=2;
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private String account="",id,name;
-    private boolean readOnly;
+    private boolean readOnly,renewalRequested,revoking,linking;
     private int waiting;
     static Intent intent(Activity a,String id,String name,boolean readOnly){
         return new Intent(a,GoogleDriveConnectActivity.class).putExtra("id",id)
@@ -45,7 +45,13 @@ public final class GoogleDriveConnectActivity extends LocalizedActivity {
         if(GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(this)!=ConnectionResult.SUCCESS){
             fail("Google Play 서비스가 필요합니다.");return;
         }
-        if(saved!=null){account=saved.getString("account","");waiting=saved.getInt("waiting");}
+        if(saved!=null){
+            account=saved.getString("account","");waiting=saved.getInt("waiting");
+            renewalRequested=saved.getBoolean("renewalRequested");
+            if(saved.getBoolean("revoking")||saved.getBoolean("linking")){
+                fail("Google 계정 연결이 중단되었습니다. 다시 시도하세요.");return;
+            }
+        }
         if(waiting!=0)return;
         if(!account.isEmpty()){authorize();return;}
         if(id!=null){
@@ -59,7 +65,10 @@ public final class GoogleDriveConnectActivity extends LocalizedActivity {
         }else choose();
     }
     @Override protected void onSaveInstanceState(Bundle state){
-        state.putString("account",account);state.putInt("waiting",waiting);super.onSaveInstanceState(state);
+        state.putString("account",account);state.putInt("waiting",waiting);
+        state.putBoolean("renewalRequested",renewalRequested);
+        state.putBoolean("revoking",revoking);state.putBoolean("linking",linking);
+        super.onSaveInstanceState(state);
     }
     private boolean alive(){return !isFinishing()&&!isDestroyed();}
     private void choose(){
@@ -79,13 +88,50 @@ public final class GoogleDriveConnectActivity extends LocalizedActivity {
     private void authorized(AuthorizationResult result){
         if(!alive())return;
         try{
-            if(result.hasResolution()){
-                waiting=CONSENT;
-                startIntentSenderForResult(result.getPendingIntent().getIntentSender(),CONSENT,null,0,0,0);
-                return;
+            switch(GoogleDriveConsentPolicy.action(result.hasResolution(),renewalRequested)){
+                case LAUNCH_GOOGLE_CONSENT:
+                    waiting=CONSENT;
+                    startIntentSenderForResult(result.getPendingIntent().getIntentSender(),CONSENT,null,0,0,0);
+                    return;
+                case RENEWAL_NOT_DISPLAYED:
+                    // Do not silently accept a cached token after the user explicitly asked for Google consent.
+                    fail("Google 승인 화면이 표시되지 않았습니다. Google 계정의 연결 관리에서 FileHub AIO 권한을 해제한 뒤 다시 시도하세요.");
+                    return;
+                default:
+                    offerExistingOrRenew(GoogleDriveAuth.granted(result));
             }
-            finishLink(GoogleDriveAuth.granted(result));
         }catch(Exception e){waiting=0;failAuth(e);}
+    }
+    private void offerExistingOrRenew(String token){
+        if(!alive())return;
+        new AlertDialog.Builder(this)
+            .setTitle(L10n.t("Google Drive 접근 권한"))
+            .setMessage(L10n.t("이미 승인된 Google 계정입니다. 기존 권한으로 연결하거나 Google의 공식 승인 화면에서 다시 승인할 수 있습니다. 다시 승인하면 기존 권한이 해제되므로 같은 Google Cloud 프로젝트의 PC판 등에서 재연결이 필요할 수 있습니다."))
+            .setPositiveButton(L10n.t("Google 권한 다시 승인"),(d,w)->renewConsent())
+            .setNegativeButton(L10n.t("기존 권한으로 연결"),(d,w)->finishLink(token))
+            .setNeutralButton(L10n.t("취소"),(d,w)->finish())
+            .setOnCancelListener(d->finish()).show();
+    }
+    private void renewConsent(){
+        if(!alive()||revoking||linking)return;
+        revoking=true;
+        worker.execute(()->{
+            try{
+                // Re-check edition entitlement before revoking a real account grant.
+                SecureStore store=new SecureStore(this);
+                if(!store.canSaveRemote(id,GoogleDriveAuth.PROTOCOL))
+                    throw new RemoteEditorPolicy.Invalid("limit");
+                GoogleDriveAuth.revokeDriveGrant(account);
+                runOnUiThread(()->{
+                    if(!alive())return;
+                    revoking=false;renewalRequested=true;authorize();
+                });
+            }catch(RemoteEditorPolicy.Invalid e){
+                runOnUiThread(()->{revoking=false;fail("무료 버전에서는 연결 종류별로 1개만 사용할 수 있습니다.");});
+            }catch(Exception e){
+                runOnUiThread(()->{revoking=false;fail("Google 권한 해제에 실패했습니다. Google 계정의 연결 관리에서 권한을 확인하세요.");});
+            }
+        });
     }
     @Override protected void onActivityResult(int req,int code,Intent data){
         super.onActivityResult(req,code,data);
@@ -107,6 +153,8 @@ public final class GoogleDriveConnectActivity extends LocalizedActivity {
         return null;
     }
     private void finishLink(String token){
+        if(!alive()||linking)return;
+        linking=true;
         worker.execute(()->{
             try{
                 GoogleDriveApi.Identity user=GoogleDriveApi.identity(token);

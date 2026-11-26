@@ -61,6 +61,23 @@ final class GoogleDriveAuth {
         catch(Exception e){throw required();}
     }
     static synchronized void forget(Models.RemoteProfile p){sessions.remove(key(p));}
+    // Revoke only the chosen Google account and the requested Drive scope.
+    // Never revoke on token refresh, app launch, or ordinary existing-account connection.
+    static void revokeDriveGrant(String account)throws Exception{
+        if(app==null||account==null||account.isEmpty())throw required();
+        forgetAccount(account);
+        try{
+            Tasks.await(Identity.getAuthorizationClient(app).revokeAccess(
+                RevokeAccessRequest.builder().setAccount(new Account(account,"com.google"))
+                    .setScopes(Collections.singletonList(new Scope(SCOPE))).build()),30,TimeUnit.SECONDS);
+        }finally{forgetAccount(account);}
+    }
+    private static synchronized void forgetAccount(String account){
+        sessions.keySet().removeIf(k->{
+            int split=k.indexOf('\n');
+            return split>=0&&k.substring(0,split).equalsIgnoreCase(account);
+        });
+    }
     static synchronized void invalidate(Models.RemoteProfile p,String rejected){
         Session session=sessions.get(key(p));
         if(session!=null&&session.token.equals(rejected))sessions.remove(key(p));

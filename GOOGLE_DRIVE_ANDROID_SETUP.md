@@ -54,3 +54,21 @@ https://developers.google.com/android/reference/com/google/android/gms/auth/api/
 https://developers.google.com/android/guides/client-auth
 https://developers.google.com/workspace/drive/api/guides/manage-uploads
 https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification
+
+
+## Official consent replay (Direct 0.1.149 / Play 1.0.32)
+On explicit add/reconnect, Google Play Services supplies the official authorization UI
+if consent is required. If the selected account already granted the requested scope,
+the app offers **Use existing access** or **Approve again with Google**. Only the
+second action revokes the selected account's Drive grant through the official
+AuthorizationClient.revokeAccess API, then requests authorization again. It can
+affect other clients using the same Google Cloud project. If Google does not return
+a consent resolution, the app reports failure rather than claiming consent was shown.
+Routine token renewal never revokes access and never opens this dialog.
+For an OAuth verification recording, prefer a fresh registered test account, or remove
+FileHub AIO access at https://myaccount.google.com/connections before reauthorization.
+Show Google's actual consent screen in English, the correct application identity,
+and actual scope usage on each applicable client. Do not substitute the app's
+own explanatory dialog for the Google consent screen. The exact layout is controlled
+by Google. Follow the review team's requirements for native Android clients.
+Physical device verification of the new revoke/re-consent flow is still required.
