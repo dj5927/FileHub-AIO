@@ -1,0 +1,63 @@
+name: Publish verified Android v0.1.118 manual test APK
+on:
+  push:
+    branches: [release-staging/android-v0.1.118-test]
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[ANDROID_V118_TEST_HANDOFF]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct the exact publisher-signed APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v zstd
+          curl -fL --retry 3 --connect-timeout 15 --max-time 180 https://github.com/dj5927/FileHub-AIO/releases/download/v0.1.117/FileHub-AIO-v0.1.117.apk -o base.apk
+          printf '%s\n' 'a705b7816caba5b55cd0f84f9832c907cbc025466737a1c53f5d5d78dee44d02  base.apk' | sha256sum -c
+          cat .github/release-handoffs/android118-test.part* > patch.zst
+          printf '%s\n' 'bb836ce520821b436463e82e73de9f1c9dfffe6979cb9cea04e90e42ad521229  patch.zst' | sha256sum -c
+          zstd -q -d --long=27 --patch-from=base.apk patch.zst -o FileHub-AIO-v0.1.118.apk
+          test "$(stat -c %s FileHub-AIO-v0.1.118.apk)" = 84064229
+          printf '%s\n' 'd4f454974ea6ef83048a75563bd8b9f13ad60aeae433ea823d2f4622f554ba66  FileHub-AIO-v0.1.118.apk' > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          unzip -tqq FileHub-AIO-v0.1.118.apk
+      - name: Publish manual test prerelease without changing OTA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/$GH_REPO/releases/latest --jq .tag_name)" = v0.1.117
+          if gh release view android-test-v0.1.118 >/dev/null 2>&1; then
+            echo 'Test release already exists; refusing overwrite'
+            exit 1
+          fi
+          cat > notes.txt <<'NOTES'
+          versionCode: 119
+
+          Manual regression-test build only. Not the latest OTA release.
+          Stable updates: rhwp 0.9.1, NextLib 1.11.1-0.19.0, AGP 9.5.2,
+          Gradle 9.9.2, Lifecycle 2.11.1 and Bouncy Castle 1.87.
+          All 586 executed JUnit tests passed (1 existing skip).
+          HWP/HWPX edit/export/reopen and all four Excel browser tests passed.
+          31 existing Excel/Word/PPT assets byte-identical; four CPU ABIs retained.
+          Existing publisher signing certificate verified locally.
+          Real Android hardware, NAS, video codecs and TV/Fold testing pending.
+          The existing v0.1.117 stable OTA is intentionally unchanged.
+          NOTES
+          gh release create android-test-v0.1.118 FileHub-AIO-v0.1.118.apk SHA256SUMS --target 32089ba161fb80c727b7fa1e27e09f257c5b8bfe --prerelease --latest=false --title 'FileHub AIO Android v0.1.118 - manual test' --notes-file notes.txt
+          gh release view android-test-v0.1.118 --json isPrerelease,assets,tagName,url > release.json
+          python3 - <<'PY'
+          import json
+          r=json.load(open('release.json'))
+          assert r['isPrerelease'] and r['tagName']=='android-test-v0.1.118'
+          a=next(a for a in r['assets'] if a['name']=='FileHub-AIO-v0.1.118.apk')
+          assert a['size']==84064229 and a['digest'].lower()=='sha256:d4f454974ea6ef83048a75563bd8b9f13ad60aeae433ea823d2f4622f554ba66'
+          print('ANDROID118_TEST_APK_VERIFIED')
+          PY
+          test "$(gh api repos/$GH_REPO/releases/latest --jq .tag_name)" = v0.1.117
