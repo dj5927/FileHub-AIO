@@ -228,7 +228,7 @@ void main() {
     final handle=find.byKey(const ValueKey('drawer-drag-f1'));
     final travel=tester.getCenter(handle).dy-tester.getCenter(find.byKey(const ValueKey('drawer-drag-f2'))).dy;
     final drag=await tester.startGesture(tester.getCenter(handle));
-    await tester.pump(const Duration(milliseconds:100));
+    await tester.pump(const Duration(milliseconds:650));
     for(var step=0;step<8;step++){
       await drag.moveBy(Offset(0,-(travel+25)/8));
       await tester.pump(const Duration(milliseconds:40));
@@ -243,6 +243,47 @@ void main() {
     expect(host.networkExpanded,isFalse);
     expect(find.byKey(const ValueKey('drawer-profile-a')),findsNothing);
     expect(find.byKey(const ValueKey('drawer-settings')),findsNothing);
+  });
+  testWidgets('both editions long press the handle, vibrate once and move without lifting',(tester)async{
+    tester.view.physicalSize=const Size(360,760);
+    tester.view.devicePixelRatio=1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final messenger=TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final haptics=<Object?>[];
+    messenger.setMockMethodCallHandler(SystemChannels.platform,(call)async{
+      if(call.method=='HapticFeedback.vibrate')haptics.add(call.arguments);
+      return null;
+    });
+    addTearDown(()=>messenger.setMockMethodCallHandler(SystemChannels.platform,null));
+    for(final direct in [true,false]){
+      final host=FakeHost('drawer',direct:direct,full:direct);
+      await tester.pumpWidget(FileHubUi(key:ValueKey(direct),host:host));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('drawer-close')),findsNothing);
+      expect(tester.getSize(find.byKey(const ValueKey('drawer-home'))).height,greaterThanOrEqualTo(50));
+      expect(find.byKey(const ValueKey('drawer-upgrade')),direct?findsNothing:findsOneWidget);
+      final handle=find.byKey(const ValueKey('drawer-drag-f1'));
+      final start=tester.getCenter(handle);
+      final end=tester.getCenter(find.byKey(const ValueKey('drawer-drag-f2')));
+      final before=haptics.length;
+      final gesture=await tester.startGesture(start);
+      await tester.pump(const Duration(milliseconds:650));
+      expect(haptics.length,before+1);
+      expect(find.text('Reorder'),findsNothing);
+      // Holding longer must not trigger a tooltip or require a second press.
+      await tester.pump(const Duration(milliseconds:900));
+      expect(haptics.length,before+1);
+      expect(find.text('Reorder'),findsNothing);
+      for(var step=0;step<8;step++){
+        await gesture.moveBy(Offset(0,(end.dy-start.dy+25)/8));
+        await tester.pump(const Duration(milliseconds:40));
+      }
+      await gesture.up();await tester.pumpAndSettle();
+      expect(host.favoriteIds,['f2','f1']);
+      expect(tester.getTopLeft(find.text('f2')).dy,lessThan(tester.getTopLeft(find.text('f1')).dy));
+      expect(host.lastAction,isNull);
+    }
   });
   testWidgets('premium footer is available only to free Play edition',(tester)async{
     for(final entry in [(false,false),(false,true),(true,true)]){

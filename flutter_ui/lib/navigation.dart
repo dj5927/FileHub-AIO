@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'compact_text.dart';
 import 'package:material_ui/material_ui.dart';
 import 'main.dart';
@@ -133,6 +134,13 @@ class DrawerNavigation extends StatelessWidget {
           SliverReorderableList(
             key:const ValueKey('drawer-favorite-order'),
             itemCount:data.favorites.length,
+            onReorderStart:(_)=>HapticFeedback.vibrate(),
+            proxyDecorator:(child,index,animation)=>AnimatedBuilder(
+              animation:animation,child:child,
+              builder:(context,dragged)=>Material(
+                elevation:6*animation.value,
+                color:Theme.of(context).colorScheme.surface,
+                child:dragged)),
             onReorderItem:(oldIndex,newIndex) {
               if (busy||oldIndex==newIndex) return;
               final ids=data.favorites.map((f)=>f.id).toList();
@@ -144,8 +152,8 @@ class DrawerNavigation extends StatelessWidget {
               return Material(key:ValueKey('drawer-favorite-${f.id}'),
                 color:Theme.of(context).colorScheme.surface,
                 child:Row(children:[
-                  ReorderableDragStartListener(index:index,enabled:!busy,
-                    child:Tooltip(message:data.t('reorder'),child:SizedBox(
+                  ReorderableDelayedDragStartListener(index:index,enabled:!busy,
+                    child:Semantics(label:data.t('reorder'),child:SizedBox(
                       key:ValueKey('drawer-drag-${f.id}'),width:54,height:48,
                       child:const Icon(Icons.drag_handle,size:22)))),
                   Expanded(child:ReorderableDelayedDragStartListener(index:index,enabled:!busy,
