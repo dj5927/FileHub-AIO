@@ -1,0 +1,29 @@
+name: Retire legacy Android binary releases
+on:
+  push:
+    branches: [maintenance/android-ota-retire-public]
+    paths: ['.github/workflows/retire-android-binaries.yml']
+permissions:
+  contents: write
+jobs:
+  retire:
+    if: github.repository == 'dj5927/FileHub-AIO'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove only inventoried Android releases; retain tags and PC releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ids=(456502191 456499664 455416725 455341532 455185535 455125560 454829876 454595788 454551467 454540485 454530595 454501860 453612053 453590654 453431698 452156412 452132001 452119294 449495176 447743620 447729242 447620051 446490979 446481322 446473908 446463383 446453640 446444909 446162507 446131661 446119641 445944517 445922654 445912885 445903267)
+          for id in "${ids[@]}"; do
+            release=$(gh api "repos/$GH_REPO/releases/$id")
+            tag=$(jq -r .tag_name <<<"$release")
+            [[ "$tag" =~ ^(android-test-)?v0\.1\.[0-9]+$ ]]
+            jq -e '(.assets | any(.name | test("^FileHub-AIO-v0\\.1\\.[0-9]+\\.apk$"))) and (.assets | all(.name | test("^(FileHub-AIO-v0\\.1\\.[0-9]+\\.apk|SHA256SUMS)$")))' <<<"$release" >/dev/null
+            gh api --method DELETE "repos/$GH_REPO/releases/$id"
+            echo "Retired $tag (source tag retained)"
+          done
+          gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | .tag_name'
