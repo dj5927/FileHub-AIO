@@ -1,5 +1,7 @@
-param([string]$Repo=(Split-Path -Parent $PSScriptRoot),[string]$ProxyRepo=$Repo,[int]$Port=19141,[int]$Latency=0,[switch]$NoPutEtag,[switch]$NoTempEtag,[switch]$NoDocumentEtag,[switch]$RejectUnversionedMove,[switch]$DenyFinalPut,[switch]$LargeWorkbook,[switch]$ExistingTarget,[switch]$SecondMount)
+﻿param([string]$Repo=(Split-Path -Parent $PSScriptRoot),[string]$ProxyRepo=$Repo,[int]$Port=19141,[int]$Latency=0,[switch]$NoPutEtag,[switch]$NoTempEtag,[switch]$NoDocumentEtag,[switch]$RejectUnversionedMove,[switch]$DenyFinalPut,[switch]$LargeWorkbook,[switch]$ExistingTarget,[switch]$SecondMount,[switch]$LegacyXls,[string]$SourceWorkbook)
 $ErrorActionPreference='Stop'
+$extension=if($LegacyXls){'.xls'}else{'.xlsx'}
+$format=if($LegacyXls){56}else{51}
 $root=Join-Path $env:TEMP ('filehub-office-new-save-'+[guid]::NewGuid().ToString('N').Substring(0,8))
 $server=Join-Path $root 'remote';$journals=Join-Path $root 'journals'
 foreach($p in @($root,$server,$journals)){[IO.Directory]::CreateDirectory($p)|Out-Null}
@@ -14,7 +16,7 @@ $drive=$letter+':\';$front=$Port+1;$b=$null;$p=$null;$m=$null;$m2=$null;$excel=$
 try {
  $b=Start-Process $rclone -PassThru -NoNewWindow -ArgumentList @('serve','webdav',$server,'--addr',"127.0.0.1:$Port",'--dir-cache-time','1s','--log-level','INFO','--log-file',(Join-Path $root 'backend.log'))
  $env:FILEHUB_STRICT_DAV_BACKEND="$Port";$env:FILEHUB_STRICT_DAV_FRONT="$front";$env:FILEHUB_STRICT_DAV_RESPONSE_LATENCY_MS="$Latency";$env:FILEHUB_STRICT_DAV_PER_PATH_LOCKS='1';$env:FILEHUB_STRICT_DAV_STRIP_OWNER_ETAGS='1';$env:FILEHUB_STRICT_DAV_STRIP_PUT_ETAG=if($NoPutEtag){'1'}else{'0'}
- $env:FILEHUB_STRICT_DAV_REJECT_NAMED_NEWFILE_PUT=if($DenyFinalPut){'Denied.xlsx'}else{''}
+ $env:FILEHUB_STRICT_DAV_REJECT_NAMED_NEWFILE_PUT=if($DenyFinalPut){('Denied'+$extension)}else{''}
  $env:FILEHUB_STRICT_DAV_STRIP_OFFICE_TEMP_ETAGS=if($NoTempEtag){'1'}else{'0'}
  $env:FILEHUB_STRICT_DAV_STRIP_OFFICE_DOCUMENT_ETAGS=if($NoDocumentEtag){'1'}else{'0'}
  $env:FILEHUB_STRICT_DAV_REJECT_UNVERSIONED_MOVE_IF_MATCH=if($RejectUnversionedMove){'1'}else{'0'}
@@ -32,7 +34,7 @@ try {
  [uint32]$excelPid=0;[void][LabExcelWindow]::GetWindowThreadProcessId([IntPtr]$excel.Hwnd,[ref]$excelPid)
  if(!$excelPid -or $excelPid -in $before){throw 'Excel reused a pre-existing user process; not touching it'}
  $ownedExcel=$true;$excel.Visible=$false;$excel.DisplayAlerts=$false
- $name=if($DenyFinalPut){'Denied.xlsx'}else{'NewDocument.xlsx'}
+ $name=if($DenyFinalPut){('Denied'+$extension)}else{('NewDocument'+$extension)}
  $target=Join-Path $drive $name;$remote=Join-Path $server $name
  $book=$excel.Workbooks.Add();$book.Worksheets.Item(1).Cells.Item(1,1).Value2='FILEHUB_NEW_SAVE_TEST'
  if($LargeWorkbook){
@@ -40,9 +42,9 @@ try {
    for($r=0;$r -lt $rows;$r++){for($c=0;$c -lt $cols;$c++){$values[$r,$c]=[guid]::NewGuid().ToString('N')}}
    $book.Worksheets.Item(1).Range('A10:J16009').Value2=$values
  }
- Write-Output 'SAVE_AS_START';$book.SaveAs($target,51)
+ Write-Output 'SAVE_AS_START';$book.SaveAs($target,$format)
  Write-Output ('SAVE_AS_RETURN saved='+$book.Saved+' remote='+[IO.File]::Exists($remote))
- if(!$book.Saved -or ![IO.File]::Exists($remote)){throw 'New SaveAs returned before confirmed remote file'}
+ if(!$book.Saved -or ![IO.File]::Exists($remote) -or (Get-Item $remote).Length -le 0){throw 'New SaveAs returned before confirmed remote file'}
  if($LargeWorkbook -and (Get-Item $remote).Length -lt 2MB){throw 'Large workbook did not exceed progressive threshold'}
  if($SecondMount){
    $used2=[Environment]::GetLogicalDrives()|ForEach-Object {$_.Substring(0,1).ToUpperInvariant()}
@@ -59,18 +61,18 @@ try {
    if(!$blocked){throw 'Foreign mount incorrectly acquired writable Excel handle'}
    Stop-Process -Id $m2.Id -Force;$m2=$null;Write-Output 'NO_ETAG_SECOND_MOUNT_EXCEL_OWNER_CONFLICT_PASS'
  }
- for($i=1;$i -le 5;$i++){$book.Worksheets.Item(1).Cells.Item(2,1).Value2=('SAVE_ROUND_'+$i);$book.Save();if(!$book.Saved){throw 'Save returned unsaved'};$owners=@(Get-ChildItem $server -File -Force|Where-Object Name -like '~$*');Write-Output ('REPEAT_SAVE='+$i+' owners='+$owners.Count);if($owners.Count -ne 1){throw 'owner missing'}}
+ for($i=1;$i -le 5;$i++){$book.Worksheets.Item(1).Cells.Item(2,1).Value2=('SAVE_ROUND_'+$i);$book.Save();if(!$book.Saved){throw 'Save returned unsaved'};$owners=@(Get-ChildItem $server -File -Force|Where-Object Name -like '~$*');Write-Output ('REPEAT_SAVE='+$i+' owners='+$owners.Count);if(!$LegacyXls -and $owners.Count -ne 1){throw 'owner missing'}}
  # SaveAs directly from the still-open NAS workbook. The former
  # local-source-only test did not exercise the user's failure path.
- $copyName='CopyOfOpenWorkbook.xlsx'
+ $copyName=('CopyOfOpenWorkbook'+$extension)
  $copyTarget=Join-Path $drive $copyName
  $copyRemote=Join-Path $server $copyName
  if($ExistingTarget){[IO.File]::WriteAllBytes($copyTarget,[byte[]]@());if(!(Test-Path $copyRemote)){throw 'Placeholder creation failed'}}
  $book.Worksheets.Item(1).Cells.Item(3,1).Value2='NAS_TO_NAS_SAVE_AS'
- $book.SaveAs($copyTarget,51)
- if(!$book.Saved -or !(Test-Path $copyRemote)){throw 'NAS to NAS SaveAs failed'}
+ $book.SaveAs($copyTarget,$format)
+ if(!$book.Saved -or !(Test-Path $copyRemote) -or (Get-Item $copyRemote).Length -le 0){throw 'NAS to NAS SaveAs failed'}
  $owners=@(Get-ChildItem $server -File -Force|Where-Object Name -like '~$*')
- if($owners.Count -ne 1 -or $owners[0].Name -notlike '*CopyOfOpenWorkbook*'){throw 'SaveAs target owner missing or source owner leaked'}
+ if(!$LegacyXls -and ($owners.Count -ne 1 -or $owners[0].Name -notlike '*CopyOfOpenWorkbook*')){throw 'SaveAs target owner missing or source owner leaked'}
  $book.Worksheets.Item(1).Cells.Item(4,1).Value2='SAVE_AFTER_SAVE_AS'
  $book.Save()
  $book.Close($false);$book=$null
@@ -85,16 +87,51 @@ try {
  $book.Close($false);$book=$null;Write-Output 'NAS_TO_NAS_SAVE_AS_REOPEN_AND_SAVE_PASS'
  $book=$excel.Workbooks.Open($remote,0,$true);if($book.Worksheets.Item(1).Cells.Item(2,1).Value2 -ne 'SAVE_ROUND_5' -or $book.Worksheets.Item(1).Cells.Item(3,1).Value2){throw 'Original workbook was changed by SaveAs'}
  $book.Close($false);$book=$null;Write-Output 'NEW_SAVE_AND_REPEAT_PASS'
- $local=Join-Path $root 'LocalSource.xlsx'
+ $local=Join-Path $root ('LocalSource'+$extension)
  $book=$excel.Workbooks.Add();$book.Worksheets.Item(1).Cells.Item(1,1).Value2='LOCAL_TO_NAS_SAVE_AS'
- $book.SaveAs($local,51)
- $name2=([char]0xC0C8)+([char]0xBB38)+([char]0xC11C)+'.xlsx'
- $book.SaveAs((Join-Path $drive $name2),51)
+ $book.SaveAs($local,$format)
+ $name2=([char]0xC0C8)+([char]0xBB38)+([char]0xC11C)+$extension
+ $book.SaveAs((Join-Path $drive $name2),$format)
  if(!$book.Saved -or !(Test-Path (Join-Path $server $name2))){throw 'Local to NAS SaveAs failed'}
  $book.Close($false);$book=$null
  $book=$excel.Workbooks.Open((Join-Path $server $name2),0,$true)
  if($book.Worksheets.Item(1).Cells.Item(1,1).Value2 -ne 'LOCAL_TO_NAS_SAVE_AS'){throw 'SaveAs content mismatch'}
  $book.Close($false);$book=$null;Write-Output 'LOCAL_TO_NAS_KOREAN_SAVE_AS_PASS'
+ if($LegacyXls){
+   Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class XlsReplaceLab { [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool MoveFileEx(string src,string dst,int flags); }'
+   $target2=Join-Path $drive 'ReplacePlaceholder.xls';$stage2=Join-Path $drive 'AABB1234'
+   [IO.File]::WriteAllBytes($target2,[byte[]]@())
+   $payload=[IO.File]::ReadAllBytes($remote)
+   [IO.File]::WriteAllBytes($stage2,$payload)
+   if(![XlsReplaceLab]::MoveFileEx($stage2,$target2,1)){throw ('Placeholder replace failed '+[Runtime.InteropServices.Marshal]::GetLastWin32Error())}
+   if((Get-FileHash (Join-Path $server 'ReplacePlaceholder.xls')).Hash -ne (Get-FileHash $remote).Hash -or (Test-Path (Join-Path $server 'AABB1234'))){throw 'Placeholder replacement hash/source cleanup mismatch'}
+   Write-Output 'XLS_ZERO_PLACEHOLDER_REPLACEMENT_PASS'
+   # Existing destination was changed by a separate writer after our snapshot.
+   $conflict=Join-Path $drive 'Conflict.xls';$conflictStage=Join-Path $drive 'AABB5678'
+   [IO.File]::WriteAllBytes($conflict,[byte[]]@())
+   [IO.File]::WriteAllBytes($conflictStage,$payload)
+   $changed=[Text.Encoding]::ASCII.GetBytes('foreign revision')
+   [IO.File]::WriteAllBytes((Join-Path $server 'Conflict.xls'),$changed)
+   if([XlsReplaceLab]::MoveFileEx($conflictStage,$conflict,1)){throw 'Foreign revision was overwritten'}
+   if([IO.File]::ReadAllText((Join-Path $server 'Conflict.xls')) -ne 'foreign revision'){throw 'Foreign content lost'}
+   Write-Output 'XLS_CHANGED_DESTINATION_PRESERVED_PASS'
+   if($SourceWorkbook){
+     # Use only an isolated local copy; never open the company NAS original for editing.
+     $clone=Join-Path $root 'ActualSample.xls'
+     Copy-Item -LiteralPath $SourceWorkbook -Destination $clone
+     $book=$excel.Workbooks.Open($clone,0,$false)
+     if($book.ReadOnly){throw 'Isolated sample read-only'}
+     $sampleName='1126_sample.xls';$sampleTarget=Join-Path $drive $sampleName
+     $book.SaveAs($sampleTarget,56)
+     if((Get-Item (Join-Path $server $sampleName)).Length -le 0){throw 'Sample SaveAs empty'}
+     $book.Save()
+     $book.Close($false);$book=$null
+     $book=$excel.Workbooks.Open((Join-Path $server $sampleName),0,$true)
+     $book.Close($false);$book=$null
+     Write-Output ('XLS_ACTUAL_SAMPLE_SAVE_AND_REOPEN_PASS bytes='+(Get-Item (Join-Path $server $sampleName)).Length)
+   }
+ }
+
 }finally{
  if($ownedExcel){if($book){try{$book.Close($false)}catch{}};try{$excel.Quit()}catch{}}
  foreach($c in @($book,$excel)){if($c){try{[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($c)}catch{}}}

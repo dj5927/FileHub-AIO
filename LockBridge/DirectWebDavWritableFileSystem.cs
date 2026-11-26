@@ -262,6 +262,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         _writes = store;
         _leases = leases;
         _writes.OwnsExcelWorkbook = HasVerifiedExcelOwner;
+        _writes.HasLegacyExcelSession = HasLegacyExcelSession;
     }
 
     private bool HasVerifiedExcelOwner(string workbook)
@@ -275,6 +276,25 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
                 return true;
         }
         return false;
+    }
+
+    // Excel 97-2003 does not always publish a ~$ file. A local writer
+    // session and a fresh foreign-owner check are required in addition to
+    // the store's exact remote preimage check. Do not synthesize owner files.
+    private bool HasLegacyExcelSession(string path)
+    {
+        if (!Path.GetExtension(path).Equals(".xls", StringComparison.OrdinalIgnoreCase))
+            return false;
+        string workbook = DirectWebDavReadOnlyBackend.Normalize(path);
+        lock (_excelOwnerGate)
+            if (!_localExcelEditors.ContainsKey(workbook)) return false;
+        try
+        {
+            ExcelOwnerInterop.RequireAvailable(_backend, workbook,
+                (owner, etag) => IsOurCurrentExcelOwner(owner, etag));
+            return true;
+        }
+        catch (IOException) { return false; }
     }
 
     public override int GetVolumeInfo(out VolumeInfo info)
@@ -1056,6 +1076,13 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         {
             if (writer.Deleted)
                 _writes.Discard(writer.Session);
+            else if (writer.LeaseKey is null &&
+                _writes.RetainSupersededLegacyClose(writer.Session))
+            {
+                // A late cache-manager Close belongs to a superseded
+                // revision. Its journal is retained; do not touch NAS.
+                _backend.Invalidate(writer.Entry.Path);
+            }
             else
                 _writes.Close(writer.Session, commit: true);
             _overlay.TryRemove(writer.Entry.Path, out _);
