@@ -172,7 +172,7 @@ final class FlutterNavigationSurface {
             case "snapshot":
                 if (FlutterUiContract.EXPLORER.equals(route)||FlutterUiContract.SHELF.equals(route)||FlutterUiContract.TRANSFER.equals(route)||
                         FlutterUiContract.FILE_PROMPT.equals(route)||FlutterUiContract.VIEWER.equals(route)||
-                        FlutterUiContract.PANEL.equals(route)) {
+                        FlutterUiContract.PANEL.equals(route)||FlutterUiContract.TRASH.equals(route)) {
                     try {result.success(withEpoch(host.snapshot(route),requestEpoch));}
                     catch(Exception failure){result.error("SNAPSHOT_FAILED",null,null);}
                     return;
@@ -239,7 +239,7 @@ final class FlutterNavigationSurface {
             default:
                 if(FlutterUiContract.EXPLORER.equals(route)||FlutterUiContract.SHELF.equals(route)||FlutterUiContract.FILE_PROMPT.equals(route)||
                         FlutterUiContract.VIEWER.equals(route)||FlutterUiContract.PANEL.equals(route)||
-                        FlutterUiContract.CONNECTIONS.equals(route))
+                        FlutterUiContract.CONNECTIONS.equals(route)||FlutterUiContract.TRASH.equals(route))
                     host.explorerCall(call,result);
                 else result.notImplemented();
         }

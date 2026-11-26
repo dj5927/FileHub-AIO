@@ -47,7 +47,7 @@ final class FakeHost implements FileHubHost {
         'features':'Extras','videoShelf':'Video shelf','comicShelf':'Comics','textShelf':'Books',
         'network':'Network','networkManage':'Manage connections','favorites':'Favorites',
         'premiumUpgrade':'Premium upgrade','favoriteEmpty':'No favorites','favoriteError':'Favorite error','settings':'Settings',
-        'home':'Home','nativeHome':'Classic home','nativeDrawer':'Classic menu',
+        'home':'Home','trash':'Recycle bin','nativeHome':'Classic home','nativeDrawer':'Classic menu',
         'available':'Free space','close':'Close','reorder':'Reorder',
       },
       'languages': ['System', 'Korean', 'English', 'Japanese', 'Chinese'],
@@ -303,6 +303,40 @@ void main() {
         expect(host.lastAction,'upgrade');
       }else{expect(premium,findsNothing);}
     }
+  });
+
+  testWidgets('trash is an icon-only fixed drawer footer in all editions and fits above ads',(tester)async{
+    tester.view.physicalSize=const Size(320,440);tester.view.devicePixelRatio=1;
+    addTearDown(tester.view.resetPhysicalSize);addTearDown(tester.view.resetDevicePixelRatio);
+    for(final entry in [(false,false),(false,true),(true,true)]){
+      final host=FakeHost('drawer',direct:entry.$1,full:entry.$2);
+      await tester.pumpWidget(FileHubUi(key:ValueKey(entry),host:host));
+      await tester.pumpAndSettle();
+      final trash=find.byKey(const ValueKey('drawer-trash'));
+      final footer=find.byKey(const ValueKey('drawer-footer'));
+      final scroll=find.byKey(const ValueKey('drawer-scroll'));
+      expect(trash,findsOneWidget);
+      expect(tester.widget<IconButton>(trash).tooltip,'Recycle bin');
+      expect(find.text('Recycle bin'),findsNothing);
+      expect(find.descendant(of:scroll,matching:trash),findsNothing);
+      final bounds=tester.getRect(trash);
+      expect(bounds.bottom,lessThanOrEqualTo(tester.getRect(footer).bottom));
+      expect(bounds.top,greaterThanOrEqualTo(tester.getRect(scroll).bottom));
+      expect(bounds.right,greaterThan(300));
+      final premium=find.byKey(const ValueKey('drawer-upgrade'));
+      if(!entry.$1&&!entry.$2){
+        expect(tester.getRect(premium).right,lessThanOrEqualTo(bounds.left));
+        expect(premium,findsOneWidget);
+      }else{expect(premium,findsNothing);}
+      await tester.drag(scroll,const Offset(0,-300));await tester.pumpAndSettle();
+      expect(tester.getRect(trash),bounds);
+      await tester.tap(trash);await tester.pumpAndSettle();
+      expect(host.lastAction,'trash');
+      expect(tester.takeException(),isNull);
+    }
+    await tester.pumpWidget(FileHubUi(host:FakeHost('home',direct:true,full:true)));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('home-trash')),findsNothing);
   });
   testWidgets('interface changes use host preferences and update selection',
       (tester) async {

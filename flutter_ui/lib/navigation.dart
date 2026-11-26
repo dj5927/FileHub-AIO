@@ -67,7 +67,6 @@ class HomeNavigation extends StatelessWidget {
           Wrap(spacing:10,runSpacing:10,children:[
             _tile('storage',Icons.storage_rounded,const Color(0xff0b8f83),width,subtitle:_capacity()),
             if (data.hasSd) _tile('sd',Icons.sd_storage_outlined,const Color(0xff6b8cbe),width),
-            _tile('trash',Icons.delete_outline,const Color(0xff00877c),width),
             _tile('downloads',Icons.download_rounded,const Color(0xff4989cf),width),
             _tile('images',Icons.photo_library_outlined,const Color(0xffa66bc4),width),
             _tile('audio',Icons.library_music_outlined,const Color(0xff159e90),width),
@@ -124,7 +123,6 @@ class DrawerNavigation extends StatelessWidget {
         leading:const Icon(Icons.home_outlined,size:24),
         title:Text(data.t('home'),style:const TextStyle(fontSize:15,fontWeight:FontWeight.w600)),
         onTap:busy?null:()=>action('home')),
-      _link('trash',Icons.delete_outline),
       const Divider(height:1),
       _section('favorites',Icons.star_border,'toggleFavorites',data.favoritesExpanded),
       ]),
@@ -195,12 +193,26 @@ class DrawerNavigation extends StatelessWidget {
       ],
       ]),
     ])),
-    if(!data.direct&&!data.full)
-      ListTile(key:const ValueKey('drawer-upgrade'),dense:true,minTileHeight:48,
-        visualDensity:VisualDensity.compact,
-        leading:const SizedBox(width:24,height:24,child:CustomPaint(painter:_CrownPainter())),
-        title:CompactText(data.t('premiumUpgrade'),style:const TextStyle(fontSize:13,fontWeight:FontWeight.w600)),
-        onTap:busy?null:()=>action('upgrade')),
+    // Fixed footer, not part of the scrolling network list. The host
+    // reserves banner/system-inset space outside the Flutter viewport.
+    const Divider(height:1),
+    Padding(padding:const EdgeInsetsDirectional.fromSTEB(6,3,8,3),
+      child:Row(key:const ValueKey('drawer-footer'),children:[
+        Expanded(child:!data.direct&&!data.full
+          ? InkWell(key:const ValueKey('drawer-upgrade'),borderRadius:BorderRadius.circular(12),
+              onTap:busy?null:()=>action('upgrade'),
+              child:ConstrainedBox(constraints:const BoxConstraints(minHeight:48),
+                child:Padding(padding:const EdgeInsets.symmetric(horizontal:6),child:Row(children:[
+                  const SizedBox(width:24,height:24,child:CustomPaint(painter:_CrownPainter())),
+                  const SizedBox(width:6),
+                  Expanded(child:Text(data.t('premiumUpgrade'),maxLines:2,overflow:TextOverflow.ellipsis,
+                    style:const TextStyle(fontSize:12,fontWeight:FontWeight.w600))),
+                ]))))
+          : const SizedBox.shrink()),
+        IconButton(key:const ValueKey('drawer-trash'),tooltip:data.t('trash'),
+          icon:const Icon(Icons.delete_outline_rounded,size:25),
+          onPressed:busy?null:()=>action('trash')),
+      ])),
   ]);
 }
 

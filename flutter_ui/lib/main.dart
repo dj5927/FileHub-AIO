@@ -7,6 +7,7 @@ import 'explorer.dart';
 import 'file_operations.dart';
 import 'viewer.dart';
 import 'native_panel.dart';
+import 'trash.dart';
 
 /// Stable UI-only bridge. Network passwords, tokens, file paths and bytes
 /// stay in the native engine. The host re-checks entitlement on every action.
@@ -18,7 +19,7 @@ abstract interface class FileHubHost {
   Future<void> reorderFavorites(List<String> ids);
 }
 
-final class AndroidHost implements FileHubHost, RemoteEditorHost, ExplorerHost, FilePromptHost, ViewerHost, NativePanelHost {
+final class AndroidHost implements FileHubHost, RemoteEditorHost, ExplorerHost, FilePromptHost, ViewerHost, NativePanelHost, TrashHost {
   static const channel = MethodChannel('com.filehubaio/ui.v1');
   int? epoch;
 
@@ -72,6 +73,9 @@ final class AndroidHost implements FileHubHost, RemoteEditorHost, ExplorerHost, 
   @override
   Future<void> panelCommand(String revision,String id,[int? value]) =>
       channel.invokeMethod<void>('panelCommand',{'revision':revision,'id':id,'value':value});
+  @override
+  Future<Map<Object?,Object?>> trashCommand(String revision,String command,List<String> ids)=>
+      _map('trashCommand',{'revision':revision,'command':command,'ids':ids});
 }
 
 final class EmbeddedEditorHost implements RemoteEditorHost {
@@ -135,7 +139,9 @@ final class HubSnapshot {
         viewer = data['viewer'] is Map
             ? Map<Object?,Object?>.from(data['viewer'] as Map) : const {},
         panel = data['panel'] is Map
-            ? Map<Object?,Object?>.from(data['panel'] as Map) : const {};
+            ? Map<Object?,Object?>.from(data['panel'] as Map) : const {},
+        trash = data['trash'] is Map
+            ? Map<Object?,Object?>.from(data['trash'] as Map) : const {};
 
   final String language, version, route;
   final int? surfaceEpoch;
@@ -149,7 +155,7 @@ final class HubSnapshot {
   final List<FavoriteSummary> favorites;
   final Map<String,Object?> editor;
   final Map<Object?,Object?> explorer;
-  final Map<Object?,Object?> transfer,prompt,viewer,panel;
+  final Map<Object?,Object?> transfer,prompt,viewer,panel,trash;
   String t(String key) => labels[key] ?? key;
 }
 
@@ -169,6 +175,7 @@ class FileHubUi extends StatefulWidget {
 }
 
 class _FileHubUiState extends State<FileHubUi> with WidgetsBindingObserver {
+  final navigatorKey=GlobalKey<NavigatorState>();
   HubSnapshot? model;
   HubSnapshot? drawerModel;
   Map<Object?,Object?>? editorOverlay;
@@ -195,7 +202,11 @@ class _FileHubUiState extends State<FileHubUi> with WidgetsBindingObserver {
     if (widget.host is AndroidHost) {
       AndroidHost.channel.setMethodCallHandler((call) async {
         if (!mounted) return;
-        if(call.method=='transferUpdate'&&call.arguments is Map){
+        if(call.method=='trashBack'&&model?.route=='trash'){
+          final navigator=navigatorKey.currentState;
+          if(navigator?.canPop()==true){navigator!.pop(false);}
+          else{await _action('trashClose');}
+        }else if(call.method=='transferUpdate'&&call.arguments is Map){
           setState(()=>liveTransfer=Map<Object?,Object?>.from(call.arguments as Map));
         }else if(call.method=='viewerUpdate'&&call.arguments is Map){
           final update=Map<Object?,Object?>.from(call.arguments as Map);
@@ -269,7 +280,7 @@ class _FileHubUiState extends State<FileHubUi> with WidgetsBindingObserver {
         if(updated.route=='viewer')liveViewer=null;
       });
       if (widget.host is AndroidHost && (updated.route == 'home' || updated.route == 'drawer' ||
-          updated.route == 'explorer'||updated.route=='shelf'||updated.route=='transfer'||updated.route=='filePrompt'||updated.route=='viewer'||updated.route=='panel'||updated.route=='connections'||updated.route=='favorites')) {
+          updated.route == 'explorer'||updated.route=='shelf'||updated.route=='transfer'||updated.route=='filePrompt'||updated.route=='viewer'||updated.route=='panel'||updated.route=='connections'||updated.route=='favorites'||updated.route=='trash')) {
         WidgetsBinding.instance.addPostFrameCallback((_) async {
           if (!mounted || model != updated) return;
           try {
@@ -350,6 +361,7 @@ class _FileHubUiState extends State<FileHubUi> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final data = model;
     return MaterialApp(
+      navigatorKey:navigatorKey,
       debugShowCheckedModeBanner: false,
       title: 'FileHub AIO',
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
@@ -384,6 +396,10 @@ class _FileHubUiState extends State<FileHubUi> with WidgetsBindingObserver {
         if((data.route=='panel'||data.route=='shelf')&&widget.host is NativePanelHost){
           return NativePanel(data:data.panel,labels:data.labels,
             host:widget.host as NativePanelHost,busy:busy,reload:reload);
+        }
+        if(data.route=='trash'&&widget.host is TrashHost){
+          return Material(color:Theme.of(context).scaffoldBackgroundColor,
+            child:TrashScreen(data:data.trash,labels:data.labels,host:widget.host as TrashHost));
         }
         if(data.route=='transfer'){
           return Material(color:Theme.of(context).colorScheme.surface,

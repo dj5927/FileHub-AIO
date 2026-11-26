@@ -23,10 +23,11 @@ final class FlutterUiContract {
     static final String PANEL = "panel";
     static final String SHELF = "shelf";
     static final String FAVORITES = "favorites";
+    static final String TRASH = "trash";
     private static final Set<String> GLOBAL_ACTIONS =
             actions("add", "backup", "upgrade", "nativeList");
     private static final Set<String> HOME_ACTIONS = actions(
-            "storage", "sd", "trash", "downloads", "images", "audio", "videos",
+            "storage", "sd", "downloads", "images", "audio", "videos",
             "videoShelf", "comicShelf", "textShelf", "connections", "upgrade");
     private static final Set<String> DRAWER_ACTIONS = actions(
             "home", "trash", "connections", "settings", "favorites", "close",
@@ -55,6 +56,7 @@ final class FlutterUiContract {
     }
     static boolean validNavigationAction(String route, String action, String id) {
         if (action == null) return false;
+        if(TRASH.equals(route))return "trashClose".equals(action)&&id==null;
         if(CONNECTIONS.equals(route))return validAction(route,action,id);
         if(FAVORITES.equals(route))return ("favorite".equals(action)||"favoriteManage".equals(action))
                 &&id!=null&&id.matches("[0-9a-f]{64}");

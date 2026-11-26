@@ -1220,3 +1220,4 @@ OneDrive 인증 결과를 받지 못했습니다. 브라우저 인증을 다시 
 %d개 항목을 휴지통으로 이동했습니다.	Moved %d items to the recycle bin.	%d件をごみ箱に移動しました。	已将 %d 个项目移入回收站。
 %d개 항목을 처리하지 못했습니다.	Could not process %d items.	%d件を処理できませんでした。	无法处理 %d 个项目。
 휴지통은 휴지통 화면에서 관리해 주세요.	Manage recycle bin items from the recycle bin screen.	ごみ箱の画面で管理してください。	请在回收站页面管理。
+%d개 항목 선택됨	%d items selected	%d件を選択中	已选择 %d 个项目

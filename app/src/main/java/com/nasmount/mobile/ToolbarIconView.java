@@ -24,6 +24,9 @@ final class ToolbarIconView extends View {
     static final String VIEW = "view";
     static final String MORE = "more";
     static final String CROWN = "crown";
+    static final String BACK = "back";
+    static final String TRASH = "trash";
+    static final String RESTORE = "restore";
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final String glyph;
     private boolean checked;
@@ -64,6 +67,22 @@ final class ToolbarIconView extends View {
         paint.setStrokeCap(Paint.Cap.ROUND);
         paint.setStrokeJoin(Paint.Join.ROUND);
         switch (glyph) {
+            case BACK:
+                canvas.drawLine(20,12,4,12,paint);
+                canvas.drawLine(4,12,11,5,paint);canvas.drawLine(4,12,11,19,paint);
+                break;
+            case RESTORE:
+                canvas.drawArc(new RectF(4,4,20,20),-130,300,false,paint);
+                canvas.drawLine(3,4,3,11,paint);canvas.drawLine(3,11,10,11,paint);
+                canvas.drawLine(12,7,12,12,paint);canvas.drawLine(12,12,16,14,paint);
+                break;
+            case TRASH:
+                canvas.drawLine(4,6,20,6,paint);
+                canvas.drawLine(9,3,15,3,paint);
+                Path bin=new Path();bin.moveTo(6,6);bin.lineTo(7,21);
+                bin.lineTo(17,21);bin.lineTo(18,6);canvas.drawPath(bin,paint);
+                canvas.drawLine(10,10,10,17,paint);canvas.drawLine(14,10,14,17,paint);
+                break;
             case MENU:
                 for (int y : new int[]{5, 12, 19})
                     canvas.drawLine(3.5f, y, 20.5f, y, paint);

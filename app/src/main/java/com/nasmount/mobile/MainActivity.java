@@ -2180,7 +2180,6 @@ public class MainActivity extends LocalizedActivity {
         mediaKind = null;
         render("FileHub AIO", false, "⋮", this::menu);
         heading(L10n.t("저장소"), 0);
-        row(page,L10n.t("휴지통"),"","trash",Ui.TEAL,this::openTrash,null);
         LinearLayout r1 = Ui.horizontal(this);
         page.addView(r1, Ui.lp(this, -1, expandedLayout() ? 195 : 158));
         boolean sdPresent = hasSd();
@@ -3567,7 +3566,10 @@ public class MainActivity extends LocalizedActivity {
         scroller.setFillViewport(true);
         FrameLayout drawerHost = new FrameLayout(this);
         drawerPanel = drawerHost;
-        drawerHost.addView(scroller,new FrameLayout.LayoutParams(-1,-1));
+        LinearLayout drawerContent=Ui.vertical(this);
+        drawerContent.setBackgroundColor(Ui.SURFACE);
+        drawerHost.addView(drawerContent,new FrameLayout.LayoutParams(-1,-1));
+        drawerContent.addView(scroller,new LinearLayout.LayoutParams(-1,0,1));
         scroller.setBackgroundColor(Ui.SURFACE);
         FrameLayout.LayoutParams drawerParams = new FrameLayout.LayoutParams(
                 dp(FoldPlayerLayoutPolicy.drawerWidthDp(
@@ -3597,7 +3599,6 @@ public class MainActivity extends LocalizedActivity {
         LinearLayout inside = Ui.vertical(this);
         scroller.addView(inside);
         drawerLink(inside, L10n.t("홈"), "drive", () -> showHome());
-        drawerLink(inside,L10n.t("휴지통"),"trash",this::openTrash);
 
         LinearLayout favoriteEntries = drawerSection(inside,
                 L10n.t("즐겨찾기"), "star", DrawerSectionState.FAVORITES);
@@ -3627,19 +3628,29 @@ public class MainActivity extends LocalizedActivity {
         drawerNestedLink(networkEntries, "연결 추가 · 관리", "settings",
                 this::openFlutterConnections);
 
+        View footerLine=new View(this);footerLine.setBackgroundColor(Ui.BORDER);
+        drawerContent.addView(footerLine,Ui.lp(this,-1,1));
+        LinearLayout footer=Ui.horizontal(this);
+        footer.setPadding(dp(6),dp(3),dp(8),dp(3));
+        drawerContent.addView(footer,Ui.lp(this,-1,-2));
         if(!BuildConfig.DIRECT_EDITION&&!EditionMonetization.full(this)){
-            inside.addView(new View(this), new LinearLayout.LayoutParams(-1,0,1));
             LinearLayout premium=Ui.horizontal(this);
-            premium.setPadding(dp(18),0,dp(12),0);
-            inside.addView(premium,Ui.lp(this,-1,48));
+            premium.setMinimumHeight(dp(48));
+            premium.setPadding(dp(6),0,dp(6),0);
+            footer.addView(premium,new LinearLayout.LayoutParams(0,-2,1));
             ToolbarIconView crown=new ToolbarIconView(this,ToolbarIconView.CROWN);
             crown.setTint(0xFFD8A34E);crown.setClickable(false);crown.setFocusable(false);
-            premium.addView(crown,Ui.lp(this,32,32));
-            TextView label=Ui.text(this,L10n.t("프리미엄 업그레이드"),13,Ui.TEXT,true);
-            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-1,1);lp.leftMargin=dp(12);
+            premium.addView(crown,Ui.lp(this,24,32));
+            TextView label=Ui.text(this,L10n.t("프리미엄 업그레이드"),12,Ui.TEXT,true);
+            label.setMaxLines(2);label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-2,1);lp.leftMargin=dp(6);
             premium.addView(label,lp);
             premium.setOnClickListener(v->{closeDrawer();EditionMonetization.showUpgrade(this);});
-        }
+        }else footer.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
+        ToolbarIconView trash=new ToolbarIconView(this,ToolbarIconView.TRASH);
+        trash.setTint(Ui.TEXT);trash.setContentDescription(L10n.t("휴지통"));
+        footer.addView(trash,Ui.lp(this,48,48));
+        trash.setOnClickListener(v->{closeDrawer();openTrash();});
         shade.animate().alpha(1f).setDuration(220).start();
         drawerHost.animate().translationX(0).setDuration(250)
                 .setInterpolator(new DecelerateInterpolator()).start();

@@ -22,7 +22,7 @@ final class LocalTrash {
     static final class Entry{
         String id,kind,volume,tree,relative,name;
         long removed,size;
-        boolean available;
+        boolean available,directory;
         JSONObject json()throws Exception{return new JSONObject().put("id",id).put("kind",kind).put("volume",volume)
             .put("tree",tree).put("relative",relative).put("name",name).put("removed",removed).put("size",size);}
         static Entry read(JSONObject o)throws Exception{
@@ -257,10 +257,10 @@ final class LocalTrash {
                 if("local".equals(e.kind)){
                     File f=new File(slot(c,e,false),e.name);
                     if(Files.isSymbolicLink(f.toPath())||!f.exists())throw unavailable();
-                    e.available=true;if(e.size<0)try{e.size=TrashFileOps.bytes(f);}catch(Exception ignored){}
+                    e.available=true;e.directory=f.isDirectory();if(e.size<0)try{e.size=TrashFileOps.bytes(f);}catch(Exception ignored){}
                 }else{
                     DocumentFile f=safSlot(c,e,false).findFile(e.name);if(f==null)throw unavailable();
-                    e.available=true;if(e.size<0)try{e.size=safBytes(f,new int[]{0});}catch(Exception ignored){}
+                    e.available=true;e.directory=f.isDirectory();if(e.size<0)try{e.size=safBytes(f,new int[]{0});}catch(Exception ignored){}
                 }
             }catch(Exception ignored){e.available=false;}
             out.add(e);
