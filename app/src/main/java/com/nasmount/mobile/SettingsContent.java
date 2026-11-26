@@ -202,14 +202,19 @@ final class SettingsContent extends android.content.ContextWrapper {
         EditionMonetization.settings(this);
         {
             action(L10n.t("최근 실행 오류 기록"),L10n.t("Android 종료 기록 및 앱 오류 정보"),()->{
-                String crash=StartupCrashNote.report(this);
-                new AlertDialog.Builder(activity).setTitle(L10n.t("최근 실행 오류 기록"))
-                        .setMessage(crash)
-                        .setPositiveButton(L10n.t("오류 기록 복사"),(d,w)->{
-                            android.content.ClipboardManager cb=(android.content.ClipboardManager)
+                new Thread(()->{
+                    String crash=StartupCrashNote.report(getApplicationContext());
+                    activity.runOnUiThread(()->{
+                        if(!active||activity.isFinishing()||activity.isDestroyed())return;
+                        new AlertDialog.Builder(activity).setTitle(L10n.t("최근 실행 오류 기록"))
+                            .setMessage(crash)
+                            .setPositiveButton(L10n.t("오류 기록 복사"),(d,w)->{
+                                android.content.ClipboardManager cb=(android.content.ClipboardManager)
                                     getSystemService(CLIPBOARD_SERVICE);
-                            if(cb!=null)cb.setPrimaryClip(android.content.ClipData.newPlainText("FileHub crash",crash));
-                        }).setNegativeButton(L10n.t("닫기"),null).show();
+                                if(cb!=null)cb.setPrimaryClip(android.content.ClipData.newPlainText("FileHub crash",crash));
+                            }).setNegativeButton(L10n.t("닫기"),null).show();
+                    });
+                },"filehub-crash-report").start();
             });
         }
         section(L10n.t("인터페이스"), L10n.t("FileHub AIO 파일관리자와 설정 화면의 밝기 및 색상 테마를 선택합니다."));

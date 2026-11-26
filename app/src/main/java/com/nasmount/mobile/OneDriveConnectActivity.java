@@ -14,11 +14,12 @@ import java.util.concurrent.ExecutorService;
 /** Browser OAuth, explicit verification and persistence before RESULT_OK. */
 public final class OneDriveConnectActivity extends LocalizedActivity {
     static final int REQUEST=7392;
-    private static final int AUTHORIZE=1;
+    static final String CALLBACK="com.nasmount.mobile.ONEDRIVE_CALLBACK";
+    static final String REFRESH="filehub.onedrive.refresh";
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
-    private AuthorizationService service;
     private String id,name;
     private boolean readOnly,waiting,exchanging;
+    private String pendingState;
     private volatile boolean terminal;
     private TextView status;
     private AlertDialog errorDialog;
@@ -35,72 +36,95 @@ public final class OneDriveConnectActivity extends LocalizedActivity {
         l.addView(title,Ui.lp(this,-1,52));l.addView(new ProgressBar(this),Ui.lp(this,40,40));
         status=Ui.text(this,L10n.t("Microsoft 계정 연결 중..."),14,Ui.MUTED,false);status.setGravity(Gravity.CENTER);
         l.addView(status,Ui.lp(this,-1,48));setContentView(l);
+        // Browser return can create this activity in a new process.
+        if(CALLBACK.equals(getIntent().getAction())){
+            acceptCallback(getIntent());return;
+        }
         if(saved==null)OneDriveDiagnostics.start(this);
         id=getIntent().getStringExtra("id");name=getIntent().getStringExtra("name");readOnly=getIntent().getBooleanExtra("readOnly",false);
         if(name==null||name.length()>512||name.indexOf(0)>=0){fail("OD02_INVALID_REQUEST",null);return;}
         if(!OneDriveAuth.configured()){fail("OD03_NOT_CONFIGURED",null);return;}
         waiting=saved!=null&&saved.getBoolean("waiting");
+        pendingState=saved==null?null:saved.getString("pendingState");
         if(saved!=null&&saved.getBoolean("exchanging")){fail("OD04_INTERRUPTED",null);return;}
-        try{service=new AuthorizationService(this);}
-        catch(RuntimeException|LinkageError e){fail("OD05_BROWSER_INIT",e);return;}
-        if(waiting)return;
-        if(id!=null)submit(()->{
-            try{Models.RemoteProfile p=find(new SecureStore(this),id);
-                if(p==null||!OneDriveAuth.linked(p))throw new IllegalStateException();
-                runOnUiThread(()->launch(p.username.contains("@")?p.username:""));
-            }catch(Exception e){runOnUiThread(()->fail("OD06_PROFILE",e));}
-        });
-        else launch("");
+        if(waiting){status.setText(L10n.t("브라우저에서 OneDrive 인증을 완료해 주세요."));return;}
+        submit(()->prepare());
     }
-    @Override protected void onSaveInstanceState(Bundle b){b.putBoolean("waiting",waiting);b.putBoolean("exchanging",exchanging);super.onSaveInstanceState(b);}
+    @Override protected void onSaveInstanceState(Bundle b){
+        b.putBoolean("waiting",waiting);b.putBoolean("exchanging",exchanging);
+        b.putString("pendingState",pendingState);super.onSaveInstanceState(b);
+    }
     private boolean alive(){return !terminal&&!isFinishing()&&!isDestroyed();}
-    private void launch(String hint){
-        if(!alive()||waiting||exchanging)return;
+    private void prepare(){
+        String stage="OD31_PREPARE";
         try{
-            waiting=true;OneDriveDiagnostics.mark(this,"OD07_BROWSER",null);
-            startActivityForResult(service.getAuthorizationRequestIntent(OneDriveAuth.request(this,hint)),AUTHORIZE);
-        }catch(RuntimeException|LinkageError e){waiting=false;fail("OD08_BROWSER_LAUNCH",e);}
-    }
-    @Override protected void onActivityResult(int req,int result,Intent data){
-        super.onActivityResult(req,result,data);
-        if(req!=AUTHORIZE||!alive()||exchanging)return;
-        waiting=false;
-        if(data==null||result!=RESULT_OK){
-            OneDriveDiagnostics.mark(this,"OD09_CANCELED",null);
-            terminal=true;finish();return;
-        }
-        try{
-            AuthorizationResponse response=AuthorizationResponse.fromIntent(data);
-            AuthorizationException error=AuthorizationException.fromIntent(data);
-            if(error!=null){fail("OD10_AUTHORIZATION",error);return;}
-            if(response==null||response.authorizationCode==null||
-               !BuildConfig.ONEDRIVE_CLIENT_ID.equals(response.request.clientId)||
-               !OneDriveAuth.redirect(this).equals(response.request.redirectUri)||
-               !OneDriveAuth.config().authorizationEndpoint.equals(response.request.configuration.authorizationEndpoint)||
-               !OneDriveAuth.config().tokenEndpoint.equals(response.request.configuration.tokenEndpoint)||
-               response.request.codeVerifier==null){fail("OD11_CALLBACK",null);return;}
-            exchanging=true;
-            OneDriveDiagnostics.mark(this,"OD12_CALLBACK_OK",null);
-            status.setText(L10n.t("OneDrive 인증을 확인하는 중..."));
-            AuthState state=new AuthState(response,null);
-            service.performTokenRequest(response.createTokenExchangeRequest(),(tokens,exception)->{
-                runOnUiThread(()->{
-                    if(!alive())return;
-                    try{
-                        if(tokens==null||exception!=null||tokens.accessToken==null||tokens.accessToken.isEmpty()){
-                            fail("OD13_TOKEN",exception);return;
-                        }
-                        if(tokens.refreshToken==null||tokens.refreshToken.isEmpty()){
-                            fail("OD14_REFRESH_TOKEN",null);return;
-                        }
-                        state.update(tokens,null);
-                        OneDriveDiagnostics.mark(this,"OD15_TOKEN_OK",null);
-                        status.setText(L10n.t("OneDrive 저장소를 확인하는 중..."));
-                        submit(()->finishLink(state,tokens.accessToken));
-                    }catch(RuntimeException|LinkageError e){fail("OD16_TOKEN_CALLBACK",e);}
-                });
+            String hint="";
+            if(id!=null){
+                Models.RemoteProfile p=find(new SecureStore(this),id);
+                if(p==null||!OneDriveAuth.linked(p))throw new IllegalStateException();
+                if(p.username.contains("@"))hint=p.username;
+            }
+            AuthorizationRequest request=OneDriveAuth.request(this,hint);
+            if(!alive())return;
+            OneDrivePending.save(this,new OneDrivePending(request,id,name,readOnly,System.currentTimeMillis()));
+            OneDriveDiagnostics.mark(this,"OD32_PENDING_SAVED",null);
+            runOnUiThread(()->{
+                if(!alive()){workerCleanup(request.state);return;}
+                pendingState=request.state;
+                try{
+                    waiting=true;
+                    status.setText(L10n.t("브라우저에서 OneDrive 인증을 완료해 주세요."));
+                    OneDriveDiagnostics.mark(this,"OD07_BROWSER",null);
+                    Intent browser=new Intent(Intent.ACTION_VIEW,request.toUri())
+                        .addCategory(Intent.CATEGORY_BROWSABLE)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    // No synchronous Custom Tabs service/session calls.
+                    startActivity(browser);
+                    OneDriveDiagnostics.mark(this,"OD33_BROWSER_OPENED",null);
+                }catch(RuntimeException|LinkageError e){
+                    workerCleanup(request.state);waiting=false;fail("OD08_BROWSER_LAUNCH",e);
+                }
             });
-        }catch(RuntimeException|LinkageError e){fail("OD17_EXCHANGE",e);}
+        }catch(Exception|LinkageError e){runOnUiThread(()->fail(stage,e));}
+    }
+    @Override protected void onNewIntent(Intent intent){
+        super.onNewIntent(intent);
+        if(intent!=null&&CALLBACK.equals(intent.getAction()))acceptCallback(intent);
+    }
+    private void acceptCallback(Intent intent){
+        if(!alive()||exchanging)return;
+        String raw=intent.getData()==null?null:intent.getData().toString();
+        intent.setData(null);
+        waiting=false;exchanging=true;
+        status.setText(L10n.t("OneDrive 인증을 확인하는 중..."));
+        OneDriveDiagnostics.mark(this,"OD36_CALLBACK_DISPATCH",null);
+        submit(()->{
+            String stage="OD11_CALLBACK";
+            try{
+                OneDriveCallbackPolicy.Result callback=OneDriveCallbackPolicy.parse(raw,OneDriveAuth.redirectForPackage(getPackageName()));
+                OneDrivePending pending=OneDrivePending.consume(this,callback);
+                id=pending.id;name=pending.name;readOnly=pending.readOnly;
+                OneDriveDiagnostics.mark(this,"OD12_CALLBACK_OK",null);
+                if(callback.denied){runOnUiThread(()->fail("OD10_AUTHORIZATION",null));return;}
+                AuthorizationResponse response=new AuthorizationResponse.Builder(pending.request)
+                    .setState(callback.state).setAuthorizationCode(callback.code).build();
+                stage="OD13_TOKEN";
+                TokenResponse tokens=OneDriveAuth.exchange(response.createTokenExchangeRequest());
+                if(tokens.refreshToken==null||tokens.refreshToken.isEmpty()){
+                    runOnUiThread(()->fail("OD14_REFRESH_TOKEN",null));return;
+                }
+                AuthState state=new AuthState(response,null);state.update(tokens,null);
+                OneDriveDiagnostics.mark(this,"OD15_TOKEN_OK",null);
+                runOnUiThread(()->{if(alive())status.setText(L10n.t("OneDrive 저장소를 확인하는 중..."));});
+                finishLink(state,tokens.accessToken);
+            }catch(Exception|LinkageError e){
+                final String failedStage=stage;
+                runOnUiThread(()->fail(failedStage,e));
+            }
+        });
+    }
+    private void workerCleanup(String state){
+        if(state!=null)try{worker.execute(()->OneDrivePending.cancel(this,state));}catch(RuntimeException ignored){}
     }
     private void submit(Runnable task){
         if(!alive())return;
@@ -134,7 +158,16 @@ public final class OneDriveConnectActivity extends LocalizedActivity {
             runOnUiThread(()->{
                 if(!alive())return;
                 terminal=true;OneDriveDiagnostics.mark(this,"OD24_RESULT_OK",null);
-                setResult(RESULT_OK);finish();
+                setResult(RESULT_OK);
+                if(getCallingActivity()==null){
+                    // Original caller may have been killed while the browser
+                    // was open. Make the durable profile visible in the app.
+                    try{
+                        startActivity(new Intent(this,MainActivity.class).putExtra(REFRESH,true)
+                            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP));
+                    }catch(RuntimeException e){OneDriveDiagnostics.mark(this,"OD30_LIST_REFRESH_FAILED",e);}
+                }
+                finish();
             });
         }catch(RemoteEditorPolicy.Invalid e){runOnUiThread(()->fail("OD25_LIMIT",e));}
         catch(Exception|LinkageError e){
@@ -156,12 +189,13 @@ public final class OneDriveConnectActivity extends LocalizedActivity {
     }
     @Override public void onBackPressed(){
         terminal=true;OneDriveDiagnostics.mark(this,"OD26_BACK",null);
+        String state=pendingState;
+        if(state!=null)new Thread(()->OneDrivePending.cancel(getApplicationContext(),state),"onedrive-cancel").start();
         setResult(RESULT_CANCELED);finish();
     }
     @Override protected void onDestroy(){
         terminal=true;worker.shutdownNow();
         if(errorDialog!=null)try{errorDialog.dismiss();}catch(RuntimeException ignored){}
-        if(service!=null)try{service.dispose();}catch(RuntimeException ignored){}
         super.onDestroy();
     }
 }

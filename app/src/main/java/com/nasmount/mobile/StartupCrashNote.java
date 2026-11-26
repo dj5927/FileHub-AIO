@@ -31,7 +31,6 @@ final class StartupCrashNote {
         return out.substring(0,Math.min(out.length(),LIMIT));
     }
     static void install(Context context){
-        if(BuildConfig.DIRECT_EDITION)return;
         final Context app=context;
         final Thread.UncaughtExceptionHandler previous=Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((thread,error)->{
@@ -62,6 +61,26 @@ final class StartupCrashNote {
             return new String(data,0,n,StandardCharsets.UTF_8);
         }catch(Exception ignored){return "";}
     }
+    // Android ANR traces may contain arbitrary application strings. Only
+    // retain bounded Java main-thread stack frames, never the raw trace.
+    static String mainFrames(java.io.InputStream stream)throws java.io.IOException{
+        if(stream==null)return "";
+        java.io.BufferedReader reader=new java.io.BufferedReader(new java.io.InputStreamReader(stream,StandardCharsets.UTF_8));
+        StringBuilder out=new StringBuilder();
+        boolean main=false;
+        for(int i=0;i<2500;i++){
+            String line=reader.readLine();if(line==null)break;
+            String t=line.trim();
+            if(t.startsWith("\"main\"")){main=true;continue;}
+            if(!main)continue;
+            if(t.startsWith("\""))break;
+            if(t.matches("at [a-zA-Z0-9_$.$]+\\([a-zA-Z0-9_$ .:-]{1,120}\\)")){
+                out.append("  ").append(t).append('\n');
+                if(out.length()>5000)break;
+            }
+        }
+        return out.toString();
+    }
     /** System-maintained exit history also covers early/native failures. */
     static String report(Context context){
         StringBuilder report=new StringBuilder("FileHub AIO v")
@@ -86,6 +105,12 @@ final class StartupCrashNote {
                             reason!=android.app.ApplicationExitInfo.REASON_SIGNALED)continue;
                     report.append("Android exit: ").append(new java.util.Date(exit.getTimestamp()))
                             .append(" reason=").append(reason).append(" status=").append(exit.getStatus()).append('\n');
+                    if(count==0&&reason==android.app.ApplicationExitInfo.REASON_ANR){
+                        try(java.io.InputStream trace=exit.getTraceInputStream()){
+                            String frames=mainFrames(trace);
+                            if(!frames.isEmpty())report.append("ANR main thread:\n").append(frames);
+                        }catch(Exception ignored){}
+                    }
                     if(++count>=5)break;
                 }
                 if(count==0)report.append("No crash/ANR/initialization exit in recent history.\n");

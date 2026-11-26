@@ -17,6 +17,7 @@ final class OneDriveDiagnostics {
         String type=e==null?"":e.getClass().getSimpleName();
         if(!type.matches("[A-Za-z0-9_$]{1,80}"))type="";
         int status=e instanceof CloudProvider.CloudFailure?((CloudProvider.CloudFailure)e).status:
+            e instanceof OneDriveAuth.TokenFailure?((OneDriveAuth.TokenFailure)e).status:
             e instanceof net.openid.appauth.AuthorizationException?((net.openid.appauth.AuthorizationException)e).code:-1;
         return stage+(type.isEmpty()?"":" "+type)+(status<0?"":" "+status);
     }

@@ -28,3 +28,20 @@ The settings page now shows sanitized recent runtime errors in both editions.
 OneDrive stage codes OD01–OD30 contain only stage, exception class and numeric status,
 not OAuth tokens, emails, response bodies or URLs. Actual device crash trace and
 live Microsoft login have not been reproduced on the build host.
+
+
+## v0.1.152 / Play v1.0.35 ANR and callback recovery
+Device SDK 37 report showed Android exit reason 4 (ANR), OD01_START and
+OD07_BROWSER only. AppAuth 0.11.1 browser service has a synchronous
+CountDownLatch wait and may make browser Binder calls. This is a plausible
+source of UI blocking, not proof of the exact device ANR stack.
+The browser binding/management activity is replaced by an ordinary HTTPS
+ACTION_VIEW and a narrowly scoped OneDriveRedirectActivity. AppAuth remains
+only for OAuth request/PKCE and token state models. The encrypted pending
+transaction persists the request and draft for 15 minutes; the callback
+validates exact URI and constant-time state, consumes it before exchange,
+and works if the original process was killed. Token exchange and refresh
+use bounded HTTPS worker requests with no redirect and no UI wait.
+Registered Microsoft redirect URIs, client ID and permissions are unchanged.
+Both editions collect only sanitized ANR main-thread Java frames, when Android
+provides them. Real SDK 37 Microsoft login still requires device testing.

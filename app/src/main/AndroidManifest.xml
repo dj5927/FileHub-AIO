@@ -41,11 +41,13 @@
         <activity android:name=".ImageViewerActivity" android:exported="false"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"/>
         <activity android:name=".GoogleDriveConnectActivity" android:exported="false"/>
-        <activity android:name=".OneDriveConnectActivity" android:exported="false"
+        <activity android:name=".OneDriveConnectActivity" android:exported="false" android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"/>
         <!-- Exact native callback registered in Microsoft Entra. -->
-        <activity android:name="net.openid.appauth.RedirectUriReceiverActivity"
-            android:exported="true" tools:node="replace">
+        <activity android:name="net.openid.appauth.RedirectUriReceiverActivity" tools:node="remove"/>
+        <activity android:name="net.openid.appauth.AuthorizationManagementActivity" tools:node="remove"/>
+        <activity android:name=".OneDriveRedirectActivity"
+            android:exported="true" android:noHistory="true" android:excludeFromRecents="true">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>

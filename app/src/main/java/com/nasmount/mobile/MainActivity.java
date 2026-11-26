@@ -359,6 +359,14 @@ public class MainActivity extends LocalizedActivity {
             otaUpdater.startupCheck();
         }
         handleTvPairIntent(getIntent());
+        handleOneDriveReturn(getIntent());
+    }
+
+    private void handleOneDriveReturn(Intent intent){
+        if(intent==null||!intent.getBooleanExtra(OneDriveConnectActivity.REFRESH,false))return;
+        intent.removeExtra(OneDriveConnectActivity.REFRESH);
+        if(embeddedRemoteEditor!=null)closeEmbeddedEditor(true);
+        folderCache.clearCounts();showRemoteList();
     }
 
     private void handleTvPairIntent(Intent intent) {
@@ -7843,6 +7851,7 @@ public class MainActivity extends LocalizedActivity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleTvPairIntent(intent);
+        handleOneDriveReturn(intent);
         if (intent != null && intent.getBooleanExtra(FileTransferService.EXTRA_SHOW, false)) {
             intent.removeExtra(FileTransferService.EXTRA_SHOW);
             showTransferDialog();
