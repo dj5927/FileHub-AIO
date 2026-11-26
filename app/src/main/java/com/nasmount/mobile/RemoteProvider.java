@@ -419,6 +419,8 @@ final class RemoteProvider {
     /** Immediate child count only: no per-file size, timestamps or symlink stats. */
     static int countChildren(Models.RemoteProfile p,String path,boolean hidden)throws Exception{
         String normalized=relativePath(path);
+        if(OneDriveAuth.PROTOCOL.equals(p.protocol))
+            return OneDriveApi.forProfile(p).countChildren(normalized,hidden);
         int count=0;
         if("SMB".equals(p.protocol)){
             try(SmbFile dir=new SmbFile(smbPath(p,normalized,true),smbContext(p))){

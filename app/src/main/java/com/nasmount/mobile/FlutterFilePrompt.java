@@ -29,6 +29,19 @@ final class FlutterFilePrompt implements FlutterNavigationSurface.Host {
         this.positive=positive;this.confirm=confirm;this.valid=valid;this.dismissed=dismissed;
     }
     void show(boolean resumed){
+        // Confirmations have no editable content. Android's native alert
+        // measures its title/message/buttons instead of sizing a full Flutter
+        // surface to the available window height. Long messages still scroll.
+        if(initial==null){
+            AlertDialog.Builder builder=new AlertDialog.Builder(activity).setTitle(title)
+                .setMessage(message).setPositiveButton(positive,null);
+            if(confirm!=null)builder.setNegativeButton(L10n.t("취소"),null);
+            dialog=builder.create();
+            dialog.setOnDismissListener(d->{consumed=true;dismissed.accept(this);});
+            dialog.show();
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->submit(""));
+            return;
+        }
         FrameLayout frame=new FrameLayout(activity);
         int height=Ui.dp(activity,initial!=null?275:315);
         frame.setMinimumHeight(height);

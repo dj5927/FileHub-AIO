@@ -14,6 +14,7 @@ final class OneDriveApi {
     private static final OkHttpClient HTTP=new OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .retryOnConnectionFailure(false).connectTimeout(15,TimeUnit.SECONDS).readTimeout(90,TimeUnit.SECONDS).writeTimeout(120,TimeUnit.SECONDS).build();
     private static final String FIELDS="id,name,size,folder,file,package,remoteItem,lastModifiedDateTime,eTag";
+    private static final int SMALL_NEW_UPLOAD=4*1024*1024;
     private static final int CHUNK=10*1024*1024; // multiple of 320 KiB
     interface Tokens {String token()throws Exception;void rejected(String token);}
     static final class Identity{
@@ -63,13 +64,24 @@ final class OneDriveApi {
     }
     private Response graph(Request.Builder b)throws Exception{
         Request req=b.build();if(!graphUrl(req.url()))throw new IOException("Invalid Graph API URL");
-        boolean read=req.method().equals("GET");
-        for(int i=0;i<(read?2:1);i++){
+        boolean read=req.method().equals("GET"),refreshed=false,retried=false;
+        for(;;){
+            if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();
             String t=tokens.token();Response r=http.newCall(req.newBuilder().header("Authorization","Bearer "+t).build()).execute();
-            if(r.code()==401){r.close();tokens.rejected(t);if(read&&i==0)continue;throw new CloudProvider.CloudFailure("OneDrive",L10n.t("API 요청"),401);}
-            if(!r.isSuccessful()){int c=r.code();r.close();throw new CloudProvider.CloudFailure("OneDrive",L10n.t("API 요청"),c);}return r;
+            int c=r.code();
+            if(c==401){r.close();tokens.rejected(t);if(read&&!refreshed){refreshed=true;continue;}throw new CloudProvider.CloudFailure("OneDrive",L10n.t("API 요청"),401);}
+            if(read&&!retried&&(c==429||c==503)){
+                long delay=retryDelayMillis(r.header("Retry-After"));
+                if(delay>=0){r.close();retried=true;Thread.sleep(delay);continue;}
+            }
+            if(!r.isSuccessful()){r.close();throw new CloudProvider.CloudFailure("OneDrive",L10n.t("API 요청"),c);}
+            return r;
         }
-        throw new CloudProvider.CloudFailure("OneDrive",L10n.t("API 요청"),401);
+    }
+    static long retryDelayMillis(String value){
+        if(value==null)return -1;
+        try{long seconds=Long.parseLong(value.trim());return seconds>=0&&seconds<=5?seconds*1000:-1;}
+        catch(NumberFormatException e){return -1;}
     }
     private static JSONObject parse(Response r)throws Exception{
         if(r.body()==null)throw new IOException("OneDrive response missing");
@@ -78,11 +90,12 @@ final class OneDriveApi {
     private JSONObject json(Request.Builder b)throws Exception{try(Response r=graph(b)){return parse(r);}}
     private static RequestBody body(JSONObject obj){return RequestBody.create(obj.toString(),JSON);}
     static final class Node{
-        final String id,name,etag;final boolean folder,unsupported;final long size,modified;
+        final String id,name,etag;final boolean folder,unsupported;final int childCount;final long size,modified;
         Node(JSONObject o)throws Exception{
             id=o.getString("id");name=o.getString("name");etag=o.optString("eTag","");
             if(id.isEmpty()||id.length()>1024)throw new IOException("OneDrive invalid item ID");
-            folder=o.optJSONObject("folder")!=null;
+            JSONObject facet=o.optJSONObject("folder");folder=facet!=null;
+            childCount=folder?Math.max(-1,facet.optInt("childCount",-1)):-1;
             unsupported=o.optJSONObject("remoteItem")!=null||o.optJSONObject("package")!=null;
             size=o.optLong("size",-1);long time=0;
             try{time=Instant.parse(o.optString("lastModifiedDateTime")).toEpochMilli();}catch(Exception ignored){}
@@ -93,46 +106,75 @@ final class OneDriveApi {
         try{return n.indexOf(0)<0&&RemoteProvider.child("/",n).equals("/"+n);}catch(IllegalArgumentException e){return false;}
     }
     private static String name(String path){String p=RemoteProvider.relativePath(path);if(p.equals("/"))throw new IllegalArgumentException("root");return p.substring(p.lastIndexOf('/')+1);}
-    private Node resolve(String path)throws Exception{
+    private HttpUrl.Builder pathItem(String path,boolean children){
         String normalized=RemoteProvider.relativePath(path);
         HttpUrl.Builder u=drive();
         if(normalized.equals("/"))u.addPathSegment("root");
         else{
             u.addPathSegment("root:");
-            for(String part:normalized.substring(1).split("/"))u.addPathSegment(part);
+            String[] parts=normalized.substring(1).split("/");
+            for(int i=0;i<parts.length;i++)u.addPathSegment(parts[i]+(children&&i==parts.length-1?":":""));
         }
-        Node n=new Node(json(new Request.Builder().url(u.addQueryParameter("$select",FIELDS).build()).get()));
+        if(children)u.addPathSegment("children");
+        return u;
+    }
+    private JSONObject resolveMetadata(String path,String fields)throws Exception{
+        return json(new Request.Builder().url(pathItem(path,false).addQueryParameter("$select",fields).build()).get());
+    }
+    private Node checkedNode(JSONObject metadata)throws Exception{
+        Node n=new Node(metadata);
         if(n.unsupported)throw new IOException(L10n.t("OneDrive 바로가기 및 패키지는 지원하지 않습니다."));
         return n;
     }
+    private Node resolve(String path)throws Exception{return checkedNode(resolveMetadata(path,FIELDS));}
     private Node folder(String path)throws Exception{Node n=resolve(path);if(!n.folder)throw new IOException("OneDrive parent is not a folder");return n;}
-    private List<Node> children(String parent)throws Exception{
-        List<Node> out=new ArrayList<>();Set<String> seen=new HashSet<>();
-        HttpUrl u=item(parent).addPathSegment("children").addQueryParameter("$select",FIELDS).addQueryParameter("$top","200").build();
+    interface ChildConsumer{void accept(JSONObject item)throws Exception;}
+    private void walkChildren(HttpUrl u,ChildConsumer consume)throws Exception{
+        Set<String> seen=new HashSet<>();
         for(int page=0;page<1000;page++){
             if(!graphUrl(u)||!seen.add(u.toString()))throw new IOException("OneDrive invalid pagination");
             JSONObject data=json(new Request.Builder().url(u).get());
-            JSONArray items=data.getJSONArray("value");for(int i=0;i<items.length();i++)out.add(new Node(items.getJSONObject(i)));
+            JSONArray items=data.getJSONArray("value");
+            for(int i=0;i<items.length();i++)consume.accept(items.getJSONObject(i));
             String next=data.optString("@odata.nextLink","");
-            if(next.isEmpty()||"null".equals(next))return out;
+            if(next.isEmpty()||"null".equals(next))return;
             u=HttpUrl.parse(next);if(u==null)throw new IOException("OneDrive invalid pagination");
         }
         throw new IOException("OneDrive listing page limit exceeded");
     }
+    private HttpUrl listingUrl(String path,String fields){
+        return pathItem(path,true).addQueryParameter("$select",fields).addQueryParameter("$top","200").build();
+    }
+    // Look up only the destination, rather than scanning every page in its parent.
     private Node destination(String parent,String name)throws Exception{
-        Node result=null;
-        for(Node n:children(parent))if(n.name.equalsIgnoreCase(name)){
-            if(result!=null)throw new FileTransferEngine.NameConflict();result=n;
-        }
-        return result;
+        HttpUrl u=item(parent+":").addPathSegment(name).addQueryParameter("$select",FIELDS).build();
+        try{
+            Node n=new Node(json(new Request.Builder().url(u).get()));
+            if(!n.name.equalsIgnoreCase(name))throw new IOException("OneDrive destination name mismatch");
+            return n;
+        }catch(CloudProvider.CloudFailure e){if(e.status==404)return null;throw e;}
+    }
+    int countChildren(String path,boolean hidden)throws Exception{
+        int[] count={0};
+        walkChildren(listingUrl(path,"name"),o->{String n=o.getString("name");
+            if(!validName(n))throw new IOException("OneDrive item name cannot be represented safely");
+            if(FileViewOptions.visible(n,false,hidden))count[0]++;
+        });
+        return count[0];
     }
     List<Models.Entry> list(String path)throws Exception{
         ArrayList<Models.Entry> out=new ArrayList<>();
-        for(Node n:children(folder(path).id)){
+        // Direct path-addressed children are supported by Graph; no parent
+        // metadata round trip. Every mutation still resolves fresh metadata
+        // and rejects shortcut/package targets before it changes anything.
+        walkChildren(listingUrl(path,FIELDS),o->{
+            Node n=new Node(o);
             if(!validName(n.name))throw new IOException("OneDrive item name cannot be represented safely");
             Models.Entry e=new Models.Entry(n.name,RemoteProvider.child(path,n.name),n.folder);
-            e.remoteId=n.id;e.size=n.folder?0:n.size;e.modified=n.modified;out.add(e);
-        }
+            e.remoteId=n.id;e.size=n.folder?0:n.size;e.modified=n.modified;
+            e.serverChildCount=n.unsupported?-1:n.childCount;
+            out.add(e);
+        });
         out.sort((a,b)->a.directory!=b.directory?(a.directory?-1:1):a.name.compareToIgnoreCase(b.name));return out;
     }
     private Response data(Request request,boolean allowRedirect)throws Exception{
@@ -151,9 +193,8 @@ final class OneDriveApi {
     }
     InputStream open(String path,long position)throws Exception{
         if(position<0)throw new IOException("Invalid range");
-        Node n=resolve(path);if(n.folder)throw new IOException("OneDrive folder");
-        JSONObject meta=json(new Request.Builder().url(item(n.id).addQueryParameter("$select","id,@microsoft.graph.downloadUrl").build()).get());
-        if(!n.id.equals(meta.optString("id")))throw new IOException("OneDrive file identity changed");
+        JSONObject meta=resolveMetadata(path,FIELDS+",@microsoft.graph.downloadUrl");
+        Node n=checkedNode(meta);if(n.folder)throw new IOException("OneDrive folder");
         HttpUrl u=HttpUrl.parse(meta.optString("@microsoft.graph.downloadUrl",""));
         if(!dataUrl(u))throw new IOException("Invalid OneDrive download URL");
         Request.Builder request=new Request.Builder().url(u);
@@ -176,9 +217,10 @@ final class OneDriveApi {
     }
     void mkdir(String path)throws Exception{
         String label=name(path);Node p=folder(RemoteProvider.parent(path));
-        if(destination(p.id,label)!=null)throw new FileTransferEngine.NameConflict();
         JSONObject metadata=new JSONObject().put("name",label).put("folder",new JSONObject()).put("@microsoft.graph.conflictBehavior","fail");
-        JSONObject done=json(new Request.Builder().url(item(p.id).addPathSegment("children").build()).post(body(metadata)));
+        JSONObject done;
+        try{done=json(new Request.Builder().url(item(p.id).addPathSegment("children").build()).post(body(metadata)));}
+        catch(CloudProvider.CloudFailure e){if(e.status==409)throw new FileTransferEngine.NameConflict();throw e;}
         if(done.optString("id").isEmpty()||!label.equals(done.optString("name"))||done.optJSONObject("folder")==null)throw new IOException("OneDrive folder creation unverified");
     }
     void rename(String source,String target)throws Exception{
@@ -210,13 +252,17 @@ final class OneDriveApi {
         }
         Node p=folder(folder),old=destination(p.id,name);
         if(old!=null&&(!overwrite||old.folder||old.unsupported))throw new FileTransferEngine.NameConflict();
-        if(size==0){
+        if(size==0||old==null&&size<=SMALL_NEW_UPLOAD){
+            byte[] payload=new byte[(int)size];int got=0;
+            while(got<payload.length){int n=in.read(payload,got,payload.length-got);if(n<0)throw new IOException("OneDrive upload length mismatch");if(n>0)got+=n;}
             if(in.read()!=-1)throw new IOException("OneDrive upload length mismatch");
             HttpUrl.Builder u=old==null?item(p.id+":").addPathSegment(name+":"):item(old.id);
             u.addPathSegment("content").addQueryParameter("@microsoft.graph.conflictBehavior",old==null?"fail":"replace");
-            Request.Builder b=new Request.Builder().url(u.build()).put(RequestBody.create(new byte[0],BIN));
+            Request.Builder b=new Request.Builder().url(u.build()).put(RequestBody.create(payload,BIN));
             if(old!=null)etag(b,old);else b.header("If-None-Match","*");
-            verifyUpload(json(b),old,name,0);return;
+            try{verifyUpload(json(b),old,name,size);}
+            catch(CloudProvider.CloudFailure e){if(old==null&&(e.status==409||e.status==412))throw new FileTransferEngine.NameConflict();throw e;}
+            return;
         }
         HttpUrl.Builder u=old==null?item(p.id+":").addPathSegment(name+":"):item(old.id);
         u.addPathSegment("createUploadSession");

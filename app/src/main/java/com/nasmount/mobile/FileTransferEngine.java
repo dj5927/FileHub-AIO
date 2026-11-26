@@ -436,7 +436,7 @@ final class FileTransferEngine {
                         GoogleDriveApi.forProfile(item.remote).requireLosslessMove(item.path);
                     copyOne(context, item, destination, budget, 0, overwrite, meter, control);
                     if (control != null) control.check();
-                    if (move) deleteOne(item, budget, 0);
+                    if (move) deleteOne(item, budget, 0, false);
                 }
                 success++;
                 if (meter != null) meter.completedItem();
@@ -477,7 +477,7 @@ final class FileTransferEngine {
             try {
                 if (!item.writable())
                     throw new IOException("읽기 전용 파일은 삭제할 수 없습니다: " + item.name);
-                deleteOne(item, budget, 0);
+                deleteOne(item, budget, 0, true);
                 success++;
             } catch (Exception failure) {
                 throw new BatchFailure(success, sources.size(), true, failure);
@@ -706,21 +706,22 @@ final class FileTransferEngine {
         to.flush();
     }
 
-    private static void deleteOne(Item item, int[] budget, int depth)
+    private static void deleteOne(Item item, int[] budget, int depth, boolean explicitDelete)
             throws Exception {
         visit(budget, depth);
         if (!item.writable()) throw new IOException(L10n.t("읽기 전용 파일은 삭제할 수 없습니다."));
         if (SftpLinkPolicy.shouldDescendForDelete(item.directory, item.symbolicLink) &&
                 item.remote != null &&
                 !"MYBOX".equals(item.remote.protocol) &&
-                !"TeraBox".equals(item.remote.protocol))
+                !"TeraBox".equals(item.remote.protocol) &&
+                !(explicitDelete && OneDriveAuth.PROTOCOL.equals(item.remote.protocol)))
             for (Item child : children(item))
-                deleteOne(child, budget, depth + 1);
+                deleteOne(child, budget, depth + 1, explicitDelete);
         switch (item.kind) {
             case "local":
                 if (item.directory)
                     for (Item child : children(item))
-                        deleteOne(child, budget, depth + 1);
+                        deleteOne(child, budget, depth + 1, explicitDelete);
                 if (!item.local.delete())
                     throw new IOException("삭제에 실패했습니다: " + item.name);
                 return;

@@ -88,6 +88,8 @@ final class Models {
         String name;
         String path;
         String remoteId = "";
+        // Provider-reported total immediate children, including hidden items.
+        int serverChildCount=-1;
         boolean directory;
         // SFTP symbolic links may point to directories. Keep the link
         // identity even when the target is a navigable directory, so bulk

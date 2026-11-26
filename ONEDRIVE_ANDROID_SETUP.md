@@ -64,3 +64,19 @@ payloads produce a visible failure instead of being silently discarded.
 Refs: https://learn.microsoft.com/en-us/entra/identity-platform/reply-url
 https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
 https://learn.microsoft.com/en-us/graph/auth-v2-user
+
+
+## v0.1.154 / Play v1.0.37 request and dialog optimization
+Direct path children query removes a metadata round trip per folder visit.
+Graph folder.childCount is displayed as an explicitly labeled total including
+hidden items, without background per-folder requests when supplied; missing
+counts use paginated name-only queries. Download metadata includes its signed
+URL in the first request, and destination probes target a single name rather
+than enumerating all children. New files up to 4 MiB use a conflict-protected
+content PUT; overwrite and large-file uploads retain guarded sessions.
+Explicit OneDrive folder deletion uses the provider's recycle-bin operation
+with fresh metadata/ETag; move cleanup retains the prior traversal semantics.
+Short confirmation/error/overwrite prompts use content-sized native dialogs
+while filename entry remains on the existing path. Reads retry once only when
+429/503 supplies Retry-After <= 5 seconds; writes are never automatically replayed.
+Real Microsoft account/network throughput is not measured by local tests.

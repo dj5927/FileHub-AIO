@@ -1189,3 +1189,5 @@ OneDrive 연결을 다시 확인해 주세요.	Check the OneDrive connection aga
 브라우저에서 OneDrive 인증을 완료해 주세요.	Complete OneDrive authorization in your browser.	ブラウザーでOneDrive認証を完了してください。	请在浏览器中完成 OneDrive 授权。
 OneDrive 인증 결과를 받지 못했습니다. 브라우저 인증을 다시 시도해 주세요.	OneDrive authorization did not return. Try signing in again in your browser.	OneDrive認証結果を受信できませんでした。ブラウザーで再認証してください。	未收到 OneDrive 授权结果。请在浏览器中重新授权。
 브라우저에서 다시 인증	Sign in again in browser	ブラウザーで再認証	在浏览器中重新授权
+전체 %d개 항목	Total %d items	全%d件	共 %d 项
+선택한 파일과 폴더를 OneDrive 휴지통으로 이동할까요? 폴더 안의 파일도 함께 이동됩니다.	Move the selected files and folders to the OneDrive recycle bin? Files inside folders will be moved too.	選択したファイルとフォルダーをOneDriveのごみ箱に移動しますか？フォルダー内のファイルも一緒に移動します。	将选中的文件和文件夹移至 OneDrive 回收站吗？文件夹中的文件也将一并移入。

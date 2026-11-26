@@ -29,51 +29,108 @@ public class OneDriveApiTest {
     }
     @Test public void listFollowsGraphPagesAndPreservesPaths()throws Exception{
         try(MockWebServer s=new MockWebServer()){
-            s.start();reply(s,item("root","root",0,true));
-            reply(s,listing(item("a","folder",0,true)).put("@odata.nextLink",s.url("/v1.0/next").toString()));
+            s.start();
+            reply(s,listing(item("a","folder",0,true).put("folder",new JSONObject().put("childCount",42))).put("@odata.nextLink",s.url("/v1.0/next").toString()));
             reply(s,listing(item("b","hello.txt",3,false)));
             List<Models.Entry> result=api(s).list("/");
             assertEquals(2,result.size());assertEquals("/hello.txt",result.get(1).path);
-            assertTrue(req(s,true).getPath().contains("/me/drive/root?"));
-            assertTrue(req(s,true).getPath().contains("/items/root/children?"));
-            assertEquals("/v1.0/next",req(s,true).getPath());
+            assertEquals(42,result.get(0).serverChildCount);
+            assertTrue(req(s,true).getPath().contains("/me/drive/root/children?"));
+            assertEquals("/v1.0/next",req(s,true).getPath());assertEquals(2,s.getRequestCount());
         }
     }
     @Test public void paginationCannotSendBearerToAnotherOrigin()throws Exception{
         try(MockWebServer s=new MockWebServer();MockWebServer other=new MockWebServer()){
-            s.start();other.start();reply(s,item("root","root",0,true));
+            s.start();other.start();
             reply(s,listing().put("@odata.nextLink",other.url("/v1.0/next").toString()));
             assertThrows(IOException.class,()->api(s).list("/"));
-            req(s,true);req(s,true);assertEquals(0,other.getRequestCount());
+            req(s,true);assertEquals(0,other.getRequestCount());
         }
     }
     @Test public void rangedContentUsesSignedUrlWithoutBearer()throws Exception{
         try(MockWebServer s=new MockWebServer()){
-            s.start();reply(s,item("id","video.mp4",3,false));
-            reply(s,new JSONObject().put("id","id").put("@microsoft.graph.downloadUrl",s.url("/signed").toString()));
+            s.start();reply(s,item("id","video.mp4",3,false).put("@microsoft.graph.downloadUrl",s.url("/signed").toString()));
             s.enqueue(new MockResponse().setResponseCode(206).setHeader("Content-Range","bytes 1-2/3").setBody("bc"));
             try(InputStream in=api(s).open("/video.mp4",1)){assertEquals("bc",new String(in.readAllBytes()));}
-            assertTrue(req(s,true).getPath().contains("/root:/video.mp4?"));req(s,true);
+            assertTrue(req(s,true).getPath().contains("/root:/video.mp4?"));
             RecordedRequest r=req(s,false);assertEquals("/signed",r.getPath());assertEquals("bytes=1-",r.getHeader("Range"));
         }
     }
-    @Test public void uploadCreatesConflictProtectedSessionAndVerifiesResponse()throws Exception{
+    @Test public void smallNewUploadUsesOneContentPutAndConflictGuard()throws Exception{
         try(MockWebServer s=new MockWebServer()){
-            s.start();reply(s,item("root","root",0,true));reply(s,listing());
-            reply(s,new JSONObject().put("uploadUrl",s.url("/signed-upload").toString()));
+            s.start();reply(s,item("root","root",0,true));s.enqueue(new MockResponse().setResponseCode(404));
             reply(s,item("new","data.txt",3,false));
             api(s).upload("/","data.txt",new ByteArrayInputStream(new byte[]{1,2,3}),3,false);
+            req(s,true);
+            assertTrue(req(s,true).getPath().contains("/items/root:/data.txt?"));
+            RecordedRequest put=req(s,true);assertEquals("PUT",put.getMethod());
+            assertTrue(put.getPath().contains("/items/root:/data.txt:/content?"));
+            assertEquals("fail",put.getRequestUrl().queryParameter("@microsoft.graph.conflictBehavior"));
+            assertEquals("*",put.getHeader("If-None-Match"));
+            assertArrayEquals(new byte[]{1,2,3},put.getBody().readByteArray());
+            assertEquals(3,s.getRequestCount());
+        }
+    }
+    @Test public void largeNewUploadUsesConflictProtectedSession()throws Exception{
+        try(MockWebServer s=new MockWebServer()){
+            int length=4*1024*1024+1;
+            s.start();reply(s,item("root","root",0,true));s.enqueue(new MockResponse().setResponseCode(404));
+            reply(s,new JSONObject().put("uploadUrl",s.url("/signed-upload").toString()));
+            reply(s,item("new","data.bin",length,false));
+            api(s).upload("/","data.bin",new ByteArrayInputStream(new byte[length]),length,false);
             req(s,true);req(s,true);RecordedRequest init=req(s,true);
-            assertTrue(init.getPath().contains("/items/root:/data.txt:/createUploadSession"));
+            assertTrue(init.getPath().contains("/items/root:/data.bin:/createUploadSession"));
             assertEquals("fail",new JSONObject(init.getBody().readUtf8()).getJSONObject("item").getString("@microsoft.graph.conflictBehavior"));
-            RecordedRequest data=req(s,false);assertEquals("bytes 0-2/3",data.getHeader("Content-Range"));
-            assertArrayEquals(new byte[]{1,2,3},data.getBody().readByteArray());
+            RecordedRequest data=req(s,false);assertEquals("bytes 0-"+(length-1)+"/"+length,data.getHeader("Content-Range"));
+            assertEquals(length,data.getBodySize());
+        }
+    }
+    @Test public void nestedListAndCountDoNotResolveParentFirst()throws Exception{
+        try(MockWebServer s=new MockWebServer()){
+            s.start();reply(s,listing(item("f","a.txt",2,false)));
+            List<Models.Entry> result=api(s).list("/A B/한글");
+            assertEquals("/A B/한글/a.txt",result.get(0).path);
+            RecordedRequest list=req(s,true);
+            assertEquals(Arrays.asList("v1.0","me","drive","root:","A B","한글:","children"),list.getRequestUrl().pathSegments());
+            reply(s,listing(new JSONObject().put("name","a.txt"),new JSONObject().put("name",".hidden")));
+            assertEquals(1,api(s).countChildren("/A B/한글",false));
+            assertEquals("name",req(s,true).getRequestUrl().queryParameter("$select"));
+            assertEquals(2,s.getRequestCount());
+        }
+    }
+    @Test public void readRetriesOnlyBoundedRetryAfterAndNeverReplaysWrite()throws Exception{
+        try(MockWebServer s=new MockWebServer()){
+            s.start();s.enqueue(new MockResponse().setResponseCode(429).setHeader("Retry-After","0"));
+            reply(s,listing());assertTrue(api(s).list("/").isEmpty());req(s,true);req(s,true);
+            s.enqueue(new MockResponse().setResponseCode(429).setHeader("Retry-After","600"));
+            assertThrows(CloudProvider.CloudFailure.class,()->api(s).list("/"));req(s,true);
+            reply(s,item("root","root",0,true));s.enqueue(new MockResponse().setResponseCode(429).setHeader("Retry-After","0"));
+            assertThrows(CloudProvider.CloudFailure.class,()->api(s).mkdir("/folder"));req(s,true);assertEquals("POST",req(s,true).getMethod());
+            assertEquals(5,s.getRequestCount());
+            assertEquals(5000,OneDriveApi.retryDelayMillis("5"));assertEquals(-1,OneDriveApi.retryDelayMillis("6"));
+        }
+    }
+    @Test public void smallUploadRaceFailsWithoutReplacingExistingFile()throws Exception{
+        try(MockWebServer s=new MockWebServer()){
+            s.start();reply(s,item("root","root",0,true));s.enqueue(new MockResponse().setResponseCode(404));
+            s.enqueue(new MockResponse().setResponseCode(409));
+            assertThrows(FileTransferEngine.NameConflict.class,()->api(s).upload("/","data.txt",new ByteArrayInputStream(new byte[]{1}),1,false));
+            req(s,true);req(s,true);assertEquals("PUT",req(s,true).getMethod());assertEquals(3,s.getRequestCount());
+        }
+    }
+    @Test public void mkdirUsesServerConflictGuardWithoutDirectoryScan()throws Exception{
+        try(MockWebServer s=new MockWebServer()){
+            s.start();reply(s,item("root","root",0,true));reply(s,item("new","folder",0,true));
+            api(s).mkdir("/folder");req(s,true);RecordedRequest post=req(s,true);
+            assertEquals("POST",post.getMethod());
+            assertEquals("fail",new JSONObject(post.getBody().readUtf8()).getString("@microsoft.graph.conflictBehavior"));
+            assertEquals(2,s.getRequestCount());
         }
     }
     @Test public void overwriteAndDeleteUseRevisionGuard()throws Exception{
         try(MockWebServer s=new MockWebServer()){
             s.start();JSONObject old=item("old","data.txt",3,false);
-            reply(s,item("root","root",0,true));reply(s,listing(old));
+            reply(s,item("root","root",0,true));reply(s,old);
             reply(s,new JSONObject().put("uploadUrl",s.url("/signed-upload").toString()));
             reply(s,item("old","data.txt",1,false));
             api(s).upload("/","data.txt",new ByteArrayInputStream(new byte[]{9}),1,true);
@@ -84,7 +141,7 @@ public class OneDriveApiTest {
     }
     @Test public void existingNameWithoutOverwriteDoesNotCreateSession()throws Exception{
         try(MockWebServer s=new MockWebServer()){
-            s.start();reply(s,item("root","root",0,true));reply(s,listing(item("x","DATA.TXT",2,false)));
+            s.start();reply(s,item("root","root",0,true));reply(s,item("x","DATA.TXT",2,false));
             assertThrows(FileTransferEngine.NameConflict.class,()->api(s).upload("/","data.txt",new ByteArrayInputStream(new byte[]{1}),1,false));
             req(s,true);req(s,true);assertEquals(2,s.getRequestCount());
         }

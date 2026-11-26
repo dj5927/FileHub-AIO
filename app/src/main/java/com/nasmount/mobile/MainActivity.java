@@ -1676,7 +1676,12 @@ public class MainActivity extends LocalizedActivity {
             return;
         }
         String title=L10n.f("%1$d개 항목 삭제",sources.size());
-        String message=L10n.t("선택한 파일과 폴더를 삭제하시겠습니까? 폴더 안의 파일도 삭제되며 ") +
+        boolean allOneDrive=true;
+        for(FileTransferEngine.Item item:sources)
+            if(item.remote==null||!OneDriveAuth.PROTOCOL.equals(item.remote.protocol)){allOneDrive=false;break;}
+        String message=allOneDrive?
+                L10n.t("선택한 파일과 폴더를 OneDrive 휴지통으로 이동할까요? 폴더 안의 파일도 함께 이동됩니다."):
+                L10n.t("선택한 파일과 폴더를 삭제하시겠습니까? 폴더 안의 파일도 삭제되며 ") +
                         L10n.t("SD·일반 NAS는 휴지통 없이 삭제될 수 있습니다. ") +
                         L10n.t("네이버 MYBOX 파일은 MYBOX 휴지통으로 이동합니다.");
         if(useFlutterFileChrome()){
@@ -2339,8 +2344,10 @@ public class MainActivity extends LocalizedActivity {
                         images&&"image".equals(iconFor(e.name)));
                 Integer remembered=e.directory&&!e.symbolicLink?folderCache.count(countKey(e)):null;
                 boolean count=e.directory&&!e.symbolicLink&&!"media".equals(kind);
-                if(remembered!=null)m.put("secondary",L10n.f("%d개 항목",remembered));
-                m.put("preview",thumb||(count&&remembered==null)||(!e.directory&&isVideo(e.name)));
+                String total=serverCountLabel(e,provider);
+                if(total!=null)m.put("secondary",total);
+                else if(remembered!=null)m.put("secondary",L10n.f("%d개 항목",remembered));
+                m.put("preview",thumb||(count&&remembered==null&&total==null)||(!e.directory&&isVideo(e.name)));
                 list.add(m);
             }
             Map<String,Object> data=new LinkedHashMap<>();
@@ -2456,6 +2463,8 @@ public class MainActivity extends LocalizedActivity {
             String key=countKey(e);
             boolean canCount=e.directory&&!e.symbolicLink&&key!=null&&!"media".equals(kind);
             if(canCount){
+                String total=serverCountLabel(e,provider);
+                if(total!=null){result.success(Collections.singletonMap("secondary",total));return;}
                 Integer remembered=folderCache.count(key);
                 if(remembered!=null){
                     result.success(Collections.singletonMap("secondary",countLabel(remembered)));
@@ -4079,6 +4088,13 @@ public class MainActivity extends LocalizedActivity {
         return scope + "|count|hidden:" + showHidden + "|subtitles:" +
                 PlayerSettings.prefs(this).getBoolean(PlayerSettings.HIDE_SUBTITLES, false);
     }
+    private String serverCountLabel(Models.Entry entry,Models.RemoteProfile provider){
+        if(entry==null||!entry.directory||entry.symbolicLink||entry.serverChildCount<0||provider==null||
+                !OneDriveAuth.PROTOCOL.equals(provider.protocol))return null;
+        // Graph returns total immediate children, including dot-prefixed names.
+        // Label explicitly as total; don't present it as a filtered count.
+        return L10n.f("전체 %d개 항목",entry.serverChildCount);
+    }
     private String countLabel(int count){
         return count<0?L10n.t("항목 수 미확인"):L10n.f("%d개 항목",count);
     }
@@ -4110,6 +4126,8 @@ public class MainActivity extends LocalizedActivity {
     }
     private void scheduleCount(View anchor, TextView target,
                                Models.Entry entry, Callable<Integer> count) {
+        String total=serverCountLabel(entry,remote);
+        if(total!=null){target.setText(total);return;}
         String key=countKey(entry);
         Integer remembered=folderCache.count(key);
         if(remembered!=null){target.setText(countLabel(remembered));return;}
