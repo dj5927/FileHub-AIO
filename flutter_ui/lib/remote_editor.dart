@@ -9,8 +9,8 @@ abstract interface class RemoteEditorHost {
   Future<void> classicEditor();
 }
 
-const remoteProtocols=['SMB','FTP','SFTP','WebDAV','TeraBox','MYBOX','GoogleDrive'];
-const remotePorts=[445,21,22,443,0,0,0];
+const remoteProtocols=['SMB','FTP','SFTP','WebDAV','TeraBox','MYBOX','GoogleDrive','OneDrive'];
+const remotePorts=[445,21,22,443,0,0,0,0];
 
 class RemoteEditorScreen extends StatefulWidget {
   const RemoteEditorScreen({super.key,required this.data,required this.labels,
@@ -34,6 +34,8 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   bool get canAnonymous=>protocol=="SMB"||protocol=="FTP";
   String? error;
   bool get google=>protocol=='GoogleDrive';
+  bool get oneDrive=>protocol=='OneDrive';
+  bool get oauth=>google||oneDrive;
   String protocolTitle(String value)=>value=='GoogleDrive'?'Google Drive':value;
   String t(String key)=>widget.labels[key]??key;
   bool get ordinary=>remoteProtocols.indexOf(protocol)<4;
@@ -161,13 +163,13 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   List<Widget> fields(){
     final ftp=options('ftpOptions',['UTF-8']);
     final sftp=options('sftpOptions',['UTF-8']);
-    if(google){return [
+    if(oauth){return [
       field('name',name),
       if(editing&&username.text.isNotEmpty)Text(username.text,maxLines:1,overflow:TextOverflow.ellipsis),
-      Padding(padding:const EdgeInsets.symmetric(vertical:12),child:Text(t(editing?'googleReconnect':'googleHint'),style:const TextStyle(fontSize:13))),
+      Padding(padding:const EdgeInsets.symmetric(vertical:12),child:Text(t(oneDrive?(editing?'oneDriveReconnect':'oneDriveHint'):(editing?'googleReconnect':'googleHint')),style:const TextStyle(fontSize:13))),
       toggle('readOnly',readOnly,(v)=>setState(()=>readOnly=v)),
     ];}
-    final available=editing?remoteProtocols.where((p)=>p!='GoogleDrive').toList():remoteProtocols;
+    final available=editing?remoteProtocols.where((p)=>p!='GoogleDrive'&&p!='OneDrive').toList():remoteProtocols;
     return [
       field('name',name),
       if(!widget.compact||editing)select<String>('protocol',protocol,available,available.map(protocolTitle).toList(),changeProtocol),
@@ -241,7 +243,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         if(busy)const LinearProgressIndicator(minHeight:2),errorLine(),...fields(),
       ]))),
       actions:[TextButton(onPressed:busy?null:widget.onCancel,child:Text(t('cancel'))),
-        TextButton(key:const ValueKey('editor-save'),onPressed:busy?null:save,child:Text(t(google?'googleConnect':'save')))],
+        TextButton(key:const ValueKey('editor-save'),onPressed:busy?null:save,child:Text(t(oneDrive?'oneDriveConnect':google?'googleConnect':'save')))],
     );}
     return PopScope(canPop:!busy,child:Scaffold(
       appBar:AppBar(title:Text(t(editing?'editorEdit':'editorAdd')),
@@ -256,10 +258,33 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         Padding(padding:const EdgeInsets.fromLTRB(16,8,16,12),child:Row(children:[
           Expanded(child:OutlinedButton(onPressed:busy?null:widget.onCancel,child:Text(t('cancel')))),
           const SizedBox(width:10),
-          Expanded(child:FilledButton(key:const ValueKey('editor-save'),onPressed:busy?null:save,child:Text(t(google?'googleConnect':'save')))),
+          Expanded(child:FilledButton(key:const ValueKey('editor-save'),onPressed:busy?null:save,child:Text(t(oneDrive?'oneDriveConnect':google?'googleConnect':'save')))),
         ])),
       ])),
     ));
+  }
+}
+
+/// Official provider artwork; original aspect ratio is preserved.
+String? cloudLogoAsset(String protocol)=>switch(protocol){
+  'GoogleDrive'=>'assets/cloud/google_drive.png',
+  'OneDrive'=>'assets/cloud/onedrive.png',
+  'MYBOX'=>'assets/cloud/mybox.png',
+  'TeraBox'=>'assets/cloud/terabox.png',
+  _=>null,
+};
+class CloudLogo extends StatelessWidget {
+  const CloudLogo(this.protocol,{super.key,required this.size,required this.fallback});
+  final String protocol;
+  final double size;
+  final Widget fallback;
+  @override
+  Widget build(BuildContext context){
+    final asset=cloudLogoAsset(protocol);
+    if(asset==null)return fallback;
+    return Image.asset(asset,width:size,height:size,fit:BoxFit.contain,
+      filterQuality:FilterQuality.high,excludeFromSemantics:true,
+      errorBuilder:(_,_,_)=>fallback);
   }
 }
 
@@ -273,6 +298,7 @@ class ProtocolIcon extends StatelessWidget {
       'FTP'=>(Icons.swap_horiz_rounded,const Color(0xffb58a42)),
       'SFTP'=>(Icons.lock_outline_rounded,const Color(0xff568b83)),
       'WebDAV'=>(Icons.language_rounded,const Color(0xff8174bc)),
+      'OneDrive'=>(Icons.cloud_rounded,const Color(0xff0078d4)),
       'GoogleDrive'=>(Icons.change_history_rounded,const Color(0xff4285f4)),
       'MYBOX'=>(Icons.cloud_outlined,const Color(0xff219765)),
       'TeraBox'=>(Icons.cloud_queue_rounded,const Color(0xff4785c9)),
@@ -280,7 +306,7 @@ class ProtocolIcon extends StatelessWidget {
     };
     return Container(width:32,height:32,decoration:BoxDecoration(
       color:color.withValues(alpha:.13),borderRadius:BorderRadius.circular(8)),
-      child:Icon(glyph,color:color,size:21));
+      child:Center(child:CloudLogo(protocol,size:21,fallback:Icon(glyph,color:color,size:21))));
 
   }
 }
@@ -308,7 +334,7 @@ class _RemoteEditorOverlayState extends State<RemoteEditorOverlay>{
     return AlertDialog(title:Text(t('editorAdd'),style:const TextStyle(fontSize:18,fontWeight:FontWeight.w600)),insetPadding:const EdgeInsets.symmetric(horizontal:20,vertical:16),constraints:const BoxConstraints(maxWidth:420),
       contentPadding:const EdgeInsets.fromLTRB(16,6,16,4),
       content:SizedBox(width:360,child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
-        for(final group in [['SMB','FTP','SFTP','WebDAV'],['GoogleDrive','MYBOX','TeraBox']])...[
+        for(final group in [['SMB','FTP','SFTP','WebDAV'],['GoogleDrive','OneDrive','MYBOX','TeraBox']])...[
           Align(alignment:Alignment.centerLeft,child:Padding(padding:const EdgeInsets.only(left:8,top:6,bottom:2),
             child:Text(t(group.first=='SMB'?'networkHeading':'cloudHeading'),style:Theme.of(context).textTheme.labelMedium))),
           for(final protocol in group)ListTile(key:ValueKey('choose-$protocol'),dense:true,

@@ -55,7 +55,7 @@ void main(){
       data:data(),labels:const {'editorAdd':'Add storage','networkHeading':'Network','cloudHeading':'Cloud','advanced':'Advanced','save':'Save'},
       host:host,onClose:()=>closed=true))));
     await tester.pumpAndSettle();
-    expect(find.byType(ProtocolIcon),findsNWidgets(7));
+    expect(find.byType(ProtocolIcon),findsNWidgets(8));
     await tester.tap(find.byKey(const ValueKey('choose-WebDAV')));await tester.pumpAndSettle();
     expect(key('host'),findsOneWidget);
     expect(tester.widget<TextField>(key('port')).controller!.text,'443');
@@ -136,6 +136,26 @@ void main(){
     expect(host.saved!['protocol'],'GoogleDrive');
     expect(host.saved!['name'],'My Google Drive');
     expect(host.saved!['secret'],anyOf(isNull,''));
+  });
+  testWidgets('OneDrive uses Microsoft authorization without password or host fields',(tester)async{
+    final host=FakeEditor();await mount(tester,host,data(protocol:'OneDrive'));
+    expect(key('host'),findsNothing);expect(key('username'),findsNothing);
+    expect(key('secret'),findsNothing);expect(key('name'),findsOneWidget);
+    await tester.enterText(key('name'),'My OneDrive');
+    await tester.tap(key('save'));await tester.pumpAndSettle();
+    expect(host.saved!['protocol'],'OneDrive');
+    expect(host.saved!['name'],'My OneDrive');
+    expect(host.saved!['secret'],anyOf(isNull,''));
+  });
+  testWidgets('four official logo assets retain the existing 21dp chooser icon',(tester)async{
+    final protocols=['GoogleDrive','OneDrive','MYBOX','TeraBox'];
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:Row(children:protocols.map((p)=>ProtocolIcon(p)).toList()))));
+    await tester.pumpAndSettle();
+    expect(find.byType(Image),findsNWidgets(4));
+    for(final image in tester.widgetList<Image>(find.byType(Image))){
+      expect(image.width,21);expect(image.height,21);expect(image.fit,BoxFit.contain);
+    }
+    expect(tester.takeException(),isNull);
   });
   testWidgets('native validation failure retains the form',(tester)async{
     final host=FakeEditor()..fail=true;await mount(tester,host,data());

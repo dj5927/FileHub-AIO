@@ -97,6 +97,10 @@ def directOtaKeyFile = providers.gradleProperty('filehubDirectOtaKeyFile').orEls
 def directOtaKey = directOtaKeyFile ? file(directOtaKeyFile).getText('UTF-8').trim() : ''
 if (directOtaKey && !(directOtaKey ==~ /[A-Za-z0-9_-]{32,128}/))
     throw new GradleException('Invalid private OTA key')
+// A public application ID, never a client secret. Supplied by the publisher.
+def oneDriveClientId = providers.gradleProperty('filehubOneDriveClientId').orElse('').get().trim()
+if (oneDriveClientId && !(oneDriveClientId ==~ /[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}/))
+    throw new GradleException('Invalid OneDrive application ID')
 def playInternal = providers.gradleProperty('filehubPlayInternalTest').getOrElse('false') == 'true'
 def playProduction = providers.gradleProperty('filehubPlayProduction').getOrElse('false') == 'true'
 // The Room/R8 startup fix is confirmed. All Play release candidates now
@@ -167,6 +171,7 @@ android {
     compileSdk 37
 
     defaultConfig {
+        buildConfigField "String", "ONEDRIVE_CLIENT_ID", groovy.json.JsonOutput.toJson(oneDriveClientId)
         minSdk 26
         targetSdk 35
         ndk {
@@ -205,21 +210,21 @@ android {
             dimension 'distribution'
             applicationId 'com.nasmount.mobile'
             targetSdk 35
-            versionCode 148
-            versionName '0.1.147'
+            versionCode 149
+            versionName '0.1.148'
             buildConfigField 'boolean', 'DIRECT_EDITION', 'true'
             buildConfigField 'String', 'DIRECT_OTA_KEY', groovy.json.JsonOutput.toJson(directOtaKey)
             buildConfigField 'boolean', 'R8_TRIAL', 'false'
             buildConfigField 'String', 'PAIR_SCHEME', '"filehubaio"'
-            manifestPlaceholders = [pairScheme: 'filehubaio']
+            manifestPlaceholders = [pairScheme: 'filehubaio', appAuthRedirectScheme: 'com.nasmount.mobile']
             if (releaseSigningFile.exists()) signingConfig signingConfigs.release
         }
         play {
             dimension 'distribution'
             applicationId 'com.filehubaio.mobile'
             targetSdk 36
-            versionCode 31
-            versionName '1.0.30'
+            versionCode 32
+            versionName '1.0.31'
             buildConfigField 'boolean', 'DIRECT_EDITION', 'false'
             buildConfigField 'boolean', 'R8_TRIAL', 'false'
             buildConfigField 'String', 'PAIR_SCHEME', '"filehubaio-play"'
@@ -229,7 +234,7 @@ android {
             buildConfigField 'String', 'AD_INTERSTITIAL_ID', '"' + (playProduction && liveAds ? adInterstitial : '') + '"'
             buildConfigField 'String', 'PLAY_BILLING_PUBLIC_KEY', '"' + billingKey + '"'
             buildConfigField 'String', 'PRIVACY_POLICY_URL', groovy.json.JsonOutput.toJson(privacyPolicyUrl)
-            manifestPlaceholders = [pairScheme: 'filehubaio-play',
+            manifestPlaceholders = [pairScheme: 'filehubaio-play', appAuthRedirectScheme: 'com.filehubaio.mobile',
                 adMobAppId: playProduction && liveAds ? adApp : 'ca-app-pub-3940256099942544~3347511713']
             if ((playInternal || playProduction) && playSigningFile.exists())
                 signingConfig signingConfigs.playUpload
@@ -276,6 +281,7 @@ dependencies {
     debugImplementation 'com.filehubaio.filehub_flutter:flutter_debug:1.0'
     releaseImplementation 'com.filehubaio.filehub_flutter:flutter_release:1.0'
     // Official Maven Central ZXing; Dependabot can track the version.
+    implementation 'net.openid:appauth:0.11.1'
     implementation 'com.google.android.gms:play-services-auth:21.6.0'
     implementation 'com.google.zxing:core:3.5.4'
     def media3_version = '1.11.1'

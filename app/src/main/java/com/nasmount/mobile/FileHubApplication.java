@@ -11,6 +11,7 @@ public final class FileHubApplication extends Application {
         super.onCreate();
         L10n.init(this);
         GoogleDriveAuth.init(this);
+        OneDriveAuth.init(this);
         EditionMonetization.init(this);
     }
 }

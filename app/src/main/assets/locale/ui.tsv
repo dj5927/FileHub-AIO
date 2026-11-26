@@ -1166,3 +1166,13 @@ Google 문서의 이름 변경 및 덮어쓰기는 지원하지 않습니다.	Re
 NAS · Google Drive · TeraBox · MYBOX	NAS · Google Drive · TeraBox · MYBOX	NAS · Google Drive · TeraBox · MYBOX	NAS · Google Drive · TeraBox · MYBOX
 API 요청	API request	APIリクエスト	API 请求
 Google 원본 문서는 다른 저장소로 이동할 수 없습니다. 복사만 가능합니다.	Native Google documents cannot be moved to another storage. Copy them instead.	Googleネイティブ文書は他のストレージに移動できません。コピーしてください。	Google 原生文档无法移动到其他存储，请使用复制。
+Microsoft 계정 연결	Connect Microsoft account	Microsoftアカウントを接続	连接 Microsoft 账号
+Microsoft 계정 연결 중...	Connecting Microsoft account...	Microsoftアカウント接続中...	正在连接 Microsoft 账号...
+Microsoft에 로그인하고 OneDrive 접근을 허용하세요.	Sign in with Microsoft and allow OneDrive access.	MicrosoftにサインインしてOneDriveへのアクセスを許可してください。	登录 Microsoft 并允许访问 OneDrive。
+기존 Microsoft 계정으로 다시 로그인합니다.	Reconnect the existing Microsoft account.	既存のMicrosoftアカウントで再接続します。	重新连接现有 Microsoft 账号。
+Microsoft 계정 연결이 취소되었습니다.	Microsoft account connection canceled.	Microsoftアカウント接続がキャンセルされました。	Microsoft 账号连接已取消。
+OneDrive 연결에 실패했습니다.	OneDrive connection failed.	OneDrive接続に失敗しました。	OneDrive 连接失败。
+OneDrive 앱 인증 등록이 필요합니다.	OneDrive publisher registration is required.	OneDriveのアプリ登録が必要です。	需要完成 OneDrive 应用注册。
+OneDrive 로그인이 필요합니다. 연결 설정에서 다시 로그인하세요.	OneDrive sign-in required. Reconnect in connection settings.	OneDriveに再接続してください。	需要登录 OneDrive，请在连接设置中重新连接。
+OneDrive 바로가기 및 패키지는 지원하지 않습니다.	OneDrive shortcuts and packages are not supported.	OneDriveのショートカットとパッケージは未対応です。	不支持 OneDrive 快捷方式和包。
+NAS · Google Drive · OneDrive · TeraBox · MYBOX	NAS · Google Drive · OneDrive · TeraBox · MYBOX	NAS · Google Drive · OneDrive · TeraBox · MYBOX	NAS · Google Drive · OneDrive · TeraBox · MYBOX

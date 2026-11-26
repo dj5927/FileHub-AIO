@@ -2,6 +2,7 @@ import 'package:flutter/services.dart' show HapticFeedback;
 import 'compact_text.dart';
 import 'package:material_ui/material_ui.dart';
 import 'main.dart';
+import 'remote_editor.dart' show CloudLogo;
 
 typedef Navigate = Future<void> Function(String action, [String? id]);
 
@@ -183,7 +184,7 @@ class DrawerNavigation extends StatelessWidget {
           ListTile(key:ValueKey('drawer-profile-${p.id}'),
             dense:true,minTileHeight:44,visualDensity:VisualDensity.compact,
             contentPadding:const EdgeInsets.only(left:28,right:12),
-            leading:const Icon(Icons.folder_shared_outlined,size:20),
+            leading:CloudLogo(p.protocol,size:20,fallback:const Icon(Icons.folder_shared_outlined,size:20)),
             title:Text(p.label,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:13)),
             subtitle:Text(p.protocol=='GoogleDrive'?'Google Drive':p.protocol,style:const TextStyle(fontSize:11)),
             onTap:busy?null:()=>action(p.allowed?'open':'connections',p.allowed?p.id:null)),

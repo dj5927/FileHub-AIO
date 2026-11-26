@@ -3562,7 +3562,7 @@ public class MainActivity extends LocalizedActivity {
                 L10n.t("네트워크 폴더"), "remote", DrawerSectionState.NETWORK);
         try {
             for (Models.RemoteProfile p : store.activeRemotes())
-                drawerNestedLink(networkEntries, p.label(), "remote",
+                drawerNestedLink(networkEntries, p.label(), cloudIconKind(p.protocol),
                         () -> openRemoteStart(p));
         } catch (Exception ignored) {
             drawerSectionEmpty(networkEntries, "네트워크 연결을 확인할 수 없습니다.");
@@ -3679,7 +3679,7 @@ public class MainActivity extends LocalizedActivity {
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(32), 0, dp(14), 0);
         parent.addView(row, Ui.lp(this, -1, 51));
-        row.addView(new Ui.Icon(this, iconKind, Ui.TEAL),
+        row.addView(providerIcon(iconKind,Ui.TEAL),
                 Ui.lp(this, 27, 27));
         TextView label = Ui.text(this, title, 14, Ui.TEXT, false);
         label.setSingleLine();
@@ -3978,6 +3978,25 @@ public class MainActivity extends LocalizedActivity {
             openSafPath(f.path);
         } else browseLocal(new File(f.path));
     }
+    private static String cloudIconKind(String protocol){
+        switch(protocol){
+            case "GoogleDrive":case "OneDrive":case "MYBOX":case "TeraBox":return protocol;
+            default:return "remote";
+        }
+    }
+    private View providerIcon(String kind,int color){
+        int res=0;
+        switch(kind){
+            case "GoogleDrive":res=R.drawable.cloud_google_drive;break;
+            case "OneDrive":res=R.drawable.cloud_onedrive;break;
+            case "MYBOX":res=R.drawable.cloud_mybox;break;
+            case "TeraBox":res=R.drawable.cloud_terabox;break;
+        }
+        if(res==0)return new Ui.Icon(this,kind,color);
+        android.widget.ImageView v=new android.widget.ImageView(this);
+        v.setImageResource(res);v.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+        v.setPadding(dp(3),dp(3),dp(3),dp(3));return v;
+    }
     private void row(LinearLayout parent, String label, String subtitle, String iconType,
                      int color, Runnable click, Runnable longClick) {
         LinearLayout box = Ui.horizontal(this);
@@ -3986,7 +4005,7 @@ public class MainActivity extends LocalizedActivity {
         LinearLayout.LayoutParams params = Ui.lp(this, -1, 72);
         params.bottomMargin = dp(7);
         parent.addView(box, params);
-        box.addView(new Ui.Icon(this, iconType, color), Ui.lp(this, 42, 42));
+        box.addView(providerIcon(iconType,color), Ui.lp(this, 42, 42));
         LinearLayout labels = Ui.vertical(this);
         labels.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams l = new LinearLayout.LayoutParams(0, -1, 1);
@@ -6010,7 +6029,7 @@ public class MainActivity extends LocalizedActivity {
         currentScreen = "remotes";
         remote = null;
         render(L10n.t("원격 저장소"), true, "+", () -> remoteForm(null));
-        muted(L10n.t("NAS · Google Drive · TeraBox · MYBOX"));
+        muted(L10n.t("NAS · Google Drive · OneDrive · TeraBox · MYBOX"));
         try {
             List<Models.RemoteProfile> profiles = store.activeRemotes();
             if (profiles.isEmpty()) {
@@ -6018,7 +6037,7 @@ public class MainActivity extends LocalizedActivity {
                 muted(L10n.t("연결을 추가하면 여기에 표시돼요."));
             }
             for (Models.RemoteProfile profile : profiles) {
-                row(page, profile.label(), profile.summary(), "remote",
+                row(page, profile.label(), profile.summary(), cloudIconKind(profile.protocol),
                         Ui.TEAL, () -> openRemoteStart(profile),
                         () -> remoteMenu(profile));
             }
@@ -6744,13 +6763,14 @@ public class MainActivity extends LocalizedActivity {
         else openFlutterEditor(original==null?null:original.id,false);
     }
     private void nativeRemoteForm(Models.RemoteProfile original) {
+        if(original!=null&&OneDriveAuth.linked(original)){nativeOneDriveForm(original);return;}
         if(original!=null&&GoogleDriveAuth.linked(original)){
             nativeGoogleForm(original);return;
         }
         if(original==null){
             new AlertDialog.Builder(this).setTitle(L10n.t("원격 저장소 추가"))
-                .setItems(new String[]{"Google Drive",L10n.t("기타 원격 저장소")},(d,w)->{
-                    if(w==0)nativeGoogleForm(null);else nativeTraditionalRemoteForm(null);
+                .setItems(new String[]{"Google Drive","OneDrive",L10n.t("기타 원격 저장소")},(d,w)->{
+                    if(w==0)nativeGoogleForm(null);else if(w==1)nativeOneDriveForm(null);else nativeTraditionalRemoteForm(null);
                 }).show();return;
         }
         nativeTraditionalRemoteForm(original);
@@ -6764,6 +6784,16 @@ public class MainActivity extends LocalizedActivity {
         new AlertDialog.Builder(this).setTitle("Google Drive").setView(form)
             .setNegativeButton(L10n.t("취소"),null).setPositiveButton(L10n.t("Google 계정 연결"),(d,w)->
                 startActivityForResult(GoogleDriveConnectActivity.intent(this,original==null?null:original.id,name.getText().toString(),ro.isChecked()),GoogleDriveConnectActivity.REQUEST)).show();
+    }
+    private void nativeOneDriveForm(Models.RemoteProfile original){
+        LinearLayout form=Ui.vertical(this);form.setPadding(dp(20),dp(8),dp(20),dp(8));
+        EditText name=field(form,"표시할 이름",original==null?"":original.name,android.text.InputType.TYPE_CLASS_TEXT);
+        CheckBox ro=new CheckBox(this);ro.setText(L10n.t("읽기 전용 (변경·삭제·업로드 차단)"));
+        ro.setChecked(original!=null&&original.readOnly);form.addView(ro,Ui.lp(this,-1,44));
+        form.addView(Ui.text(this,L10n.t(original==null?"Microsoft에 로그인하고 OneDrive 접근을 허용하세요.":"기존 Microsoft 계정으로 다시 로그인합니다."),13,Ui.MUTED,false));
+        new AlertDialog.Builder(this).setTitle("OneDrive").setView(form)
+            .setNegativeButton(L10n.t("취소"),null).setPositiveButton(L10n.t("Microsoft 계정 연결"),(d,w)->
+                startActivityForResult(OneDriveConnectActivity.intent(this,original==null?null:original.id,name.getText().toString(),ro.isChecked()),OneDriveConnectActivity.REQUEST)).show();
     }
     private void nativeTraditionalRemoteForm(Models.RemoteProfile original) {
         String[] types = {"SMB", "FTP", "SFTP", "WebDAV",
@@ -7494,7 +7524,7 @@ public class MainActivity extends LocalizedActivity {
     @android.annotation.SuppressLint("WrongConstant")
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if(requestCode==GoogleDriveConnectActivity.REQUEST){
+        if(requestCode==GoogleDriveConnectActivity.REQUEST||requestCode==OneDriveConnectActivity.REQUEST){
             if(embeddedRemoteEditor!=null&&embeddedRemoteEditor.googleActivityResult(requestCode,resultCode))return;
             if(resultCode==RESULT_OK){folderCache.clearCounts();showRemoteList();}
             return;

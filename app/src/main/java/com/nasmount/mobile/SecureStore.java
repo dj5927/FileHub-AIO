@@ -124,7 +124,7 @@ final class SecureStore {
     List<Models.RemoteProfile> supportedRemotes() throws Exception {
         List<Models.RemoteProfile> result = remotes();
         result.removeIf(p -> ("GoogleDrive".equals(p.protocol)&&!GoogleDriveAuth.linked(p)) ||
-                "OneDrive".equals(p.protocol));
+                ("OneDrive".equals(p.protocol)&&!OneDriveAuth.linked(p)));
         return result;
     }
 
@@ -143,7 +143,7 @@ final class SecureStore {
         Set<String> retiredIds = new HashSet<>();
         for (Models.RemoteProfile profile : remotes()) {
             if (("GoogleDrive".equals(profile.protocol)&&!GoogleDriveAuth.linked(profile)) ||
-                    "OneDrive".equals(profile.protocol))
+                    ("OneDrive".equals(profile.protocol)&&!OneDriveAuth.linked(profile)))
                 retiredIds.add(profile.id);
         }
         result.removeIf(f ->
@@ -178,7 +178,10 @@ final class SecureStore {
     }
     void deleteRemote(String id) throws Exception {
         List<Models.RemoteProfile> all = remotes();
-        for(Models.RemoteProfile p:all)if(id.equals(p.id)&&GoogleDriveAuth.linked(p))GoogleDriveApi.forget(p);
+        for(Models.RemoteProfile p:all)if(id.equals(p.id)){
+            if(GoogleDriveAuth.linked(p))GoogleDriveApi.forget(p);
+            if(OneDriveAuth.linked(p))OneDriveAuth.forget(p);
+        }
         all.removeIf(x -> x.id.equals(id));
         writeRemotes(all);
         List<Models.Favorite> favorites = favorites();
@@ -234,7 +237,8 @@ final class SecureStore {
     /** Commit connection and favorite snapshot together, never unencrypted. */
     int restorePortable(List<Models.RemoteProfile> imported,
                         List<Models.Favorite> incomingFavorites,boolean replace) throws Exception {
-        List<Models.RemoteProfile> all=replace?new ArrayList<>():remotes();
+        List<Models.RemoteProfile> before=remotes();
+        List<Models.RemoteProfile> all=replace?new ArrayList<>():new ArrayList<>(before);
         int changed=0;
         for(Models.RemoteProfile next:imported) {
             // Importing an existing ID intentionally updates its credentials.
@@ -253,6 +257,9 @@ final class SecureStore {
         if(!preferences.edit().putString("remotes",remotesJson)
                 .putString("favorites",favoritesJson).commit())
             throw new IllegalStateException("설정 동시 저장에 실패했습니다.");
+        for(Models.RemoteProfile old:before)if(OneDriveAuth.linked(old)&&
+            all.stream().noneMatch(p->p.id.equals(old.id)&&OneDriveAuth.linked(p)&&p.fingerprint.equals(old.fingerprint)))
+                OneDriveAuth.forget(old);
         return changed;
     }
 

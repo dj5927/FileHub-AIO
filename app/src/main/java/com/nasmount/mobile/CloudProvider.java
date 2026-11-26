@@ -83,7 +83,7 @@ final class CloudProvider {
             "terabox;1.37.0.7;PC;PC-Windows;10.0.22631;WindowsTeraBox";
 
     static boolean isCloud(Models.RemoteProfile p) {
-        return "MYBOX".equals(p.protocol) || "TeraBox".equals(p.protocol) || GoogleDriveAuth.PROTOCOL.equals(p.protocol);
+        return "MYBOX".equals(p.protocol) || "TeraBox".equals(p.protocol) || GoogleDriveAuth.PROTOCOL.equals(p.protocol) || OneDriveAuth.PROTOCOL.equals(p.protocol);
     }
     static boolean isReadOnly(Models.RemoteProfile p) {
         return false; // MYBOX and TeraBox both have write transports.

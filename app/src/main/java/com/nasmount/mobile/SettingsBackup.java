@@ -52,11 +52,14 @@ final class SettingsBackup {
         root.put("version",VERSION);
         root.put("created",System.currentTimeMillis());
         JSONArray remotes=new JSONArray();
+        Set<String> oneDriveIds=new HashSet<>();
         for(Models.RemoteProfile profile:store.supportedRemotes())
-            remotes.put(profileToJson(profile));
+            if(OneDriveAuth.PROTOCOL.equals(profile.protocol))oneDriveIds.add(profile.id);
+            else remotes.put(profileToJson(profile));
         root.put("remotes",remotes);
-        root.put("favorites",new JSONArray(SecureStore.encodeFavorites(
-                store.supportedFavorites())));
+        List<Models.Favorite> exportedFavorites=store.supportedFavorites();
+        exportedFavorites.removeIf(f->"remote".equals(f.kind)&&oneDriveIds.contains(f.remoteId));
+        root.put("favorites",new JSONArray(SecureStore.encodeFavorites(exportedFavorites)));
         JSONObject settings=new JSONObject();
         for(String name:FILES) {
             SharedPreferences pref=context.getSharedPreferences(name,Context.MODE_PRIVATE);

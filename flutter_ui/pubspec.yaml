@@ -20,6 +20,7 @@ flutter:
   assets:
     - assets/filehub_aio_icon.png
     - assets/filehub_aio_wordmark.png
+    - assets/cloud/
   module:
     androidX: true
     androidPackage: com.filehubaio.filehub_flutter

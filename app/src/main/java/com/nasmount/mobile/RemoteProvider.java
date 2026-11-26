@@ -445,6 +445,7 @@ final class RemoteProvider {
         return count;
     }
     static List<Models.Entry> list(Models.RemoteProfile p, String path) throws Exception {
+        if (OneDriveAuth.PROTOCOL.equals(p.protocol)) return OneDriveApi.forProfile(p).list(relativePath(path));
         if (GoogleDriveAuth.PROTOCOL.equals(p.protocol)) return GoogleDriveApi.forProfile(p).list(relativePath(path));
         if (CloudProvider.isCloud(p)) return CloudProvider.list(p, relativePath(path));
         String normalized = relativePath(path);
@@ -544,6 +545,7 @@ final class RemoteProvider {
 
     static void download(Models.RemoteProfile p, String path, OutputStream target)
             throws Exception {
+        if (OneDriveAuth.PROTOCOL.equals(p.protocol)) {OneDriveApi.forProfile(p).download(relativePath(path),target);return;}
         if (GoogleDriveAuth.PROTOCOL.equals(p.protocol)) {GoogleDriveApi.forProfile(p).download(relativePath(path),target);return;}
         if (CloudProvider.isCloud(p)) {
             CloudProvider.download(p, relativePath(path), target);
@@ -594,6 +596,7 @@ final class RemoteProvider {
     static InputStream openStream(Models.RemoteProfile p, String path, long position)
             throws Exception {
         if (position < 0) throw new IOException(L10n.t("잘못된 파일 위치입니다."));
+        if (OneDriveAuth.PROTOCOL.equals(p.protocol)) return OneDriveApi.forProfile(p).open(path,position);
         if (GoogleDriveAuth.PROTOCOL.equals(p.protocol)) return GoogleDriveApi.forProfile(p).open(path,position);
         if (CloudProvider.isCloud(p)) return CloudProvider.openStream(p, path, position);
         String normalized = relativePath(path);
@@ -751,6 +754,7 @@ final class RemoteProvider {
                                InputStream input, long byteLength, boolean overwrite,
                                String expectedWebDavEtag, byte[] officeHash) throws Exception {
         requireWritable(p);
+        if (OneDriveAuth.PROTOCOL.equals(p.protocol)) {OneDriveApi.forProfile(p).upload(folder,name,input,byteLength,overwrite);verifyOfficeRemote(p,child(folder,name),byteLength,officeHash);return;}
         if (GoogleDriveAuth.PROTOCOL.equals(p.protocol)) {GoogleDriveApi.forProfile(p).upload(folder,name,input,byteLength,overwrite);verifyOfficeRemote(p,child(folder,name),byteLength,officeHash);return;}
         if ("MYBOX".equals(p.protocol)) {
             MyBoxWriteApi.LIVE.upload(p, folder, name, input, byteLength, overwrite);
@@ -943,6 +947,7 @@ final class RemoteProvider {
 
     static void mkdir(Models.RemoteProfile p, String folder) throws Exception {
         requireWritable(p);
+        if (OneDriveAuth.PROTOCOL.equals(p.protocol)) {OneDriveApi.forProfile(p).mkdir(folder);return;}
         if (GoogleDriveAuth.PROTOCOL.equals(p.protocol)) {GoogleDriveApi.forProfile(p).mkdir(folder);return;}
         if ("MYBOX".equals(p.protocol)) {
             MyBoxWriteApi.LIVE.mkdir(p, folder);
@@ -980,6 +985,7 @@ final class RemoteProvider {
     static void rename(Models.RemoteProfile p, String source,
                        String destination, boolean directory) throws Exception {
         requireWritable(p);
+        if (OneDriveAuth.PROTOCOL.equals(p.protocol)) {OneDriveApi.forProfile(p).rename(source,destination);return;}
         if (GoogleDriveAuth.PROTOCOL.equals(p.protocol)) {GoogleDriveApi.forProfile(p).rename(source,destination);return;}
         if ("MYBOX".equals(p.protocol)) {
             MyBoxWriteApi.LIVE.rename(p, source, destination);
@@ -1033,6 +1039,7 @@ final class RemoteProvider {
     static void delete(Models.RemoteProfile p, String path, boolean directory)
             throws Exception {
         requireWritable(p);
+        if (OneDriveAuth.PROTOCOL.equals(p.protocol)) {OneDriveApi.forProfile(p).delete(path);return;}
         if (GoogleDriveAuth.PROTOCOL.equals(p.protocol)) {GoogleDriveApi.forProfile(p).delete(path);return;}
         if ("MYBOX".equals(p.protocol)) {
             MyBoxWriteApi.LIVE.delete(p, path);
