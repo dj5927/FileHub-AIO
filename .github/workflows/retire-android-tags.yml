@@ -1,0 +1,48 @@
+name: Retire Android version tags only
+on:
+  push:
+    branches: [maintenance/android-ota-retire-public]
+    paths: ['.github/workflows/retire-android-tags.yml']
+permissions:
+  contents: write
+jobs:
+  retire:
+    if: github.repository == 'dj5927/FileHub-AIO'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: android/flutter-migration
+          fetch-depth: 1
+      - name: Verify source reachability and atomically delete Android tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --unshallow origin '+refs/heads/android/flutter-migration:refs/remotes/origin/android/flutter-migration' '+refs/heads/main:refs/remotes/origin/main' '+refs/heads/archive/android-source/*:refs/remotes/origin/archive/android-source/*' '+refs/tags/v0.1.*:refs/filehub-audit/tags/v0.1.*' '+refs/tags/android-test-v0.1.118:refs/filehub-audit/tags/android-test-v0.1.118'
+          git ls-remote --tags --refs origin 'pc-*' | sort > "$RUNNER_TEMP/pc-before.txt"
+          test "$(wc -l < "$RUNNER_TEMP/pc-before.txt")" -eq 56
+          names=(android-test-v0.1.118)
+          for v in $(seq 85 118); do names+=("v0.1.$v"); done
+          refs=()
+          for tag in "${names[@]}"; do
+            sha="$(git rev-parse "refs/filehub-audit/tags/$tag^{commit}")"
+            git ls-tree -r --name-only "$sha" > "$RUNNER_TEMP/tag-paths.txt"
+            if grep -Ei '(^release-assets/|^\.github/release-handoffs/|\.apk$|\.aab$)' "$RUNNER_TEMP/tag-paths.txt"; then
+              echo "Unexpected binary paths in $tag"; exit 1
+            fi
+            retained=false
+            while IFS= read -r head; do
+              if git merge-base --is-ancestor "$sha" "$head"; then retained=true; break; fi
+            done < <(git for-each-ref --format='%(refname)' refs/remotes/origin/main refs/remotes/origin/android/flutter-migration refs/remotes/origin/archive/android-source/)
+            test "$retained" = true
+            remote="$(git ls-remote --tags --refs origin "refs/tags/$tag" | cut -f1)"
+            test "$remote" = "$(git rev-parse "refs/filehub-audit/tags/$tag")"
+            refs+=(":refs/tags/$tag")
+            echo "Retained source $tag $sha"
+          done
+          test "${#refs[@]}" -eq 35
+          git push --atomic origin "${refs[@]}"
+          git ls-remote --tags --refs origin 'pc-*' | sort > "$RUNNER_TEMP/pc-after.txt"
+          cmp "$RUNNER_TEMP/pc-before.txt" "$RUNNER_TEMP/pc-after.txt"
+          test -z "$(git ls-remote --tags --refs origin 'v0.1.*' 'android-test-*' 'flutter-test-*')"
+          echo "Android tags removed: 35. PC tag objects unchanged: 56."
