@@ -6,6 +6,8 @@ import { t } from '/office-locale.js';
  */
 const LIMIT_ROW=1048576,LIMIT_COL=16384;
 const HEADER_WIDTH=42,HEADER_HEIGHT=29;
+export const MIN_SHEET_ZOOM=.30,MAX_SHEET_ZOOM=3;
+const clampZoom=value=>Math.max(MIN_SHEET_ZOOM,Math.min(MAX_SHEET_ZOOM,value));
 function lowerBound(prefix,offset){
   let low=0,high=prefix.length-2;
   while(low<high){
@@ -27,10 +29,20 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
                                selectedAddress,onSelect,readOnly=false){
   const surface=document.createElement('div');
   surface.id='sheet-surface';
+  const cells=document.createElement('div');
+  cells.className='excel-data-layer';
+  const rows=document.createElement('div');
+  rows.className='excel-row-layer';
+  const cols=document.createElement('div');
+  cols.className='excel-col-layer';
+  const corner=element('excel-corner','',0,0,HEADER_WIDTH,HEADER_HEIGHT);
+  rows.style.width=HEADER_WIDTH+'px';
+  cols.style.height=HEADER_HEIGHT+'px';
+  surface.append(cells,rows,cols,corner);
   scroll.replaceChildren(surface);
   const state={rowPrefix:[],colPrefix:[],maxRow:0,maxCol:0,
     sheet:null,meta:null,zoom:1,selected:selectedAddress,
-    raf:false,lastKey:'',visible:[],pinching:false,pinchAnchor:null};
+    raf:false,lastKey:'',rowKey:'',colKey:'',visible:[],pinching:false,pinchAnchor:null};
   const measure=document.createElement('canvas').getContext('2d');
   function styleFor(address,row,col,cell){
     const id=state.meta?.cells.has(address)?
@@ -159,19 +171,33 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
       Math.max(0,top-HEADER_HEIGHT))-5);
     const c0=Math.max(0,lowerBound(state.colPrefix,
       Math.max(0,left-HEADER_WIDTH))-2);
-    const r1=Math.min(state.maxRow,r0+Math.max(30,
-      Math.ceil(scroll.clientHeight/18/zoom)+24));
-    const c1=Math.min(state.maxCol,c0+Math.max(12,
-      Math.ceil(scroll.clientWidth/32/zoom)+7));
+    // Exact prefix sizes bound the virtual cell count at low zoom.
+    const r1=Math.min(state.maxRow,lowerBound(state.rowPrefix,
+      Math.max(0,top+scroll.clientHeight/zoom-HEADER_HEIGHT))+6);
+    const c1=Math.min(state.maxCol,lowerBound(state.colPrefix,
+      Math.max(0,left+scroll.clientWidth/zoom-HEADER_WIDTH))+4);
     return {r0,r1,c0,c1,top,left};
   }
-  function pinHeaders(rect){
-    for(const n of state.visible){
-      if(n.classList.contains('excel-col-header'))n.style.top=rect.top+'px';
-      if(n.classList.contains('excel-row-header'))n.style.left=rect.left+'px';
-      if(n.classList.contains('excel-corner')){
-        n.style.top=rect.top+'px';n.style.left=rect.left+'px';
+  function updateHeaders(rect,force=false){
+    const rowKey=[getSheetIndex(),rect.r0,rect.r1].join(':');
+    if(force||state.rowKey!==rowKey){
+      const fragment=document.createDocumentFragment();
+      for(let r=rect.r0;r<rect.r1;r++){
+        const top=HEADER_HEIGHT+state.rowPrefix[r];
+        fragment.appendChild(element('excel-row-header',r+1,0,top,
+          HEADER_WIDTH,state.rowPrefix[r+1]-state.rowPrefix[r]));
       }
+      rows.replaceChildren(fragment);state.rowKey=rowKey;
+    }
+    const colKey=[getSheetIndex(),rect.c0,rect.c1].join(':');
+    if(force||state.colKey!==colKey){
+      const fragment=document.createDocumentFragment();
+      for(let c=rect.c0;c<rect.c1;c++){
+        fragment.appendChild(element('excel-col-header',XLSX.utils.encode_col(c),
+          HEADER_WIDTH+state.colPrefix[c],0,
+          state.colPrefix[c+1]-state.colPrefix[c],HEADER_HEIGHT));
+      }
+      cols.replaceChildren(fragment);state.colKey=colKey;
     }
   }
   function render(force=false){
@@ -179,20 +205,13 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
     if(state.pinching)return;
     const rect=visibleRect();
     const key=[getSheetIndex(),rect.r0,rect.r1,rect.c0,rect.c1].join(':');
-    if(!force && key===state.lastKey){pinHeaders(rect);return;}
+    updateHeaders(rect,force);
+    if(!force && key===state.lastKey)return;
     state.lastKey=key;
     const fragment=document.createDocumentFragment(),visible=[];
     const append=n=>{fragment.appendChild(n);visible.push(n);};
-    for(let c=rect.c0;c<rect.c1;c++){
-      const node=element('excel-col-header',XLSX.utils.encode_col(c),
-        HEADER_WIDTH+state.colPrefix[c],rect.top,
-        state.colPrefix[c+1]-state.colPrefix[c],HEADER_HEIGHT);
-      append(node);
-    }
     for(let r=rect.r0;r<rect.r1;r++){
       const top=HEADER_HEIGHT+state.rowPrefix[r];
-      const height=state.rowPrefix[r+1]-state.rowPrefix[r];
-      append(element('excel-row-header',r+1,rect.left,top,HEADER_WIDTH,height));
       for(let c=rect.c0;c<rect.c1;c++){
         const merged=mergeFor(r,c);
         if(merged && (r!==merged.s.r || c!==merged.s.c))continue;
@@ -290,8 +309,7 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
         box.w+'px;height:'+box.h+'px;';
       append(img);
     }
-    append(element('excel-corner','',rect.left,rect.top,HEADER_WIDTH,HEADER_HEIGHT));
-    surface.replaceChildren(fragment);
+    cells.replaceChildren(fragment);
     state.visible=visible;
   }
   function queueRender(force=false){
@@ -303,7 +321,7 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
     }
   }
   const onScroll=()=>{
-    if(state.pinching)pinHeaders(visibleRect());
+    if(state.pinching)updateHeaders(visibleRect());
     else queueRender();
   };
   scroll.addEventListener('scroll',onScroll,{passive:true});
@@ -316,7 +334,7 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
     render(true);
   }
   function setZoom(zoom,point){
-    const target=Math.max(.55,Math.min(3,zoom));
+    const target=clampZoom(zoom);
     const focus=point||{x:scroll.clientWidth/2,y:scroll.clientHeight/2};
     const contentX=(scroll.scrollLeft+focus.x)/state.zoom;
     const contentY=(scroll.scrollTop+focus.y)/state.zoom;
@@ -335,12 +353,12 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
   }
   function updatePinch(zoom,focus){
     if(!state.pinching)return;
-    state.zoom=Math.max(.55,Math.min(3,zoom));
+    state.zoom=clampZoom(zoom);
     surface.style.zoom=String(state.zoom);
     // The same content point follows the midpoint of the two fingers.
     scroll.scrollLeft=Math.max(0,state.pinchAnchor.x*state.zoom-focus.x);
     scroll.scrollTop=Math.max(0,state.pinchAnchor.y*state.zoom-focus.y);
-    pinHeaders(visibleRect());
+    updateHeaders(visibleRect());
   }
   function endPinch(){
     if(!state.pinching)return;
@@ -352,8 +370,9 @@ export function mountExcelGrid(scroll,workbook,styleContext,getSheetIndex,
     let pos;
     try{pos=XLSX.utils.decode_cell(address);}catch{return;}
     if(pos.r>=state.maxRow||pos.c>=state.maxCol)return;
-    scroll.scrollLeft=(HEADER_WIDTH+state.colPrefix[pos.c])*state.zoom;
-    scroll.scrollTop=(HEADER_HEIGHT+state.rowPrefix[pos.r])*state.zoom;
+    // Place the matched cell below and to the right of frozen headers.
+    scroll.scrollLeft=state.colPrefix[pos.c]*state.zoom;
+    scroll.scrollTop=state.rowPrefix[pos.r]*state.zoom;
     queueRender(true);
   }
   function select(address){

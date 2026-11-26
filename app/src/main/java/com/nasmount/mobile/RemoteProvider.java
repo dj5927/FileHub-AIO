@@ -416,6 +416,34 @@ final class RemoteProvider {
         }
     }
 
+    /** Immediate child count only: no per-file size, timestamps or symlink stats. */
+    static int countChildren(Models.RemoteProfile p,String path,boolean hidden)throws Exception{
+        String normalized=relativePath(path);
+        int count=0;
+        if("SMB".equals(p.protocol)){
+            try(SmbFile dir=new SmbFile(smbPath(p,normalized,true),smbContext(p))){
+                String[] names=dir.list();
+                if(names==null)throw new IOException("Cannot list folder");
+                for(String raw:names){
+                    String name=raw.replaceAll("/$","");
+                    if(!name.isEmpty()&&!name.equals(".")&&!name.equals("..")&&
+                            FileViewOptions.visible(name,false,hidden))count++;
+                }
+            }
+        }else if("SFTP".equals(p.protocol)){
+            try(SSHClient ssh=ssh(p);SFTPClient sftp=ssh.newSFTPClient()){
+                for(RemoteResourceInfo item:sftp.ls(absolute(p,normalized))){
+                    String name=item.getName();
+                    if(!name.isEmpty()&&!name.equals(".")&&!name.equals("..")&&
+                            FileViewOptions.visible(name,false,hidden))count++;
+                }
+            }
+        }else{
+            for(Models.Entry item:list(p,normalized))
+                if(FileViewOptions.visible(item.name,false,hidden))count++;
+        }
+        return count;
+    }
     static List<Models.Entry> list(Models.RemoteProfile p, String path) throws Exception {
         if (CloudProvider.isCloud(p)) return CloudProvider.list(p, relativePath(path));
         String normalized = relativePath(path);
@@ -695,13 +723,39 @@ final class RemoteProvider {
     static void upload(Models.RemoteProfile p, String folder, String name,
                        InputStream input, long byteLength, boolean overwrite,
                        String expectedWebDavEtag) throws Exception {
+        upload(p, folder, name, input, byteLength, overwrite, expectedWebDavEtag, null);
+    }
+
+    // Office saves require a complete, nonempty immutable payload.
+    static void uploadOffice(Models.RemoteProfile p, String folder, String name,
+                             File payload, String expectedWebDavEtag) throws Exception {
+        long length = OfficeSaveIntegrity.requirePayload(payload, 256L * 1024 * 1024);
+        byte[] hash = OfficeSaveIntegrity.digest(payload);
+        try (InputStream input = new FileInputStream(payload)) {
+            upload(p, folder, name, input, length, true, expectedWebDavEtag, hash);
+        }
+    }
+
+    private static void verifyOfficeRemote(Models.RemoteProfile p, String path,
+                                           long length, byte[] hash) throws Exception {
+        if (hash == null) return;
+        try (InputStream input = openStream(p, path, 0)) {
+            OfficeSaveIntegrity.verify(input, length, hash);
+        }
+    }
+
+    private static void upload(Models.RemoteProfile p, String folder, String name,
+                               InputStream input, long byteLength, boolean overwrite,
+                               String expectedWebDavEtag, byte[] officeHash) throws Exception {
         requireWritable(p);
         if ("MYBOX".equals(p.protocol)) {
             MyBoxWriteApi.LIVE.upload(p, folder, name, input, byteLength, overwrite);
+            verifyOfficeRemote(p, child(folder, name), byteLength, officeHash);
             return;
         }
         if ("TeraBox".equals(p.protocol)) {
             TeraBoxWriteApi.LIVE.upload(p, folder, name, input, byteLength, overwrite);
+            verifyOfficeRemote(p, child(folder, name), byteLength, officeHash);
             return;
         }
         String finalPath = child(folder, name);
@@ -721,6 +775,7 @@ final class RemoteProvider {
                         try (OutputStream out = new SmbFileOutputStream(staging)) {
                             copy(input, out);
                         }
+                        verifyOfficeRemote(p, tempPath, byteLength, officeHash);
                         boolean backedUp = false;
                         if (overwrite && dest.exists()) {
                             dest.renameTo(backup);
@@ -732,6 +787,7 @@ final class RemoteProvider {
                                 try { backup.renameTo(dest); } catch (Exception ignored) {}
                             throw failure;
                         }
+                        verifyOfficeRemote(p, finalPath, byteLength, officeHash);
                         if (backedUp && backup.exists()) backup.delete();
                     } catch (Exception error) {
                         try { if (staging.exists()) staging.delete(); }
@@ -753,6 +809,7 @@ final class RemoteProvider {
                     try {
                         if (!ftp.storeFile(staged, input))
                             throw new IOException("FTP 임시파일 업로드 실패");
+                        verifyOfficeRemote(p, tempPath, byteLength, officeHash);
                         boolean backedUp = false;
                         if (targetExists) {
                             if (!ftp.rename(target, backup))
@@ -763,6 +820,7 @@ final class RemoteProvider {
                             if (backedUp) ftp.rename(backup, target);
                             throw new IOException("FTP 임시파일 반영 실패");
                         }
+                        verifyOfficeRemote(p, finalPath, byteLength, officeHash);
                         if (backedUp && !ftp.deleteFile(backup))
                             throw new IOException("FTP 저장 성공, 이전 백업 파일 정리 실패");
                     } catch (Exception error) {
@@ -795,6 +853,7 @@ final class RemoteProvider {
                         }
                         try {
                             sftp.put(temp.getAbsolutePath(), stagingName);
+                            verifyOfficeRemote(p, tempPath, byteLength, officeHash);
                             boolean backedUp = false;
                             if (targetExists) {
                                 sftp.rename(finalName, backup);
@@ -806,6 +865,7 @@ final class RemoteProvider {
                                     try { sftp.rename(backup, finalName); } catch (Exception ignored) {}
                                 throw failure;
                             }
+                            verifyOfficeRemote(p, finalPath, byteLength, officeHash);
                             if (backedUp) sftp.rm(backup);
                         } catch (Exception error) {
                             try { sftp.rm(stagingName); } catch (Exception ignored) {}
@@ -828,6 +888,9 @@ final class RemoteProvider {
                 }
                 try {
                 RequestBody body = new RequestBody() {
+                    @Override public long contentLength() {
+                        return officeHash == null ? -1 : byteLength;
+                    }
                     @Override public MediaType contentType() {
                         return MediaType.parse("application/octet-stream");
                     }
@@ -842,6 +905,7 @@ final class RemoteProvider {
                     if (!resp.isSuccessful()) throw new IOException("WebDAV PUT HTTP " +
                             resp.code());
                 }
+                    verifyOfficeRemote(p, tempPath, byteLength, officeHash);
                     WebDavRemoteVersion latest = overwrite ?
                             webdavDestinationState(p, finalPath, false) :
                             new WebDavRemoteVersion(false, null);
@@ -861,6 +925,7 @@ final class RemoteProvider {
                         if (!resp.isSuccessful())
                             throw new IOException("WebDAV MOVE HTTP " + resp.code());
                     }
+                    verifyOfficeRemote(p, finalPath, byteLength, officeHash);
                 } catch (Exception error) {
                     try (Response ignored = webClient(p).newCall(webRequest(p, tempPath, false)
                             .delete().build()).execute()) {}

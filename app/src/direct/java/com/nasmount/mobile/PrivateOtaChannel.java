@@ -7,7 +7,7 @@ import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
-/** Optional private OTA; all credentials are provisioned per user, never embedded. */
+/** HTTPS private OTA. Distribution key is injected only into signed Direct packages. */
 final class PrivateOtaChannel {
     private static final String PREFS="filehub_private_ota";
     final String base,token;
@@ -24,26 +24,10 @@ final class PrivateOtaChannel {
         this.base=normalized.endsWith("/")?normalized:normalized+"/";
         this.token=token;
     }
+    // Fixed HTTPS gateway, no user setup and no public fallback.
+    static final String DEFAULT_ENDPOINT="https://bangtanrun.com/filehub/ota/";
     static PrivateOtaChannel load(Context c)throws Exception {
-        android.content.SharedPreferences p=c.getSharedPreferences(PREFS,Context.MODE_PRIVATE);
-        if(!p.getBoolean("enabled",false))return null;
-        return new PrivateOtaChannel(p.getString("base",""),
-                SecureStore.decrypt(p.getString("token","")));
-    }
-    static void save(Context c,String base,String token)throws Exception {
-        PrivateOtaChannel config=new PrivateOtaChannel(base,token);
-        if(!c.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit()
-                .putString("base",config.base).putString("token",SecureStore.encrypt(config.token))
-                .putBoolean("enabled",true).commit())throw new IOException("Cannot save update configuration");
-    }
-    static void clear(Context c) {
-        c.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit().clear().apply();
-    }
-    static boolean enabled(Context c) {
-        return c.getSharedPreferences(PREFS,Context.MODE_PRIVATE).getBoolean("enabled",false);
-    }
-    static String endpoint(Context c) {
-        return c.getSharedPreferences(PREFS,Context.MODE_PRIVATE).getString("base","");
+        return new PrivateOtaChannel(DEFAULT_ENDPOINT,BuildConfig.DIRECT_OTA_KEY);
     }
     HttpURLConnection open(String url)throws IOException {
         // Exactly scoped same-origin paths. Never forward the bearer to a
@@ -51,10 +35,16 @@ final class PrivateOtaChannel {
         if(!url.equals(base+"manifest.json") &&
                 !url.matches(java.util.regex.Pattern.quote(base)+"download/FileHub-AIO-v[0-9]+\\.[0-9]+\\.[0-9]+\\.apk"))
             throw new SecurityException("Untrusted private OTA URL");
-        HttpURLConnection conn=(HttpURLConnection)new URL(url).openConnection();
+        String request=url;
+        if(DEFAULT_ENDPOINT.equals(base)){
+            String asset=url.equals(base+"manifest.json")?"manifest":url.substring((base+"download/").length());
+            request=base+"index.php?asset="+asset;
+        }
+        HttpURLConnection conn=(HttpURLConnection)new URL(request).openConnection();
         conn.setInstanceFollowRedirects(false);
         conn.setConnectTimeout(6500);conn.setReadTimeout(25000);
-        conn.setRequestProperty("Authorization","Bearer "+token);
+        if(DEFAULT_ENDPOINT.equals(base))conn.setRequestProperty("X-FileHub-Access",token);
+        else conn.setRequestProperty("Authorization","Bearer "+token);
         conn.setRequestProperty("User-Agent","FileHub-AIO-Android-OTA");
         return conn;
     }

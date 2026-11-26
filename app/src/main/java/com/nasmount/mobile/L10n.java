@@ -104,4 +104,8 @@ final class L10n {
         for(int i=0;i<result.length;i++)result[i]=t(result[i]);
         return result;
     }
+    /** Keep user filenames and counts as arguments, never as translation keys. */
+    static String f(String koreanPattern, Object... values) {
+        return String.format(Locale.ROOT, t(koreanPattern), values);
+    }
 }

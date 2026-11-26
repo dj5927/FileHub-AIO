@@ -55,7 +55,8 @@ public final class BuiltInOfficeActivity extends LocalizedActivity {
     private WebView web;
     private TextView status;
     private TextView documentTitle;
-    private ImageButton spreadsheetSave;
+    private ImageButton spreadsheetSave, spreadsheetSearch;
+    private volatile boolean sheetReady;
     private volatile boolean busy, loaded, saved;
     private OfficeJsBridge bridge;
 
@@ -105,8 +106,18 @@ public final class BuiltInOfficeActivity extends LocalizedActivity {
         title.setPadding(Ui.dp(this, 12), 0, 0, 0);
         title.setGravity(android.view.Gravity.CENTER_VERTICAL);
         titleBar.addView(title, new LinearLayout.LayoutParams(0, -1, 1f));
-        title.setOnClickListener(view -> askClose());
+        title.setOnClickListener(view -> requestOfficeBack());
         if ("sheet".equals(OfficeFileTypes.mode(name))) {
+            spreadsheetSearch=new ImageButton(this);
+            spreadsheetSearch.setImageResource(R.drawable.ic_excel_search);
+            spreadsheetSearch.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.TEXT));
+            spreadsheetSearch.setContentDescription(L10n.t("현재 시트 검색"));
+            spreadsheetSearch.setBackgroundColor(Color.TRANSPARENT);
+            spreadsheetSearch.setPadding(Ui.dp(this,8),Ui.dp(this,5),Ui.dp(this,8),Ui.dp(this,5));
+            spreadsheetSearch.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+            titleBar.addView(spreadsheetSearch,new LinearLayout.LayoutParams(Ui.dp(this,44),Ui.dp(this,36)));
+            spreadsheetSearch.setEnabled(false);
+            spreadsheetSearch.setOnClickListener(view->requestSpreadsheetSearch());
             spreadsheetSave = new ImageButton(this);
             spreadsheetSave.setImageResource(R.drawable.ic_excel_save);
             spreadsheetSave.setContentDescription(L10n.t("원본 엑셀 파일 저장"));
@@ -117,12 +128,7 @@ public final class BuiltInOfficeActivity extends LocalizedActivity {
             titleBar.addView(spreadsheetSave,
                     new LinearLayout.LayoutParams(Ui.dp(this, 44), Ui.dp(this, 36)));
             spreadsheetSave.setEnabled(false);
-            spreadsheetSave.setOnClickListener(view -> {
-                if (loaded && web != null && !isFinishing() && !isDestroyed() &&
-                        (excelLease == null || !excelLease.readOnly())) {
-                    web.evaluateJavascript("window.OfficeRequestSave && window.OfficeRequestSave()", null);
-                }
-            });
+            spreadsheetSave.setOnClickListener(view -> requestSpreadsheetSave());
         }
         status = Ui.text(this, L10n.t("내장 문서 엔진 준비 중..."), 12, Ui.MUTED, false);
         status.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), 0);
@@ -161,7 +167,36 @@ public final class BuiltInOfficeActivity extends LocalizedActivity {
         });
         bridge = new OfficeJsBridge();
         web.addJavascriptInterface(bridge, "NasOfficeBridge");
+        installViewerChrome(titleBar,()->ViewerUiPolicy.document(name,Ui.BG,Ui.TEXT,
+                spreadsheetSave!=null,sheetReady,
+                busy,officeReadOnly()),()->EditionMonetization.full(this),(action,value)->{
+                    if("back".equals(action))requestOfficeBack();
+                    else if("search".equals(action))requestSpreadsheetSearch();
+                    else if("save".equals(action))requestSpreadsheetSave();
+                });
         stageOriginal();
+    }
+
+    private boolean officeReadOnly(){
+        return (excelLease!=null&&excelLease.readOnly())||
+                (profile!=null&&(profile.readOnly||CloudProvider.isReadOnly(profile)));
+    }
+    private void requestSpreadsheetSearch(){
+        if(spreadsheetSearch!=null&&sheetReady&&loaded&&!busy&&web!=null&&
+                !isFinishing()&&!isDestroyed()&&EditionMonetization.full(this))
+            web.evaluateJavascript("window.OfficeRequestSearch && window.OfficeRequestSearch()",null);
+    }
+    private void requestOfficeBack(){
+        if(sheetReady&&web!=null&&!isFinishing()&&!isDestroyed()){
+            web.evaluateJavascript("Boolean(window.OfficeDismissSearch && window.OfficeDismissSearch())",result->{
+                if(!isFinishing()&&!isDestroyed()&&!"true".equals(result))askClose();
+            });
+        }else askClose();
+    }
+    private void requestSpreadsheetSave(){
+        if(spreadsheetSave!=null&&spreadsheetSave.isEnabled()&&sheetReady&&loaded&&!busy&&
+                web!=null&&!isFinishing()&&!isDestroyed()&&!officeReadOnly()&&EditionMonetization.full(this))
+            web.evaluateJavascript("window.OfficeRequestSave && window.OfficeRequestSave()",null);
     }
 
     private void showStatus(String message) {
@@ -215,9 +250,6 @@ public final class BuiltInOfficeActivity extends LocalizedActivity {
                 showStatus(L10n.t("내장 문서 편집기를 여는 중..."));
                 runOnUiThread(() -> {
                     if (!isDestroyed() && !isFinishing()) {
-                        if (spreadsheetSave != null)
-                            spreadsheetSave.setEnabled(excelLease == null ||
-                                    !excelLease.readOnly());
                         if (excelLease != null && excelLease.readOnly()) {
                             documentTitle.setText("‹ " + name + "  🔒");
                             documentTitle.setContentDescription(name + ", 읽기 전용");
@@ -291,47 +323,23 @@ public final class BuiltInOfficeActivity extends LocalizedActivity {
         return missing;
     }
 
-    private void executeSave(File data) {
+    private void executeSave(File data, long expectedLength) {
         worker.execute(() -> {
             String failure = null;
             try {
-                if (data == null || data.length() == 0 ||
-                        data.length() > MAX_DOCUMENT_BYTES)
+                if (OfficeSaveIntegrity.requirePayload(data, MAX_DOCUMENT_BYTES) != expectedLength)
                     throw new IOException("편집 문서 크기가 올바르지 않습니다.");
                 if ("remote".equals(kind)) {
                     String relative = RemoteProvider.relativePath(path);
                     if (excelLease != null) excelLease.verifyBeforeSave();
-                    try (InputStream src = new FileInputStream(data)) {
-                        RemoteProvider.upload(profile, RemoteProvider.parent(relative),
-                                name, src, data.length(), true,
-                                excelLease == null ? null : excelLease.originalEtag());
-                    }
+                    RemoteProvider.uploadOffice(profile, RemoteProvider.parent(relative),
+                            name, data, excelLease == null ? null : excelLease.originalEtag());
                     if (excelLease != null) excelLease.saved();
                 } else if ("local".equals(kind)) {
-                    File output = new File(path);
-                    File pending = new File(output.getParentFile(),
-                            ".nasmount-office-" + UUID.randomUUID() + ".tmp");
-                    try {
-                        try (InputStream in = new FileInputStream(data);
-                             OutputStream out = new FileOutputStream(pending)) {
-                            copy(in, out);
-                        }
-                        try {
-                            Files.move(pending.toPath(), output.toPath(),
-                                    StandardCopyOption.ATOMIC_MOVE,
-                                    StandardCopyOption.REPLACE_EXISTING);
-                        } catch (java.nio.file.AtomicMoveNotSupportedException missing) {
-                            Files.move(pending.toPath(), output.toPath(),
-                                    StandardCopyOption.REPLACE_EXISTING);
-                        }
-                    } finally { if (pending.exists()) pending.delete(); }
+                    OfficeSaveIntegrity.writeLocal(data, new File(path), MAX_DOCUMENT_BYTES);
                 } else {
-                    try (InputStream in = new FileInputStream(data);
-                         OutputStream out = getContentResolver().openOutputStream(
-                                 Uri.parse(contentUri), "rwt")) {
-                        if (out == null) throw new IOException("SAF 파일 쓰기 권한이 없습니다.");
-                        copy(in, out);
-                    }
+                    OfficeSafSave.write(getContentResolver(), Uri.parse(contentUri), data,
+                            new File(getFilesDir(), "office-recovery"), MAX_DOCUMENT_BYTES);
                 }
                 saved = true;
                 setResult(RESULT_OK);
@@ -381,6 +389,16 @@ public final class BuiltInOfficeActivity extends LocalizedActivity {
             } catch (Exception e) { return "{}"; }
         }
 
+        @JavascriptInterface public void sheetReady(String token){
+            if(!saveToken.equals(token)||!loaded||!"sheet".equals(OfficeFileTypes.mode(name)))return;
+            runOnUiThread(()->{
+                if(isDestroyed()||isFinishing()||web==null)return;
+                sheetReady=true;
+                if(spreadsheetSearch!=null)spreadsheetSearch.setEnabled(true);
+                if(spreadsheetSave!=null)spreadsheetSave.setEnabled(!officeReadOnly());
+            });
+        }
+
         @JavascriptInterface public synchronized String beginSave(String token,
                                                                    long length) {
             if (!saveToken.equals(token) || busy || !loaded ||
@@ -418,14 +436,21 @@ public final class BuiltInOfficeActivity extends LocalizedActivity {
             try {
                 receiver.close();
                 receiver = null;
+                if (OfficeSaveIntegrity.requirePayload(edited, MAX_DOCUMENT_BYTES) != expected)
+                    throw new IOException("Incomplete Office export");
+                File completed = edited;
+                long completedLength = expected;
+                // Ownership transfers to the save worker. A late JS cancel
+                // must not delete the file or reopen the save gate.
+                edited = null;
                 accepting = false;
-                executeSave(edited);
+                executeSave(completed, completedLength);
                 return "OK";
             } catch (IOException e) { return "ERROR"; }
         }
 
         @JavascriptInterface public synchronized void cancelSave(String token) {
-            if (!saveToken.equals(token)) return;
+            if (!saveToken.equals(token) || !accepting) return;
             if (receiver != null) try { receiver.close(); } catch (Exception ignored) {}
             receiver = null;
             accepting = false;
@@ -447,7 +472,7 @@ public final class BuiltInOfficeActivity extends LocalizedActivity {
                 .setPositiveButton(L10n.t("종료"), (dialog, which) -> finish()).show();
     }
 
-    @Override public void onBackPressed() { askClose(); }
+    @Override public void onBackPressed() { requestOfficeBack(); }
 
     @Override protected void onDestroy() {
         // Release after any in-flight upload, not during it. A killed process

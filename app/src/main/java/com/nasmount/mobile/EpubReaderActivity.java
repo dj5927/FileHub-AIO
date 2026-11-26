@@ -279,6 +279,17 @@ public final class EpubReaderActivity extends LocalizedActivity {
         bottom.addView(next,Ui.lp(this,64,-1));
         next.setOnClickListener(v->turn(1));
         bottom.setTag(pageInfo);
+        installViewerChrome(bottom,()->{
+            boolean ready=(pdfMode?pdfPageCount>0&&pdfSource!=null:archive!=null)&&
+                    !loadingChapter&&!turnBusy&&!readerErrorVisible;
+            return ViewerUiPolicy.state("reader",pageInfo.getText().toString(),
+                    0xFF101923,Color.WHITE,-1,false,ready?"previous":null,
+                    ready?"next":null,ready?"quick":null);
+        },()->visibleBars,(action,value)->{
+            if("previous".equals(action))turn(-1);
+            else if("next".equals(action))turn(1);
+            else if("quick".equals(action))showQuickSeek();
+        });
         web.setContentDescription((pdfMode?"PDF":"EPUB")+
                 " 본문: 왼쪽 터치 이전 페이지, 오른쪽 터치 다음 페이지, 가운데 터치 메뉴 표시·숨김");
         web.setOnTouchListener(new View.OnTouchListener(){

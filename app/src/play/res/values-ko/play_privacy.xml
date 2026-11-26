@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="play_privacy_title">개인정보 처리방침</string>
+    <string name="play_privacy_description">데이터 처리, 권한 사용 및 개발자의 처리방침을 확인합니다.</string>
+    <string name="play_privacy_internal">내부 테스트 안내입니다. 정식 배포 전 개발자의 개인정보 처리방침과 문의처를 등록해야 합니다.</string>
+    <string name="play_privacy_body">FileHub AIO는 파일 관리, 미리보기, 독서 및 재생을 위해 파일과 미디어에 접근합니다. 카메라는 QR 스캔에 사용하며, 선택적인 다른 앱 위 표시 권한은 광고가 아닌 영상 팝업 재생 확인에 사용합니다.\n\n연결 정보와 설정은 기기에 저장됩니다. 비밀번호와 비밀 토큰은 Android Keystore 암호화로 보호합니다. 접속하거나 파일을 전송할 때 사용자가 선택한 저장소 서비스로 파일 및 접속 정보가 전달됩니다. HTTP와 FTP는 암호화되지 않을 수 있으므로 지원되는 경우 보안 프로토콜을 사용하세요.\n\n설정 내보내기, TV 연결, 공유 링크 및 외부 플레이어 사용 시 선택한 기기·서비스·앱에 해당 정보 또는 파일이 전달될 수 있습니다.\n\n구매는 Google Play에서 처리하며, FileHub는 풀버전 사용 권한을 관리하기 위해 구매 영수증을 확인하고 저장합니다. 광고 사용 시 Google Mobile Ads SDK는 광고, 분석, 부정 사용 방지를 위해 IP 주소, 앱 사용 정보, 진단 정보 및 기기·계정 식별자를 수집할 수 있습니다. 해당되는 광고 개인정보 선택은 설정에서 확인할 수 있습니다.\n\n저장된 연결을 삭제하거나 앱 데이터 삭제 또는 앱 제거로 기기에 저장된 앱 설정을 제거할 수 있습니다. 내보낸 백업 및 다른 기기나 서비스에 저장된 파일은 별도로 관리해야 합니다.</string>
+    <string name="play_privacy_open">전체 처리방침 열기</string>
+    <string name="play_privacy_open_failed">브라우저에서 개인정보 처리방침을 열 수 없습니다.</string>
+</resources>

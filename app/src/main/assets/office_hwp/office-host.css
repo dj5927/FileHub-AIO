@@ -121,8 +121,18 @@ body:has(#spreadsheet-shell:not([hidden])) { background:#f7f8fa; }
   background:white;position:relative;
 }
 #sheet-surface {position:relative;background:white;color:#161616;
-  font-family:Arial,"Noto Sans KR",sans-serif;font-size:12px;}
-#sheet-surface > div {
+  font-family:Arial,"Noto Sans KR",sans-serif;font-size:12px;
+  display:grid;grid-template: minmax(0,1fr) / minmax(0,1fr);isolation:isolate;}
+.excel-data-layer {position:absolute;inset:0;z-index:0;}
+/* Independent sticky layers: recycling horizontally visible cells never
+   removes or repositions the row labels. */
+.excel-row-layer,.excel-col-layer,.excel-corner {
+  grid-area:1/1;position:sticky;pointer-events:none;background:#f3f4f6;
+}
+.excel-row-layer {left:0;align-self:stretch;justify-self:start;z-index:9;}
+.excel-col-layer {top:0;align-self:start;justify-self:stretch;z-index:10;}
+.excel-corner {left:0;top:0;align-self:start;justify-self:start;z-index:11;}
+.excel-data-layer > div,.excel-row-layer > div,.excel-col-layer > div {
   position:absolute;box-sizing:border-box;
   overflow:hidden;white-space:nowrap;text-overflow:clip;
   border-right:1px solid #d1d5da;border-bottom:1px solid #d1d5da;
@@ -134,18 +144,19 @@ body:has(#spreadsheet-shell:not([hidden])) { background:#f7f8fa; }
   user-select:none;-webkit-user-select:none;
 }
 .excel-cell.selected {outline:2px solid #008c75;outline-offset:-2px;z-index:3;}
-#sheet-surface > .excel-cell.excel-overflow {overflow:visible;z-index:4;}
+#sheet-surface .excel-cell.excel-overflow {overflow:visible;z-index:4;}
 .excel-spill {position:absolute;top:0;height:100%;display:flex;
   align-items:center;box-sizing:border-box;white-space:nowrap;
   overflow:hidden;padding:0 4px;pointer-events:none;
   font:inherit;color:inherit;text-decoration:inherit;}
-#sheet-surface > .excel-drawing-image {position:absolute;
+#sheet-surface .excel-drawing-image {position:absolute;
   z-index:6;padding:0;border:0;object-fit:fill;
   pointer-events:none;user-select:none;-webkit-user-select:none;}
 .excel-col-header,.excel-row-header,.excel-corner {
   display:flex;align-items:center;justify-content:center;
   background:#f3f4f6;color:#5b6771;
   font-family:Arial,"Noto Sans KR",sans-serif;font-size:11px;
+  min-width:0;overflow:hidden;white-space:nowrap;padding:0 2px;
 }
 .excel-col-header {z-index:10;border-bottom:1px solid #8f969c!important;}
 .excel-row-header {z-index:9;border-right:1px solid #9ba3ac!important;}
@@ -172,3 +183,22 @@ body:has(#spreadsheet-shell:not([hidden])) { background:#f7f8fa; }
 #status {max-height:46px;overflow:hidden;border-radius:0;
   font-size:11px;white-space:nowrap;text-overflow:ellipsis;}
 #status.show,#status.error {box-shadow:0 2px 5px #0003;}
+
+/* Search stays in the local document WebView. */
+#sheet-find-dialog {
+  color:#202020;background:#fff;border:0;border-radius:12px;
+  padding:18px;width:min(92vw,420px);max-width:92vw;
+  box-shadow:0 10px 36px #0005;color-scheme:light;
+}
+#sheet-find-dialog::backdrop {background:#0006;}
+#sheet-find-dialog h2 {margin:0 0 5px;font-size:17px;}
+#sheet-find-name {margin:0 0 14px;color:#69737d;font-size:12px;overflow-wrap:anywhere;}
+#sheet-find-query {display:block;width:100%;padding:11px 10px;font-size:16px;
+  border:1px solid #b0b7bd;border-radius:6px;background:#fff;color:#161616;}
+#sheet-find-info {min-height:23px;margin:12px 0 5px;color:#52616b;font-size:13px;}
+#sheet-find-preview {min-height:20px;max-height:58px;overflow:hidden;
+  overflow-wrap:anywhere;white-space:pre-wrap;margin:0 0 10px;font-size:12px;}
+.sheet-find-actions {display:flex;gap:7px;justify-content:flex-end;flex-wrap:wrap;}
+.sheet-find-actions button {background:#f4f6f7;color:#29333a;border:1px solid #cbd1d5;
+  min-height:38px;padding:6px 11px;font-size:13px;}
+.sheet-find-actions #sheet-find-confirm {color:#fff;background:#087a72;border-color:#087a72;}

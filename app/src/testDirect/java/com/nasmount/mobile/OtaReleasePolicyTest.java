@@ -58,4 +58,25 @@ public class OtaReleasePolicyTest {
         wrong.getJSONArray("assets").getJSONObject(0).put("name","other.apk");
         assertThrows(IllegalArgumentException.class,()->OtaReleasePolicy.parse(wrong));
     }
+    private JSONObject preview(String version,int code)throws Exception{
+        JSONObject r=release("v"+version,code);
+        r.put("tag_name","flutter-test-v"+version);r.put("prerelease",true);
+        r.getJSONArray("assets").getJSONObject(0).put("browser_download_url",
+                OtaReleasePolicy.REPO+"/releases/download/flutter-test-v"+version+"/FileHub-AIO-v"+version+".apk");
+        return r;
+    }
+    @Test public void previewChannelIsExplicitAndIsolated()throws Exception{
+        JSONObject test=preview("0.1.130",131);
+        assertThrows(IllegalArgumentException.class,()->OtaReleasePolicy.parse(test));
+        JSONObject draft=preview("0.1.999",999);draft.put("draft",true);
+        JSONObject wrong=preview("0.1.998",998);
+        wrong.getJSONArray("assets").getJSONObject(0).put("digest","");
+        OtaReleasePolicy.Release candidate=OtaReleasePolicy.newestPreview(new JSONArray()
+                .put(release("v0.1.150",151)).put(preview("0.1.129",130)).put(draft).put(wrong).put(test));
+        assertEquals(131,candidate.code);
+        assertTrue(OtaReleasePolicy.publicDownloadAllowed(candidate,true));
+        assertFalse(OtaReleasePolicy.publicDownloadAllowed(candidate,false));
+        assertNull(OtaReleasePolicy.newestPreview(new JSONArray().put(draft).put(wrong)));
+        assertFalse(OtaReleasePolicy.publicDownloadAllowed(OtaReleasePolicy.parse(release("v0.1.118",119)),true));
+    }
 }

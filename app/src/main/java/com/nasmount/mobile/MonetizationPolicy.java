@@ -6,7 +6,11 @@ import java.util.*;
 final class MonetizationPolicy {
     static final long AD_INTERVAL_MS=10L*60*1000;
     static final String PRODUCT_ID="filehub_full_version";
-    static final int KRW_PRICE=3900;
+    static final String ANNUAL_PRODUCT_ID="filehub_premium_annual";
+    static final String ANNUAL_BASE_PLAN="annual";
+    static final int KRW_PRICE=9900;
+    static final int KRW_ANNUAL_PRICE=2900;
+    static boolean premiumProduct(String id){return PRODUCT_ID.equals(id)||ANNUAL_PRODUCT_ID.equals(id);}
     private MonetizationPolicy() {}
     static String type(String protocol) {
         return protocol==null?"":protocol.trim().toUpperCase(Locale.ROOT);

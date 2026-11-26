@@ -77,12 +77,38 @@ def adApp = providers.gradleProperty('filehubAdMobAppId').getOrElse('')
 def adBanner = providers.gradleProperty('filehubAdMobBannerId').getOrElse('')
 def adInterstitial = providers.gradleProperty('filehubAdMobInterstitialId').getOrElse('')
 def billingKey = providers.gradleProperty('filehubPlayBillingPublicKey').getOrElse('')
+def privacyPolicyUrl = providers.gradleProperty('filehubPrivacyPolicyUrl').getOrElse('').trim()
+def privacyUrlValid = {
+    if (!privacyPolicyUrl) return false
+    try {
+        def uri = new java.net.URI(privacyPolicyUrl)
+        return 'https'.equalsIgnoreCase(uri.scheme) && uri.host != null &&
+                uri.userInfo == null && uri.host.contains('.')
+    } catch (java.net.URISyntaxException ignored) {
+        return false
+    }
+}
+if (privacyPolicyUrl && !privacyUrlValid())
+    throw new GradleException('Privacy policy URL must be an HTTPS URL without embedded credentials')
 // An upload-signed bundle must explicitly be an internal test or a production
 // build. Default bundlePlayRelease remains an unsigned development candidate.
+// Local private distribution key; never checked into the public source tree.
+def directOtaKeyFile = providers.gradleProperty('filehubDirectOtaKeyFile').orElse('').get()
+def directOtaKey = directOtaKeyFile ? file(directOtaKeyFile).getText('UTF-8').trim() : ''
+if (directOtaKey && !(directOtaKey ==~ /[A-Za-z0-9_-]{32,128}/))
+    throw new GradleException('Invalid private OTA key')
 def playInternal = providers.gradleProperty('filehubPlayInternalTest').getOrElse('false') == 'true'
 def playProduction = providers.gradleProperty('filehubPlayProduction').getOrElse('false') == 'true'
+// The Room/R8 startup fix is confirmed. All Play release candidates now
+// use R8 and resource shrinking. Reject obsolete diagnostic switches.
+if (providers.gradleProperty('filehubPlayDiagnosticNoR8').getOrElse('false') == 'true' ||
+        providers.gradleProperty('filehubPlayR8Trial').getOrElse('false') == 'true')
+    throw new GradleException('Obsolete Play diagnostic build; use the standard optimized release')
 if (playInternal && playProduction)
     throw new GradleException('Choose exactly one Play distribution mode')
+// This branch is an incremental migration, never a production Play build.
+if (playProduction)
+    throw new GradleException('Flutter migration requires device parity before production publication')
 def liveAds = [adApp, adBanner, adInterstitial].every { it != '' } &&
         (adApp ==~ /ca-app-pub-\d{16}~\d{10}/) &&
         ([adBanner, adInterstitial].every { it ==~ /ca-app-pub-\d{16}\/\d{10}/ }) &&
@@ -119,6 +145,7 @@ tasks.register('verifyPlayProductionConfiguration') {
     doLast {
         if (!liveAds) throw new GradleException('Configure production AdMob app/banner/interstitial IDs')
         if (!billingKey) throw new GradleException('Configure the Play app licensing public key')
+        if (!privacyUrlValid()) throw new GradleException('Configure the public HTTPS privacy policy URL')
         try {
             java.security.KeyFactory.getInstance('RSA').generatePublic(
                     new java.security.spec.X509EncodedKeySpec(java.util.Base64.decoder.decode(billingKey)))
@@ -142,6 +169,12 @@ android {
     defaultConfig {
         minSdk 26
         targetSdk 35
+        ndk {
+            def selectedAbi=providers.gradleProperty('filehubTestAbi').getOrElse('')
+            if(selectedAbi && !['armeabi-v7a','arm64-v8a','x86_64'].contains(selectedAbi))
+                throw new GradleException('Unsupported test ABI')
+            abiFilters.addAll(selectedAbi ? [selectedAbi] : ['armeabi-v7a','arm64-v8a','x86_64'])
+        }
     }
     signingConfigs {
         playUpload {
@@ -162,15 +195,21 @@ android {
         }
     }
     buildFeatures { buildConfig = true }
+    // Manual in-app language switching must work without downloading a language split.
+    bundle {
+        language { enableSplit = false }
+    }
     flavorDimensions += 'distribution'
     productFlavors {
         direct {
             dimension 'distribution'
             applicationId 'com.nasmount.mobile'
             targetSdk 35
-            versionCode 121
-            versionName '0.1.120'
+            versionCode 144
+            versionName '0.1.143'
             buildConfigField 'boolean', 'DIRECT_EDITION', 'true'
+            buildConfigField 'String', 'DIRECT_OTA_KEY', groovy.json.JsonOutput.toJson(directOtaKey)
+            buildConfigField 'boolean', 'R8_TRIAL', 'false'
             buildConfigField 'String', 'PAIR_SCHEME', '"filehubaio"'
             manifestPlaceholders = [pairScheme: 'filehubaio']
             if (releaseSigningFile.exists()) signingConfig signingConfigs.release
@@ -179,15 +218,17 @@ android {
             dimension 'distribution'
             applicationId 'com.filehubaio.mobile'
             targetSdk 36
-            versionCode 4
-            versionName '1.0.3'
+            versionCode 28
+            versionName '1.0.27'
             buildConfigField 'boolean', 'DIRECT_EDITION', 'false'
+            buildConfigField 'boolean', 'R8_TRIAL', 'false'
             buildConfigField 'String', 'PAIR_SCHEME', '"filehubaio-play"'
             buildConfigField 'boolean', 'PLAY_INTERNAL_TEST', playInternal.toString()
             buildConfigField 'boolean', 'LIVE_ADS_CONFIGURED', (playProduction && liveAds).toString()
             buildConfigField 'String', 'AD_BANNER_ID', '"' + (playProduction && liveAds ? adBanner : '') + '"'
             buildConfigField 'String', 'AD_INTERSTITIAL_ID', '"' + (playProduction && liveAds ? adInterstitial : '') + '"'
             buildConfigField 'String', 'PLAY_BILLING_PUBLIC_KEY', '"' + billingKey + '"'
+            buildConfigField 'String', 'PRIVACY_POLICY_URL', groovy.json.JsonOutput.toJson(privacyPolicyUrl)
             manifestPlaceholders = [pairScheme: 'filehubaio-play',
                 adMobAppId: playProduction && liveAds ? adApp : 'ca-app-pub-3940256099942544~3347511713']
             if ((playInternal || playProduction) && playSigningFile.exists())
@@ -196,7 +237,9 @@ android {
     }
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
     compileOptions {
@@ -216,7 +259,22 @@ android {
     }
 }
 
+// Only the Play release is subject to the new Play DEX quality threshold.
+// Keep the existing Direct release pipeline stable (including native codecs).
+androidComponents {
+    beforeVariants(selector().withBuildType('release')) { variant ->
+        if (variant.productFlavors.any { it.first == 'distribution' && it.second == 'direct' }) {
+            variant.shrinkResources = false
+            variant.setMinifyEnabled(false)
+        }
+    }
+}
+
 dependencies {
+    // One Dart UI module for both existing product flavors; Java remains
+    // responsible for storage, viewers, signing and entitlement.
+    debugImplementation 'com.filehubaio.filehub_flutter:flutter_debug:1.0'
+    releaseImplementation 'com.filehubaio.filehub_flutter:flutter_release:1.0'
     // Official Maven Central ZXing; Dependabot can track the version.
     implementation 'com.google.zxing:core:3.5.4'
     def media3_version = '1.11.1'
@@ -273,3 +331,19 @@ dependencies {
 }
 
 apply from: 'license-notices.gradle'
+
+// The release bundle is the source of truth for the Play code-quality scores.
+// The explicit task also works for internal builds. Production packaging
+// always runs the gate; a metadata or score regression fails the build.
+def playBundleQuality = tasks.register('verifyPlayReleaseBundleQuality', Exec) {
+    dependsOn 'bundlePlayRelease'
+    workingDir rootProject.projectDir
+    executable providers.gradleProperty('filehubPython').getOrElse('python')
+    args 'scripts/verify_play_bundle_quality.py',
+         'app/build/outputs/bundle/playRelease/app-play-release.aab'
+}
+if (playProduction) {
+    tasks.matching { it.name == 'bundlePlayRelease' }.configureEach {
+        finalizedBy playBundleQuality
+    }
+}

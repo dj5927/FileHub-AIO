@@ -1,0 +1,77 @@
+[
+  {
+    "coordinate": "eu.agno3.jcifs:jcifs-ng:2.1.10",
+    "upstream": "https://github.com/AgNO3/jcifs-ng",
+    "revision": "01ad55aee9511b9b466c5d0f586bfa9314469334",
+    "license": "LGPL-2.1",
+    "files": [
+      {
+        "filename": "jcifs-ng-2.1.10-LICENSE.txt",
+        "url": "https://raw.githubusercontent.com/AgNO3/jcifs-ng/01ad55aee9511b9b466c5d0f586bfa9314469334/LICENSE",
+        "sha256": "9b872a8a070b8ad329c4bd380fb1bf0000f564c75023ec8e1e6803f15364b9e9"
+      }
+    ]
+  },
+  {
+    "coordinate": "io.github.anilbeesetti:nextlib-media3ext:1.11.1-0.19.0",
+    "upstream": "https://github.com/anilbeesetti/nextlib",
+    "revision": "539411ccb4740251252a2cc8896c6579d0c43c3d",
+    "license": "GPL-3.0",
+    "files": [
+      {
+        "filename": "NextLib-1.11.1-0.19.0-LICENSE.txt",
+        "url": "https://raw.githubusercontent.com/anilbeesetti/nextlib/539411ccb4740251252a2cc8896c6579d0c43c3d/LICENSE",
+        "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+      }
+    ]
+  },
+  {
+    "coordinate": "com.github.junrar:junrar:8.1.2",
+    "upstream": "https://github.com/junrar/junrar",
+    "revision": "b9b61cedd7c0b7fcbd2ab6b4cc6413e2bb9e481d",
+    "license": "UnRAR (custom)",
+    "files": [
+      {
+        "filename": "junrar-8.1.2-LICENSE.txt",
+        "url": "https://raw.githubusercontent.com/junrar/junrar/b9b61cedd7c0b7fcbd2ab6b4cc6413e2bb9e481d/LICENSE",
+        "sha256": "9d90c3649d4eb064ce2fff366a7421107fbbc3c65d8eede45df5dec95e4e016c"
+      }
+    ]
+  },
+  {
+    "coordinate": "com.google.zxing:core:3.5.4",
+    "upstream": "https://github.com/zxing/zxing",
+    "revision": "f651b0a0375676e47144f73397dddff8868b0e4c",
+    "license": "Apache-2.0",
+    "files": [
+      {
+        "filename": "zxing-3.5.4-LICENSE.txt",
+        "url": "https://raw.githubusercontent.com/zxing/zxing/f651b0a0375676e47144f73397dddff8868b0e4c/LICENSE",
+        "sha256": "3f62881f0566227a24b12e5a754cc79f39aaa94883038e95c94812e1f50af42f"
+      },
+      {
+        "filename": "zxing-3.5.4-NOTICE.txt",
+        "url": "https://raw.githubusercontent.com/zxing/zxing/f651b0a0375676e47144f73397dddff8868b0e4c/NOTICE",
+        "sha256": "4db4b60aace29ec6c5c4f13ca9cac1930d3c0c54bcc67dceead0c10771120e66"
+      }
+    ]
+  },
+  {
+    "coordinate": "org.tukaani:xz:1.12",
+    "upstream": "https://github.com/tukaani-project/xz-java",
+    "revision": "107a519fac1e6789101ad9c234afe3dc407be7f5",
+    "license": "0BSD",
+    "files": [
+      {
+        "filename": "xz-1.12-COPYING.txt",
+        "url": "https://raw.githubusercontent.com/tukaani-project/xz-java/107a519fac1e6789101ad9c234afe3dc407be7f5/COPYING",
+        "sha256": "1e77ef26cee5216d6531e49cbf2f6111a0270dc7b322fc65477063c5aff88766"
+      },
+      {
+        "filename": "xz-1.12-0BSD.txt",
+        "url": "https://raw.githubusercontent.com/tukaani-project/xz-java/107a519fac1e6789101ad9c234afe3dc407be7f5/LICENSES/0BSD.txt",
+        "sha256": "0b01625d853911cd0e2e088dcfb743261034a091bb379246cb25a14cc4c74bf1"
+      }
+    ]
+  }
+]

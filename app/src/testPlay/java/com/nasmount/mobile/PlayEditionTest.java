@@ -9,7 +9,7 @@ public class PlayEditionTest {
         assertFalse(BuildConfig.DIRECT_EDITION);
         assertEquals("com.filehubaio.mobile",BuildConfig.APPLICATION_ID);
         assertEquals("filehubaio-play",BuildConfig.PAIR_SCHEME);
-        assertEquals(3,OverflowMenuItems.labelsForEdition(false).length);
+        assertEquals(4,OverflowMenuItems.labelsForEdition(false).length);
         assertFalse(ArchiveCodec.isArchive("a.rar"));
         assertFalse(ArchiveCodec.isArchive("a.cbr"));
         assertFalse(ComicArchive.supports("a.cbr"));

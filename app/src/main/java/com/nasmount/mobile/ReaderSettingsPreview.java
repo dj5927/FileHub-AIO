@@ -8,14 +8,12 @@ import android.graphics.ColorMatrix;
 import android.graphics.ColorMatrixColorFilter;
 import android.graphics.Paint;
 import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import java.util.HashMap;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -31,9 +29,6 @@ final class ReaderSettingsPreview extends LinearLayout {
             0xFFF8F1E4,Color.WHITE,0xFFDFD2B2,0xFF161A1C};
     private static final int[] EPUB_INK={
             0xFF29251F,0xFF202328,0xFF3C2F20,0xFFE5E9E8};
-    private static final String SAMPLE_TEXT=
-            "책장을 넘기면 새로운 이야기가 시작됩니다.\n"+
-            "따뜻한 오후, 창가에 앉아 조용히 책을 읽었습니다.";
 
     private final Activity activity;
     private final String category;
@@ -64,7 +59,8 @@ final class ReaderSettingsPreview extends LinearLayout {
             sampleText=null;
         }else{
             sampleComic=null;
-            sampleText=Ui.text(activity,SAMPLE_TEXT,19,TXT_INK[0],false);
+            sampleText=Ui.text(activity,L10n.t("책장을 넘기면 새로운 이야기가 시작됩니다.")+"\n"+
+                    L10n.t("따뜻한 오후, 창가에 앉아 조용히 책을 읽었습니다."),19,TXT_INK[0],false);
             sampleText.setGravity(Gravity.TOP);
             sampleText.setMaxLines(4);
             sampleText.setIncludeFontPadding(false);
@@ -127,14 +123,14 @@ final class ReaderSettingsPreview extends LinearLayout {
                     bound(rawStyle,0,3):ReaderTurnPreferences.toIndex(rawStyle);
             boolean slow=checked("slow_page_turn",
                     ReaderDefaultSettings.slow(activity,category));
-            summary.setText(state+" · "+size+"sp · "+
-                    String.format(Locale.KOREA,"%.2f배",line/100.0)+
-                    " · 여백 "+margin+"dp"+
-                    "\n넘김: "+ReaderTurnPreferences.STYLES[effectIndex]+
-                    " · "+(slow?"천천히":"자연스럽게")+
-                    (!epub?(checked("fold_columns",true)?
-                            " · 폴드 두 페이지":" · 폴드 한 페이지"):"")+
-                    "\n예시 문단이며 책의 실제 페이지 수는 변경되지 않습니다.");
+            summary.setText(L10n.t(state)+" · "+size+"sp · "+
+                    L10n.t("줄 간격")+" "+String.format(java.util.Locale.ROOT,"%.2f",line/100.0)+"× · "+
+                    L10n.t("여백")+" "+margin+"dp"+
+                    "\n"+L10n.t("넘김")+": "+L10n.t(ReaderTurnPreferences.STYLES[effectIndex])+
+                    " · "+L10n.t(slow?"천천히":"자연스럽게")+
+                    (!epub?" · "+L10n.t(checked("fold_columns",true)?
+                            "폴드 두 페이지":"폴드 한 페이지"):"")+
+                    "\n"+L10n.t("예시 문단이며 책의 실제 페이지 수는 변경되지 않습니다."));
         }else{
             int contrast=bound(integer("contrast",100),50,200);
             int brightness=bound(integer("brightness",0),-100,100);
@@ -152,15 +148,15 @@ final class ReaderSettingsPreview extends LinearLayout {
             matrix.postConcat(adjust);
             sampleComic.setColorFilter(new ColorMatrixColorFilter(matrix));
             sampleSurface.setBackgroundColor(0xFFEBEBEB);
-            summary.setText(L10n.t("명암 ")+contrast+"% · 밝기 "+
+            summary.setText(L10n.t("명암")+" "+contrast+"% · "+L10n.t("밝기")+" "+
                     (brightness>0?"+":"")+brightness+" · "+
-                    (gray?"흑백":"컬러")+" · "+
-                    (checked("rtl",false)?"일본식":"한국식")+
-                    (checked("fit_width",false)?" · 화면 폭 맞춤":" · 전체 맞춤")+
-                    (checked("fold_two_pages",true)?" · 펼침 두 페이지":" · 펼침 한 페이지")+
-                    "\n합본 자동 분할: "+new String[]{"자동","끄기","민감"}[
-                            bound(integer("double_page_split",0),0,2)]+
-                    "\n예시 그림으로 색감과 화면 설정을 확인합니다.");
+                    L10n.t(gray?"흑백":"컬러")+" · "+
+                    L10n.t(checked("rtl",false)?"일본식":"한국식")+" · "+
+                    L10n.t(checked("fit_width",false)?"화면 폭 맞춤":"전체 맞춤")+" · "+
+                    L10n.t(checked("fold_two_pages",true)?"펼침 두 페이지":"펼침 한 페이지")+
+                    "\n"+L10n.t("합본 자동 분할")+": "+L10n.t(new String[]{"자동","끄기","민감"}[
+                            bound(integer("double_page_split",0),0,2)])+
+                    "\n"+L10n.t("예시 그림으로 색감과 화면 설정을 확인합니다."));
         }
     }
 

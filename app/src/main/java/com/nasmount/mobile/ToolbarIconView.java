@@ -23,6 +23,7 @@ final class ToolbarIconView extends View {
     static final String SEARCH = "search";
     static final String VIEW = "view";
     static final String MORE = "more";
+    static final String CROWN = "crown";
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final String glyph;
     private boolean checked;
@@ -76,6 +77,15 @@ final class ToolbarIconView extends View {
                 canvas.drawLine(5.5f, 9.3f, 5.5f, 21, paint);
                 canvas.drawLine(18.5f, 9.3f, 18.5f, 21, paint);
                 canvas.drawLine(5.5f, 21, 18.5f, 21, paint);
+                break;
+            }
+            case CROWN: {
+                Path crown = new Path();
+                crown.moveTo(2.5f,7); crown.lineTo(7.5f,12);
+                crown.lineTo(12,4); crown.lineTo(16.5f,12);
+                crown.lineTo(21.5f,7); crown.lineTo(19,19);
+                crown.lineTo(5,19); crown.close();
+                canvas.drawPath(crown,paint);
                 break;
             }
             case FAVORITE: {

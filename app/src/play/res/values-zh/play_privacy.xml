@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="play_privacy_title">隐私政策</string>
+    <string name="play_privacy_description">查看数据处理方式、权限用途及开发者隐私政策。</string>
+    <string name="play_privacy_internal">这是内部测试说明。公开发布前须登记开发者的隐私政策及联系方式。</string>
+    <string name="play_privacy_body">FileHub AIO 为文件管理、预览、阅读和播放而访问文件及媒体。相机仅用于扫描二维码。可选的悬浮窗权限用于确认视频弹窗播放，而非广告。\n\n连接信息和设置保存在设备上。密码及机密令牌由 Android Keystore 加密保护。连接或传输时，文件及连接信息会发送到您选择的存储服务。HTTP 和 FTP 可能未加密，请在支持时使用安全协议。\n\n导出设置、连接电视、创建分享链接或使用外部播放器时，所选信息或文件可能传送到您选择的设备、服务或应用。\n\n购买由 Google Play 处理，FileHub 会验证并保存购买凭据，以管理完整版使用权。启用广告时，Google Mobile Ads SDK 可能出于广告、分析及防欺诈目的收集 IP 地址、应用互动、诊断信息和设备或账号标识符。您可在设置中查看适用的广告隐私选项。\n\n删除已保存的连接、清除应用数据或卸载应用，可以移除设备上的应用设置。导出的备份以及其他设备或服务中保存的文件须另行管理。</string>
+    <string name="play_privacy_open">打开完整隐私政策</string>
+    <string name="play_privacy_open_failed">无法在浏览器中打开隐私政策。</string>
+</resources>

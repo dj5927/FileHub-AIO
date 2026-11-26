@@ -5,6 +5,7 @@ app/src/main/assets/office_hwp/docx-preview.min.js -text
 app/src/main/assets/office_hwp/xlsx.full.min.js -text
 app/src/main/assets/office_hwp/pptx-modern.bundle.js -text
 app/office-assets/*.gz.part* -text
+THIRD_PARTY_LICENSES/pinned/*.txt -text
 gradle/wrapper/gradle-wrapper.jar -text
 gradlew text eol=lf
 gradlew.bat text eol=crlf

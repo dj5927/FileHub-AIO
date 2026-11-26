@@ -10,6 +10,14 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven {
+            url = uri("flutter_ui/build/host/outputs/repo")
+            content { includeGroup("com.filehubaio.filehub_flutter") }
+        }
+        maven {
+            url = uri("https://storage.googleapis.com/download.flutter.io")
+            content { includeGroup("io.flutter") }
+        }
     }
 }
 rootProject.name = "NASMountAndroid"

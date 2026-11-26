@@ -474,6 +474,24 @@ public final class VideoPlayerActivity extends LocalizedActivity {
                     .build());
             videoView.setPlayer(player);
             installEpisodeControls();
+            final boolean topPrevious=previousEpisodeButton!=null&&previousEpisodeButton.getParent()==topBar;
+            final boolean topNext=nextEpisodeButton!=null&&nextEpisodeButton.getParent()==topBar;
+            installViewerChrome(topBar,()->{
+                boolean ready=player!=null&&!playbackReleased&&!popupUiActive&&
+                        !isVideoTouchLocked()&&resumeDecisionMade;
+                return ViewerUiPolicy.state("video",displayName,0xFF141921,Color.WHITE,-1,
+                        ready&&player.getPlayWhenReady(),"back","settings",ready?"play":null,
+                        ready&&topPrevious&&hasAdjacentEpisode(-1)?"previous":null,
+                        ready&&topNext&&hasAdjacentEpisode(1)?"next":null);
+            },()->!popupUiActive&&!playbackReleased&&!isVideoTouchLocked(),(action,value)->{
+                if("back".equals(action)){finish();return;}
+                if(videoView!=null)videoView.showController();
+                if("settings".equals(action))showPlayerQuickMenu();
+                else if("play".equals(action)&&player!=null&&resumeDecisionMade){
+                    if(player.getPlayWhenReady())player.pause();else player.play();
+                }else if("previous".equals(action))playAdjacentEpisode(-1);
+                else if("next".equals(action))playAdjacentEpisode(1);
+            });
             player.addAnalyticsListener(new AnalyticsListener() {
                 @Override public void onAudioInputFormatChanged(
                         EventTime eventTime, Format format,
@@ -1389,9 +1407,8 @@ public final class VideoPlayerActivity extends LocalizedActivity {
         long minutes = position / 60000L;
         long seconds = (position / 1000L) % 60L;
         new AlertDialog.Builder(this).setTitle(L10n.t("이어서 재생할까요?"))
-                .setMessage(L10n.t("이전에 ") + String.format(Locale.KOREA,
-                        "%02d:%02d", minutes, seconds) +
-                        "까지 시청했어요.\n어디부터 재생할까요?")
+                .setMessage(L10n.f("이전에 %1$s까지 시청했어요.\n어디부터 재생할까요?",
+                        String.format(Locale.ROOT,"%02d:%02d", minutes, seconds)))
                 .setCancelable(false)
                 .setPositiveButton(L10n.t("이어보기"), (d, w) -> {
                     resumeDecisionMade = true;

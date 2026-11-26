@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="play_privacy_title">Privacy policy</string>
+    <string name="play_privacy_description">Review data handling, permissions and the publisher policy.</string>
+    <string name="play_privacy_internal">Internal test notice. The publisher privacy policy and contact details must be registered before public release.</string>
+    <string name="play_privacy_body">FileHub AIO uses file and media access for file management, previews, reading and playback. The camera is used for QR scanning. Optional overlay access is used for the video popup confirmation, not advertising.\n\nConnection details and settings are stored on the device. Passwords and secret tokens are protected with Android Keystore encryption. Files and credentials are sent to the storage services you choose when connecting or transferring. HTTP and FTP connections may be unencrypted; use secure protocols where supported.\n\nUser-requested exports, TV pairing, shared links and external players can transfer selected information or files to the chosen device, service or app.\n\nGoogle Play processes purchases. FileHub verifies and stores purchase receipts to manage the full version. When advertising is enabled, the Google Mobile Ads SDK may collect IP address, app interactions, diagnostics and device or account identifiers for ads, analytics and fraud prevention. You can review applicable advertising privacy choices in Settings.\n\nRemove saved connections, clear app data or uninstall to remove locally stored app settings. Exported backups and files stored on other devices or services must be managed separately.</string>
+    <string name="play_privacy_open">Open full policy</string>
+    <string name="play_privacy_open_failed">Cannot open the privacy policy in a browser.</string>
+</resources>

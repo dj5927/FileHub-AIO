@@ -150,6 +150,14 @@ public final class TextEditorActivity extends LocalizedActivity {
             }
             @Override public void afterTextChanged(Editable e) {}
         });
+        installViewerChrome(toolbar,()->ViewerUiPolicy.document(fileName,Ui.DARK,Color.WHITE,
+                true,loaded&&saveButton.isEnabled(),saving,
+                profile!=null&&(profile.readOnly||CloudProvider.isReadOnly(profile))),
+                ()->!isFinishing(),(action,value)->{
+                    if("back".equals(action))onBackPressed();
+                    else if("save".equals(action)&&loaded&&!saving&&saveButton.isEnabled()&&
+                            (profile==null||(!profile.readOnly&&!CloudProvider.isReadOnly(profile))))saveDocument();
+                });
         readDocument();
     }
 

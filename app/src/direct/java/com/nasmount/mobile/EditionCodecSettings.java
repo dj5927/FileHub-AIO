@@ -3,14 +3,14 @@ import android.app.AlertDialog;
 import android.net.Uri;
 import android.widget.TextView;
 final class EditionCodecSettings {
-    static void render(SettingsActivity a) {
+    static void render(SettingsContent a) {
         a.section(L10n.t("코덱 · 호환성"), L10n.t("Media3 FFmpeg 확장 디코더가 APK에 포함됩니다. 기기 기본 디코더가 지원하지 않는 코덱은 FFmpeg를 자동으로 사용합니다."));
         String abi = android.os.Build.SUPPORTED_ABIS.length > 0 ? android.os.Build.SUPPORTED_ABIS[0] : "알 수 없음";
         String codecFolder = PlayerSettings.prefs(a).getString(
                 PlayerSettings.CODEC_TREE_LABEL, "미지정");
         a.action(L10n.t("외부 코덱 폴더 가져오기"), codecFolder +
                 "\n선택하면 .aar / .so / .zip을 NAS Mount 전용 폴더로 이동합니다.",
-                () -> a.chooseFolder(SettingsActivity.PICK_CODECS));
+                () -> a.chooseFolder(SettingsContent.PICK_CODECS));
         a.note(L10n.t("기기 CPU: ") + abi +
                 "\n기본 탑재: Media3 1.11.1 + NextLib FFmpeg 1.11.1-0.19.0" +
                 "\n내장 FFmpeg 코덱: AC3, E-AC3, DTS, TrueHD, FLAC, ALAC, AAC 등" +
@@ -23,7 +23,7 @@ final class EditionCodecSettings {
 
         a.section(L10n.t("동영상 코덱 라이선스"), L10n.t("동영상 플레이어에 포함된 확장 코덱의 라이선스입니다."));
         a.action(L10n.t("외부 플레이어 사용"), L10n.t("설치된 외부 플레이어로 동영상 재생 메뉴에서 연결할 수 있습니다."),
-                () -> ExternalApps.playerStore(a));
+                () -> ExternalApps.playerStore(a.activity()));
         a.action(L10n.t("오픈소스 FFmpeg · NextLib 라이선스"),
                 "NextLib FFmpeg 1.11.1-0.19.0 · GPLv3",
                 () -> new AlertDialog.Builder(a).setTitle(L10n.t("FFmpeg 오픈소스 고지"))
@@ -35,7 +35,7 @@ final class EditionCodecSettings {
                                 "네이티브 의존성의 라이선스도 APK에 포함되어 있습니다.")
                         .setPositiveButton(L10n.t("확인"), null).show());
     }
-    static void importFolder(SettingsActivity a, Uri folderUri) {
+    static void importFolder(SettingsContent a, Uri folderUri) {
         TextView progress = a.label(L10n.t("선택 폴더의 코덱 파일을 확인 중..."), 13, Ui.TEXT);
         progress.setPadding(a.dp(24), a.dp(24), a.dp(24), a.dp(24));
         AlertDialog progressDialog = new AlertDialog.Builder(a)

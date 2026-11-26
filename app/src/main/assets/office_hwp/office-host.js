@@ -3,7 +3,8 @@ import { t,localizeOfficeShell } from '/office-locale.js';
 import { openWord, exportWord, openSlides, exportSlides } from '/office-word-ppt.js';
 import { installPinch, installSpreadsheetPinch } from '/office-gestures.js';
 import { openXlsxArchive, exportXlsxArchive } from '/excel-ooxml.js';
-import { mountExcelGrid } from '/excel-grid.js';
+import { mountExcelGrid, MIN_SHEET_ZOOM, MAX_SHEET_ZOOM } from '/excel-grid.js';
+import { findSheetCells, sheetCellPreview } from '/excel-find.js';
 
 const bridge = window.NasOfficeBridge;
 const statusEl = document.getElementById('status');
@@ -15,6 +16,7 @@ let sheetZoom = 1;
 let toastTimer;
 let gridController, excelArchive, excelChanged = new Map(), pendingExcelExport;
 const WINDOW_ROWS = 55, WINDOW_COLS = 12;
+let findSheet=-1,findQuery=null,findMatches=[],findIndex=0,findTimer;
 
 function status(text, error = false) {
   statusEl.textContent = String(text);
@@ -105,6 +107,82 @@ function attachSheetEvents() {
     if(!cfg?.readOnly && formula.value!==undefined)applyCellEdit();
   };
 }
+function findElement(id){return document.getElementById('sheet-find-'+id);}
+function showFindResult(){
+  const address=findMatches[findIndex];
+  findElement('info').textContent=address?
+    address+'  ·  '+(findIndex+1)+' / '+findMatches.length:
+    (findElement('query').value.trim()?t('검색 결과가 없습니다.'):'');
+  findElement('preview').textContent=address?sheetCellPreview(getSheet()[address]):'';
+  findElement('prev').disabled=findMatches.length<2;
+  findElement('next').disabled=findMatches.length<2;
+  findElement('confirm').disabled=!address;
+}
+function refreshFindResults(force=false){
+  const query=findElement('query').value;
+  if(force||findQuery!==query||findSheet!==activeSheet){
+    findSheet=activeSheet;findQuery=query;findIndex=0;
+    findMatches=findSheetCells(getSheet(),query);
+  }
+  showFindResult();
+}
+function dismissSheetSearch(){
+  const dialog=findElement('dialog');
+  if(!dialog.open)return false;
+  clearTimeout(findTimer);findElement('query').blur();dialog.close();
+  return true;
+}
+function openSheetSearch(){
+  if(cfg?.mode!=='sheet'||!gridController||busy)return;
+  const dialog=findElement('dialog');
+  if(dialog.open)return;
+  if(findSheet!==activeSheet)findElement('query').value='';
+  findElement('name').textContent=workbook.SheetNames[activeSheet];
+  dialog.showModal();refreshFindResults(true);
+  findElement('query').focus();
+  findElement('query').select();
+}
+function attachSheetSearch(){
+  const query=findElement('query');
+  query.oninput=()=>{
+    clearTimeout(findTimer);
+    // Do not allow confirmation of a stale match during debounce.
+    findElement('confirm').disabled=true;
+    findElement('prev').disabled=true;findElement('next').disabled=true;
+    findElement('info').textContent='';findElement('preview').textContent='';
+    findTimer=setTimeout(()=>refreshFindResults(),120);
+  };
+  for(const [id,step] of [['prev',-1],['next',1]]){
+    findElement(id).onclick=()=>{
+      clearTimeout(findTimer);refreshFindResults();
+      if(findMatches.length){
+        findIndex=(findIndex+step+findMatches.length)%findMatches.length;
+        showFindResult();
+      }
+    };
+  }
+  findElement('cancel').onclick=dismissSheetSearch;
+  findElement('dialog').addEventListener('close',()=>{
+    // A close event can arrive after a fast sheet switch and reopening.
+    // Do not cancel the newly opened dialog's search.
+    if(!findElement('dialog').open)clearTimeout(findTimer);
+  });
+  findElement('form').onsubmit=e=>{
+    e.preventDefault();
+    clearTimeout(findTimer);refreshFindResults();
+    const address=findMatches[findIndex],sheet=activeSheet;
+    if(!address)return;
+    const resultLabel=address+'  ·  '+(findIndex+1)+' / '+findMatches.length;
+    dismissSheetSearch();
+    requestAnimationFrame(()=>{
+      if(sheet!==activeSheet)return;
+      selectCell(address);gridController.jump(address);
+      status(resultLabel);
+    });
+  };
+}
+window.OfficeRequestSearch=openSheetSearch;
+window.OfficeDismissSearch=dismissSheetSearch;
 function renderSheetTabs() {
   const tabs=document.getElementById('sheet-tabs');
   tabs.replaceChildren();
@@ -142,12 +220,14 @@ async function openSpreadsheet(bytes) {
   const scroller=document.getElementById('grid-scroll');
   gridController=mountExcelGrid(scroller,workbook,excelArchive,
     ()=>activeSheet,selectedAddress,selectCell,!!cfg?.readOnly);
-  installSpreadsheetPinch(scroller,gridController,.55,3);
+  installSpreadsheetPinch(scroller,gridController,MIN_SHEET_ZOOM,MAX_SHEET_ZOOM);
   document.getElementById('sheet-tool-toggle').hidden=true;
   attachSheetEvents();
+  attachSheetSearch();
   selectCell('A1');
   if(cfg?.readOnly)document.getElementById('bottom-actions').hidden=true;
   status('시트 '+workbook.SheetNames.length+'개 로딩 완료');
+  bridge.sheetReady(cfg.token);
 }
 async function openHwp(bytes) {
   document.getElementById('hwp-shell').hidden=false;

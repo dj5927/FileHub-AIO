@@ -159,13 +159,27 @@ public final class ComicBookActivity extends LocalizedActivity {
             @Override public void onProgressChanged(SeekBar v,int value,boolean fromUser){}
             @Override public void onStopTrackingTouch(SeekBar v){
                 seeking=false;
-                pageTransitions.cancel();
-                if(logicalPages!=null&&!logicalPages.isEmpty())
-                    openPage(Math.round(progress.getProgress()*
-                            (logicalPages.size()-1)/1000f));
+                seekComic(progress.getProgress());
             }
         });
+        installViewerChrome(bottom,()->{
+            boolean ready=logicalPages!=null&&!logicalPages.isEmpty()&&!pageTransitions.busy()&&progress.isEnabled();
+            return ViewerUiPolicy.state("readerSlider",pageLabel.getText().toString(),
+                    0xFF101923,Color.WHITE,progress.getProgress(),false,
+                    ready?"previous":null,ready?"next":null,ready?"quick":null,ready?"seek":null);
+        },()->chromeVisible,(action,value)->{
+            if("previous".equals(action))move(-1);
+            else if("next".equals(action))move(1);
+            else if("quick".equals(action))showQuickSeek();
+            else if("seek".equals(action))seekComic(value);
+        });
         openBook();
+    }
+
+    private void seekComic(int value){
+        pageTransitions.cancel();
+        if(logicalPages!=null&&!logicalPages.isEmpty())
+            openPage(Math.round(value*(logicalPages.size()-1)/1000f));
     }
 
     private int dp(float px){return Ui.dp(this,px);}
@@ -479,8 +493,7 @@ public final class ComicBookActivity extends LocalizedActivity {
         }
         endPromptVisible=true;
         new AlertDialog.Builder(this).setTitle(L10n.t("다음 만화책 이어 보기"))
-                .setMessage(L10n.t("현재 권을 끝까지 읽었습니다.\n\n")+
-                        following.name+"\n\n다음 권을 바로 열까요?")
+                .setMessage(L10n.f("현재 권을 끝까지 읽었습니다.\n\n%1$s\n\n다음 권을 바로 열까요?",following.name))
                 .setNegativeButton(L10n.t("아니요"),(dialog,which)->endPromptVisible=false)
                 .setPositiveButton(L10n.t("다음 권 보기"),(dialog,which)->{
                     android.content.Intent next=BookSeriesQueue.nextIntent(

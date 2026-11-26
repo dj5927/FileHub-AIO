@@ -32,12 +32,12 @@ final class EditionMonetization implements Application.ActivityLifecycleCallback
     private final SharedPreferences usagePrefs;
     private final MonetizationPolicy.UsageClock usage;
     private final FullVersionBilling billing;
-    private final ConsentInformation consent;
+    private ConsentInformation consent;
     private final WeakHashMap<Activity,BannerHost> banners=new WeakHashMap<>();
     private final WeakHashMap<Activity,Boolean> videosPlaying=new WeakHashMap<>();
     private final WeakHashMap<Activity,Boolean> entitlementSeen=new WeakHashMap<>();
     private Activity resumed;
-    private boolean observedFull, consentRequested, consentInProgress, adsInitializing, adsReady;
+    private boolean observedFull, consentRequested, consentInProgress, adsInitializing, adsReady, adsUnavailable;
     private String observedPrice="";
     private boolean interstitialLoading,adShowing;
     private long interstitialLoadedAt,lastInterstitialAttempt=-60000,lastContentExit=-100000;
@@ -45,6 +45,7 @@ final class EditionMonetization implements Application.ActivityLifecycleCallback
     private boolean pip;
     private final Runnable ticker=new Runnable(){
         @Override public void run(){
+            billing.tick();
             updateUsage();
             if(resumed!=null){
                 ensureInterstitial();
@@ -59,7 +60,6 @@ final class EditionMonetization implements Application.ActivityLifecycleCallback
         this.app=app;
         usagePrefs=app.getSharedPreferences("filehub_ad_usage",0);
         usage=new MonetizationPolicy.UsageClock(usagePrefs.getLong("elapsed_ms",0));
-        consent=UserMessagingPlatform.getConsentInformation(app);
         billing=new FullVersionBilling(app,this::billingChanged);
         observedFull=billing.full();
     }
@@ -77,17 +77,17 @@ final class EditionMonetization implements Application.ActivityLifecycleCallback
         s.banners.put(a,host);
         return host.layout;
     }
-    static void settings(SettingsActivity a){
+    static void settings(SettingsContent a){
         EditionMonetization s=instance;
         if(s==null)return;
-        a.section(L10n.t("FileHub 풀버전"),L10n.t("한 번 구매하면 모든 광고가 제거되고 Play 버전의 제한 기능이 열립니다."));
-        String price=s.billing.price();
-        a.action(s.billing.full()?L10n.t("풀버전 사용 중"):L10n.t("풀버전 구매"),
-                s.billing.full()?L10n.t("광고 없음 · 기능 제한 없음"):
-                    (price.isEmpty()?L10n.t("한국 기준 출시 예정가 ₩3,900"):price)+" · "+L10n.t("일회성 구매"),
-                ()->showUpgrade(a));
+        a.section(L10n.t("프리미엄 업그레이드"),L10n.t("연간 구독 또는 영구 구매로 모든 기능을 이용하세요."));
+        a.action(s.billing.full()?L10n.t("풀버전 사용 중"):L10n.t("프리미엄 업그레이드"),
+                s.billing.full()?L10n.t("광고 제거 및 모든 기능 사용"):L10n.t("연간 구독 · 영구 구매"),
+                ()->showUpgrade(a.activity()));
         a.action(L10n.t("구매 복원"),L10n.t("현재 Google Play 계정의 구매 내역을 확인합니다."),()->s.billing.restore());
-        a.action(L10n.t("광고 개인정보 설정"),L10n.t("광고 개인정보 보호 선택을 확인하거나 변경합니다."),()->s.privacy(a));
+        a.action(L10n.t("광고 개인정보 설정"),L10n.t("광고 개인정보 보호 선택을 확인하거나 변경합니다."),()->s.privacy(a.activity()));
+        a.action(a.getString(R.string.play_privacy_title), a.getString(R.string.play_privacy_description),
+                () -> PlayPrivacyDisclosure.show(a.activity()));
         if(!s.billing.full()){
             a.note(L10n.t("무료: 종류별 원격 연결 1개, 배너 광고, 콘텐츠 이용 10분 후 전환 시 전면 광고, 내장 오피스·한글 뷰어 제한."));
         }
@@ -95,22 +95,10 @@ final class EditionMonetization implements Application.ActivityLifecycleCallback
     static void showUpgrade(Activity a){
         EditionMonetization s=instance;
         if(s==null||a.isFinishing()||a.isDestroyed())return;
-        if(s.billing.full()){
-            new AlertDialog.Builder(a).setTitle(L10n.t("풀버전 사용 중"))
-                .setMessage(L10n.t("광고 없음 · 기능 제한 없음"))
-                .setPositiveButton(L10n.t("확인"),null)
-                .setNeutralButton(L10n.t("구매 복원"),(d,w)->s.billing.restore()).show();
-            return;
-        }
-        String price=s.billing.price();
-        new AlertDialog.Builder(a).setTitle(L10n.t("FileHub 풀버전"))
-                .setMessage(L10n.t("모든 광고 제거\n종류별 원격 연결 제한 해제\n내장 오피스·한글 뷰어 및 편집 기능 사용")+
-                    "\n\n"+(price.isEmpty()?L10n.t("한국 기준 출시 예정가 ₩3,900"):price)+
-                    "\n"+L10n.t("일회성 구매 · 구독 아님"))
-                .setNegativeButton(L10n.t("나중에"),null)
-                .setNeutralButton(L10n.t("구매 복원"),(d,w)->s.billing.restore())
-                .setPositiveButton(L10n.t("풀버전 구매"),(d,w)->s.billing.buy(a)).show();
+        if(a instanceof PremiumActivity)return;
+        a.startActivity(new android.content.Intent(a,PremiumActivity.class));
     }
+    static FullVersionBilling premiumBilling(){return instance==null?null:instance.billing;}
     static void videoPlaying(Activity a,boolean playing){
         EditionMonetization s=instance;if(s==null)return;
         s.videosPlaying.put(a,playing);s.updateUsage();
@@ -129,9 +117,22 @@ final class EditionMonetization implements Application.ActivityLifecycleCallback
         s.showAtBreak(a,next);
     }
     private boolean testAds(){return BuildConfig.DEBUG||BuildConfig.PLAY_INTERNAL_TEST;}
-    private boolean adsConfigured(){return testAds()||BuildConfig.LIVE_ADS_CONFIGURED;}
+    private boolean adsConfigured(){return !adsUnavailable&&(testAds()||BuildConfig.LIVE_ADS_CONFIGURED);}
+    private void sdkFailure(String stage,Throwable failure){
+        // An unavailable optional SDK must not prevent file browsing or
+        // manufacture a paid entitlement. No tokens or SDK messages logged.
+        adsUnavailable=true;adsInitializing=false;adsReady=false;
+        consentInProgress=false;interstitialLoading=false;interstitial=null;
+        android.util.Log.w("FileHubPlay",stage+" unavailable: "+failure.getClass().getSimpleName());
+        for(BannerHost host:banners.values())host.hide();
+    }
+    private boolean canRequestAds(){
+        if(consent==null||adsUnavailable)return false;
+        try{return consent.canRequestAds();}
+        catch(RuntimeException|LinkageError failure){sdkFailure("Consent status",failure);return false;}
+    }
     private boolean adsAllowed(){return adsConfigured()&&billing.checked()&&!billing.full()&&
-            !consentInProgress&&consent.canRequestAds()&&adsReady;}
+            !consentInProgress&&canRequestAds()&&adsReady;}
     private boolean eligible(Activity a){
         return a instanceof VideoPlayerActivity || a instanceof ComicBookActivity ||
                 a instanceof BookTextActivity ||
@@ -162,6 +163,7 @@ final class EditionMonetization implements Application.ActivityLifecycleCallback
             maybeConsent();
             refreshBanner();ensureInterstitial();
         }
+        if(resumed instanceof PremiumActivity)((PremiumActivity)resumed).refreshOffers();
         if(resumed instanceof SettingsActivity&&(changed||priceChanged)){
             // Product price and entitlement are resolved asynchronously.
             ((SettingsActivity)resumed).render();
@@ -177,28 +179,32 @@ final class EditionMonetization implements Application.ActivityLifecycleCallback
                 a==null||a.isFinishing()||a.isDestroyed()||
                 !(a instanceof MainActivity||a instanceof SettingsActivity)||TvMode.isTv(a))return;
         consentRequested=true;consentInProgress=true;updateUsage();
+        try{
+        if(consent==null)consent=UserMessagingPlatform.getConsentInformation(app);
         consent.requestConsentInfoUpdate(a,new ConsentRequestParameters.Builder().build(),()->{
             if(a.isFinishing()||a.isDestroyed()){
                 consentRequested=false;consentInProgress=false;return;
             }
-            UserMessagingPlatform.loadAndShowConsentFormIfRequired(a,error->{
+            try{UserMessagingPlatform.loadAndShowConsentFormIfRequired(a,error->{
                 consentInProgress=false;initializeAds();
-            });
+            });}catch(RuntimeException|LinkageError failure){sdkFailure("Consent form",failure);}
         },error->{consentInProgress=false;initializeAds();});
+        }catch(RuntimeException|LinkageError failure){sdkFailure("Consent initialization",failure);}
     }
     private void initializeAds(){
-        if(!adsConfigured()||billing.full()||!consent.canRequestAds()||consentInProgress)return;
+        if(!adsConfigured()||billing.full()||!canRequestAds()||consentInProgress)return;
         if(adsReady){refreshBanner();ensureInterstitial();return;}
         if(adsInitializing)return;adsInitializing=true;
-        MobileAds.initialize(app,status->main.post(()->{
+        try{MobileAds.initialize(app,status->main.post(()->{
             adsInitializing=false;adsReady=true;
             refreshBanner();ensureInterstitial();
-        }));
+        }));}catch(RuntimeException|LinkageError failure){sdkFailure("Mobile Ads initialization",failure);}
     }
     private void privacy(Activity a){
-        if(!adsConfigured()||billing.full()){
+        if(!adsConfigured()||billing.full()||consent==null){
             Toast.makeText(a,L10n.t("광고가 비활성화되어 있습니다."),Toast.LENGTH_SHORT).show();return;
         }
+        try{
         if(consent.getPrivacyOptionsRequirementStatus()!=ConsentInformation.PrivacyOptionsRequirementStatus.REQUIRED){
             Toast.makeText(a,L10n.t("현재 추가 광고 개인정보 설정이 필요하지 않습니다."),Toast.LENGTH_LONG).show();return;
         }
@@ -208,6 +214,7 @@ final class EditionMonetization implements Application.ActivityLifecycleCallback
         UserMessagingPlatform.showPrivacyOptionsForm(a,error->{
             consentInProgress=false;initializeAds();
         });
+        }catch(RuntimeException|LinkageError failure){sdkFailure("Privacy options",failure);}
     }
     private void refreshBanner(){
         if(resumed!=null){BannerHost host=banners.get(resumed);if(host!=null)host.refresh();}
@@ -219,14 +226,14 @@ final class EditionMonetization implements Application.ActivityLifecycleCallback
         interstitial=null;
         if(now-lastInterstitialAttempt<30000)return;
         lastInterstitialAttempt=now;interstitialLoading=true;
-        InterstitialAd.load(app,testAds()?TEST_INTERSTITIAL:BuildConfig.AD_INTERSTITIAL_ID,
+        try{InterstitialAd.load(app,testAds()?TEST_INTERSTITIAL:BuildConfig.AD_INTERSTITIAL_ID,
                 new AdRequest.Builder().build(),new InterstitialAdLoadCallback(){
                     @Override public void onAdLoaded(InterstitialAd ad){
                         interstitialLoading=false;
                         if(adsAllowed()){interstitial=ad;interstitialLoadedAt=SystemClock.elapsedRealtime();}
                     }
                     @Override public void onAdFailedToLoad(LoadAdError error){interstitialLoading=false;}
-                });
+                });}catch(RuntimeException|LinkageError failure){sdkFailure("Interstitial load",failure);}
     }
     private void showAtBreak(Activity a,Runnable next){
         updateUsage();
@@ -253,7 +260,7 @@ final class EditionMonetization implements Application.ActivityLifecycleCallback
         }
     }
     @Override public void onActivityResumed(Activity a){
-        if(!banners.containsKey(a)&&!(a instanceof BuiltInOfficeActivity)&&!(a instanceof OfficeBridgeActivity))return;
+        if(!banners.containsKey(a)&&!(a instanceof BuiltInOfficeActivity)&&!(a instanceof OfficeBridgeActivity)&&!(a instanceof PremiumActivity))return;
         resumed=a;pip=a.isInPictureInPictureMode();
         if(!billing.full()&&eligible(a)&&
                 !usagePrefs.getBoolean("explained",false)){
@@ -261,7 +268,12 @@ final class EditionMonetization implements Application.ActivityLifecycleCallback
             Toast.makeText(a,L10n.t("콘텐츠 이용 10분 후 전환 시 광고가 표시됩니다."),
                     Toast.LENGTH_LONG).show();
         }
-        billing.resume();maybeConsent();refreshBanner();ensureInterstitial();updateUsage();
+        updateUsage();
+        // Let the first app layout settle before starting optional Play SDKs.
+        main.postDelayed(()->{
+            if(resumed!=a||a.isFinishing()||a.isDestroyed())return;
+            billing.resume();maybeConsent();refreshBanner();ensureInterstitial();updateUsage();
+        },600);
         main.removeCallbacks(ticker);main.postDelayed(ticker,1000);
         if(a instanceof MainActivity){
             Boolean previous=entitlementSeen.put(a,billing.full());
@@ -316,6 +328,10 @@ final class EditionMonetization implements Application.ActivityLifecycleCallback
             });
         }
         void refresh(){
+            try{refreshAd();}
+            catch(RuntimeException|LinkageError failure){owner.sdkFailure("Banner",failure);hide();}
+        }
+        private void refreshAd(){
             if(activity!=owner.resumed||activity.isFinishing()||activity.isDestroyed()||
                     activity.isInPictureInPictureMode()||TvMode.isTv(activity)||!owner.adsAllowed()){
                 hide();if(owner.billing.full())clear();return;
@@ -345,10 +361,15 @@ final class EditionMonetization implements Application.ActivityLifecycleCallback
             candidate.loadAd(new AdRequest.Builder().build());
         }
         void hide(){slot.setVisibility(View.GONE);}
-        void pause(){if(ad!=null)ad.pause();}
+        void pause(){
+            if(ad!=null)try{ad.pause();}
+            catch(RuntimeException|LinkageError failure){owner.sdkFailure("Banner pause",failure);}
+        }
         void clear(){
             AdView previous=ad;ad=null;loaded=false;
-            slot.removeAllViews();hide();if(previous!=null)previous.destroy();
+            slot.removeAllViews();hide();
+            if(previous!=null)try{previous.destroy();}
+            catch(RuntimeException|LinkageError failure){owner.sdkFailure("Banner destroy",failure);}
         }
     }
 }

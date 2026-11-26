@@ -24,9 +24,42 @@
             rootProject.file('THIRD_PARTY_LICENSES').listFiles().sort{it.name}.each { source ->
                 if(!source.isFile())return
                 if(source.name=='ARCHIVE_LIBRARIES_NOTICE_KR.md' || source.name.startsWith('zxing_core_'))return
-                if(edition=='play' && source.name.startsWith('NextLib'))return
+                // Version-pinned NextLib notice is supplied from its exact release below.
+                if(source.name.startsWith('NextLib'))return
                 copyNotice(source,'web-'+source.name)
             }
+            def pinnedDir=rootProject.file('THIRD_PARTY_LICENSES/pinned')
+            def pinnedRows=new groovy.json.JsonSlurper().parse(new File(pinnedDir,'manifest.json'))
+            def resolvedIds=runtime.get().resolvedConfiguration.resolvedArtifacts.collect{
+                it.moduleVersion.id.toString()
+            }.toSet()
+            def reviewed = new StringBuilder("Version-pinned upstream notices.\n")
+            reviewed.append("Original texts are preserved byte-for-byte. This is not a complete license clearance.\n\n")
+            pinnedRows.each { row ->
+                if(!resolvedIds.contains(row.coordinate))return
+                reviewed.append(row.coordinate).append(' | ').append(row.license)
+                    .append(' | ').append(row.upstream).append('/tree/').append(row.revision).append('\n')
+                row.files.each { entry ->
+                    if (!(entry.filename ==~ /[A-Za-z0-9._-]+/))
+                        throw new GradleException('Invalid pinned notice filename')
+                    File original=new File(pinnedDir,entry.filename)
+                    if(!original.isFile())throw new GradleException('Missing pinned license '+entry.filename)
+                    String hash=java.security.MessageDigest.getInstance('SHA-256')
+                        .digest(original.bytes).encodeHex().toString()
+                    if(hash!=entry.sha256)throw new GradleException('Pinned notice checksum mismatch: '+entry.filename)
+                    copyNotice(original,'upstream-'+entry.filename)
+                    reviewed.append('  ').append(entry.filename).append(' | SHA256 ').append(hash).append('\n')
+                }
+            }
+            // A dependency upgrade must be accompanied by a notice review, not silently
+            // fall back to an old version's text.
+            def reviewedModules=pinnedRows.collect{it.coordinate.substring(0,it.coordinate.lastIndexOf(':'))}.toSet()
+            resolvedIds.each { id ->
+                if(reviewedModules.contains(id.substring(0,id.lastIndexOf(':'))) &&
+                   !pinnedRows.any{it.coordinate==id})
+                    throw new GradleException('Missing version-pinned license review for '+id)
+            }
+            new File(folder,'03-Upstream-license-review.txt').setText(reviewed.toString(),'UTF-8')
             def index = new StringBuilder("FileHub AIO "+edition+"\n\n")
             index.append("Runtime dependencies resolved for this edition.\n")
             index.append("Original license/notice files found in the artifacts are copied below.\n")

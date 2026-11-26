@@ -204,19 +204,19 @@ public final class BookTextActivity extends LocalizedActivity {
             @Override public void onProgressChanged(SeekBar bar,int value,boolean user){}
             @Override public void onStopTrackingTouch(SeekBar bar){
                 seekDragging=false;
-                pageTransitions.cancel();
-                if(largeBook!=null){
-                    jumpToLargeOffset(ReaderQuickSeek.toOffset(
-                            bar.getProgress(),largeBook.length()));
-                }else if(windowedBook()){
-                    jumpToOffset((int)ReaderQuickSeek.toOffset(
-                            bar.getProgress(),fullText.length()));
-                }else if(displayMode==1){
-                    jumpToOffset(Math.round(fullText.length()*
-                            bar.getProgress()/1000f));
-                }else if(pages!=null&&!pages.isEmpty())
-                    showPage(Math.round(bar.getProgress()*(pages.size()-1)/1000f));
+                seekText(bar.getProgress());
             }
+        });
+        installViewerChrome(footer,()->{
+            boolean ready=hasBook()&&progress.isEnabled()&&!pageTransitions.busy();
+            return ViewerUiPolicy.state("readerSlider",pageCount.getText().toString(),
+                    backgrounds[themeIndex],foregrounds[themeIndex],progress.getProgress(),false,
+                    ready?"previous":null,ready?"next":null,ready?"quick":null,ready?"seek":null);
+        },()->chromeVisible,(action,value)->{
+            if("previous".equals(action))move(-1);
+            else if("next".equals(action))move(1);
+            else if("quick".equals(action))showQuickSeek();
+            else if("seek".equals(action))seekText(value);
         });
         applyStyle();
         useReadingMode();
@@ -301,6 +301,17 @@ public final class BookTextActivity extends LocalizedActivity {
         if(fontIndex==2)return Typeface.MONOSPACE;
         return Typeface.SERIF;
     }
+    private void seekText(int value){
+        pageTransitions.cancel();
+        if(largeBook!=null){
+            jumpToLargeOffset(ReaderQuickSeek.toOffset(value,largeBook.length()));
+        }else if(windowedBook()){
+            jumpToOffset((int)ReaderQuickSeek.toOffset(value,fullText.length()));
+        }else if(displayMode==1){
+            jumpToOffset(Math.round(fullText.length()*value/1000f));
+        }else if(pages!=null&&!pages.isEmpty())
+            showPage(Math.round(value*(pages.size()-1)/1000f));
+    }
     private void applyStyle(){
         extraPageReservePx=0;
         int bg=backgrounds[themeIndex],fg=foregrounds[themeIndex];
@@ -324,8 +335,9 @@ public final class BookTextActivity extends LocalizedActivity {
         for(int i=0;i<header.getChildCount();i++)
             if(header.getChildAt(i) instanceof TextView)
                 ((TextView)header.getChildAt(i)).setTextColor(fg);
-        for(int i=0;i<footer.getChildCount();i++) {
-            View child=footer.getChildAt(i);
+        LinearLayout nativeFooter=viewerNativeBar(footer);
+        for(int i=0;i<nativeFooter.getChildCount();i++) {
+            View child=nativeFooter.getChildAt(i);
             if(child instanceof LinearLayout) {
                 LinearLayout row=(LinearLayout)child;
                 for(int j=0;j<row.getChildCount();j++)

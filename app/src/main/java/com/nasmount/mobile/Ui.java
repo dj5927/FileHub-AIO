@@ -119,6 +119,8 @@ final class Ui {
             raw.scale(scale, scale);
             Canvas c = raw;
             switch (kind) {
+                case "no_ads":
+                    stroke(c,4.5f);c.drawCircle(32,32,22,paint);line(c,16,48,48,16);break;
                 case "drive":
                     stroke(c, 3.5f); c.drawRoundRect(10, 16, 54, 47, 6, 6, paint);
                     fill(c); c.drawCircle(19, 38, 3, paint);
@@ -226,6 +228,23 @@ final class Ui {
                                 32 + (float)Math.cos(a)*25,
                                 32 + (float)Math.sin(a)*25, paint);
                     }
+                    break;
+                case "spreadsheet": case "word": case "presentation": case "hangul":
+                case "pdf": case "text": case "archive": case "android": case "application":
+                case "subtitle": case "code": case "design":
+                    stroke(c,3.5f);
+                    Path document=new Path();
+                    document.moveTo(14,7); document.lineTo(39,7);document.lineTo(51,19);
+                    document.lineTo(51,56);document.lineTo(14,56);document.close();
+                    c.drawPath(document,paint);
+                    line(c,39,7,39,19);line(c,39,19,51,19);
+                    fill(c);
+                    c.drawRoundRect(7,29,57,49,4,4,paint);
+                    paint.setColor(android.graphics.Color.WHITE);
+                    paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+                    paint.setTextSize(16);paint.setTextAlign(Paint.Align.CENTER);
+                    c.drawText(FileIconType.mark(kind),32,44,paint);
+                    paint.setTextAlign(Paint.Align.LEFT);
                     break;
                 case "file":
                     stroke(c, 3.4f);

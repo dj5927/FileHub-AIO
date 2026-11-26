@@ -24,6 +24,22 @@
     <div id="sheet-tabs" role="tablist" aria-label="엑셀 시트"></div>
     <p id="sheet-note">시트·셀 값 편집을 지원합니다. 수식은 다시 계산하지 않으며 복잡한 서식, 매크로, 차트는 원본과 달라질 수 있으므로 중요한 문서는 백업하세요.</p>
   </section>
+  <dialog id="sheet-find-dialog" aria-labelledby="sheet-find-title">
+    <form id="sheet-find-form">
+      <h2 id="sheet-find-title">현재 시트 검색</h2>
+      <p id="sheet-find-name"></p>
+      <input id="sheet-find-query" type="search" maxlength="256" enterkeyhint="search"
+             placeholder="검색어를 입력하세요." aria-label="현재 시트 검색" autocomplete="off" spellcheck="false">
+      <p id="sheet-find-info" role="status" aria-live="polite"></p>
+      <p id="sheet-find-preview"></p>
+      <div class="sheet-find-actions">
+        <button type="button" id="sheet-find-prev" disabled>이전</button>
+        <button type="button" id="sheet-find-next" disabled>다음</button>
+        <button type="button" id="sheet-find-cancel">취소</button>
+        <button type="submit" id="sheet-find-confirm" disabled>확인</button>
+      </div>
+    </form>
+  </dialog>
   <section id="word-shell" hidden>
     <div class="office-compact-nav">
       <span>Word 문서</span><button id="word-fit-toggle">100%</button>

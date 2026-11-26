@@ -10,13 +10,13 @@
 6. Complete Play App Signing with Google managing the app signing key. The independent FileHub upload key signs only the bundles uploaded to Play. Choose the default Google-generated app signing key for this new Play-only application. Use the exported public certificate if the console requests it.
 7. Configure license-test accounts, upload the signed internal-test AAB, and test real purchase/restore/refund flows on devices. Do not promote the internal test artifact to production.
 
-Public values the developer can safely provide: AdMob app ID, banner ad unit ID, interstitial ad unit ID, Play app licensing public key. Do not share account credentials, OTPs, payment details, private signing key or service-account private credentials.
+Public values the developer can safely provide: AdMob app ID, banner ad unit ID, interstitial ad unit ID, Play app licensing public key, public HTTPS privacy policy URL and public publisher/privacy contact. Do not share account credentials, OTPs, payment details, private signing key or service-account private credentials.
 
 ## Explicit build modes
 
 - Default: `:app:bundlePlayRelease` produces an unsigned development candidate.
 - Signed internal test: `:app:bundlePlayRelease -PfilehubPlayInternalTest=true -PfilehubPlayReleaseSigningConfig=<private properties path>`. Official demo ad units only; no production ad requests. Independent signing configuration is required. If no Play licensing public key has been configured, purchase verification remains disabled.
-- Signed production: `:app:bundlePlayRelease -PfilehubPlayProduction=true -PfilehubPlayReleaseSigningConfig=<private properties path>`, with the three actual AdMob IDs and the Play licensing public key configured. Preflight is automatically attached to the release build. It rejects missing or demo advertising IDs, different publisher prefixes, repeated ad units, invalid public keys, missing signing configuration and known Direct key reuse.
+- Signed production: `:app:bundlePlayRelease -PfilehubPlayProduction=true -PfilehubPlayReleaseSigningConfig=<private properties path>`, with the three actual AdMob IDs, Play licensing public key, and `-PfilehubPrivacyPolicyUrl=https://<published-policy-url>` configured. Preflight is automatically attached to the release build. It rejects missing or demo advertising IDs, different publisher prefixes, repeated ad units, invalid public keys, missing signing configuration, known Direct key reuse and missing or non-HTTPS privacy policy URLs. The R8 quality gate runs after bundle packaging.
 
 Do not enable internal and production mode together. Debug always uses test ads. Keep any publisher configuration outside the repository; the upload keystore and its password must be backed up securely by the owner. A public upload certificate may be shared when needed. Actual Play account setup, release upload, testing, production review and live advertising have not been performed in this development step.
 

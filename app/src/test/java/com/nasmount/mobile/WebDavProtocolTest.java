@@ -22,6 +22,27 @@ public final class WebDavProtocolTest {
         p.root = "/dav";
         return p;
     }
+    @Test public void countOnlyFiltersHiddenChildrenWithoutCountingSelf() throws Exception {
+        try(MockWebServer server=new MockWebServer()){
+            server.start();
+            String xml="<d:multistatus xmlns:d='DAV:'>"+
+                    "<d:response><d:href>/dav/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat></d:response>"+
+                    "<d:response><d:href>/dav/Folder/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat></d:response>"+
+                    "<d:response><d:href>/dav/a.txt</d:href><d:propstat><d:prop><d:getcontentlength>1</d:getcontentlength></d:prop></d:propstat></d:response>"+
+                    "<d:response><d:href>/dav/.hidden</d:href><d:propstat><d:prop><d:getcontentlength>1</d:getcontentlength></d:prop></d:propstat></d:response>"+
+                    "</d:multistatus>";
+            for(int i=0;i<2;i++)server.enqueue(new MockResponse().setResponseCode(207).setBody(xml));
+            assertEquals(2,RemoteProvider.countChildren(local(server.getPort()),"/",false));
+            assertEquals(3,RemoteProvider.countChildren(local(server.getPort()),"/",true));
+            assertEquals(2,server.getRequestCount());
+            for(int i=0;i<2;i++){
+                RecordedRequest request=server.takeRequest(2,TimeUnit.SECONDS);
+                assertNotNull(request);
+                assertEquals("PROPFIND",request.getMethod());
+                assertEquals("1",request.getHeader("Depth"));
+            }
+        }
+    }
     @Test public void browseAndDecodeUnicodeNames() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.start();

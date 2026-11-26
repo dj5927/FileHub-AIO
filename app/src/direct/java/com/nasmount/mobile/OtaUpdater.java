@@ -19,7 +19,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
-import java.net.URL;
 import java.security.MessageDigest;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -55,15 +54,13 @@ final class OtaUpdater {
             Exception error=null;
             try {
                 PrivateOtaChannel channel=PrivateOtaChannel.load(activity);
-                HttpURLConnection conn=channel==null ?
-                        (HttpURLConnection)new URL(OtaReleasePolicy.API).openConnection() :
-                        channel.open(channel.base+"manifest.json");
+                HttpURLConnection conn=channel.open(channel.base+"manifest.json");
                 conn.setConnectTimeout(6500);
                 conn.setReadTimeout(7500);
-                conn.setRequestProperty("Accept","application/vnd.github+json");
+                conn.setRequestProperty("Accept","application/json");
                 conn.setRequestProperty("User-Agent","FileHub-AIO-Android-OTA");
                 try {
-                    if(conn.getResponseCode()!=200)throw new java.io.IOException("GitHub API unavailable");
+                    if(conn.getResponseCode()!=200)throw new java.io.IOException("Private OTA unavailable");
                     try(InputStream stream=conn.getInputStream()) {
                         byte[] buffer=new byte[8192];
                         java.io.ByteArrayOutputStream data=new java.io.ByteArrayOutputStream();
@@ -72,8 +69,8 @@ final class OtaUpdater {
                             if(data.size()+n>250_000)throw new java.io.IOException("Release metadata too large");
                             data.write(buffer,0,n);
                         }
-                        JSONObject json=new JSONObject(data.toString("UTF-8"));
-                        release=channel==null?OtaReleasePolicy.parse(json):channel.parse(json);
+                        String raw=data.toString("UTF-8");
+                        release=channel.parse(new JSONObject(raw));
                     }
                 }finally {conn.disconnect();}
             }catch(Exception e){error=e;}
@@ -136,14 +133,8 @@ final class OtaUpdater {
                 File target=new File(folder,"FileHub-AIO-update.apk");
                 MessageDigest digest=MessageDigest.getInstance("SHA-256");
                 PrivateOtaChannel channel=PrivateOtaChannel.load(activity);
-                String publicUrl=OtaReleasePolicy.REPO+"/releases/download/v"+
-                        release.version+"/FileHub-AIO-v"+release.version+".apk";
-                if(channel==null && !publicUrl.equals(release.url))
-                    throw new SecurityException("Update channel changed; check again");
-                HttpURLConnection connection=channel==null?
-                        (HttpURLConnection)new URL(release.url).openConnection():
-                        channel.openDownload(release);
-                connection.setInstanceFollowRedirects(channel==null);
+                HttpURLConnection connection=channel.openDownload(release);
+                connection.setInstanceFollowRedirects(false);
                 connection.setConnectTimeout(15000);
                 connection.setReadTimeout(25000);
                 connection.setRequestProperty("User-Agent","FileHub-AIO-Android-OTA");

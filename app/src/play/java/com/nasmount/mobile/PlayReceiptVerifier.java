@@ -21,7 +21,10 @@ final class PlayReceiptVerifier {
     }
     boolean configured(){return key!=null;}
     boolean valid(String json,String signature,String packageName){
-        if(key==null||json==null||signature==null||json.length()>65536||signature.length()>4096)return false;
+        return validForProduct(json,signature,packageName,MonetizationPolicy.PRODUCT_ID);
+    }
+    boolean validForProduct(String json,String signature,String packageName,String product){
+        if(!MonetizationPolicy.premiumProduct(product)||key==null||json==null||signature==null||json.length()>65536||signature.length()>4096)return false;
         try{
             Signature verifier=Signature.getInstance("SHA1withRSA");
             verifier.initVerify(key);
@@ -31,10 +34,10 @@ final class PlayReceiptVerifier {
             if(!packageName.equals(data.optString("packageName"))||
                     data.optInt("purchaseState",-1)!=0||
                     data.optString("purchaseToken").isEmpty())return false;
-            if(MonetizationPolicy.PRODUCT_ID.equals(data.optString("productId")))return true;
+            if(product.equals(data.optString("productId")))return true;
             JSONArray products=data.optJSONArray("productIds");
             if(products==null)products=data.optJSONArray("products");
-            return products!=null&&products.length()==1&&MonetizationPolicy.PRODUCT_ID.equals(products.optString(0));
+            return products!=null&&products.length()==1&&product.equals(products.optString(0));
         }catch(Exception ignored){return false;}
     }
 }

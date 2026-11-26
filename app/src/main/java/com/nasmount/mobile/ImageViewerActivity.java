@@ -119,7 +119,9 @@ public final class ImageViewerActivity extends LocalizedActivity {
         title.setSingleLine(true);
         title.setPadding(Ui.dp(this,13),0,Ui.dp(this,13),0);
         title.setOnClickListener(v->finish());
-        root.addView(title,Ui.lp(this,-1,44));
+        LinearLayout imageBar=Ui.horizontal(this);
+        imageBar.addView(title,Ui.lp(this,-1,-1));
+        root.addView(imageBar,Ui.lp(this,-1,44));
         stage=new FrameLayout(this);
         stage.setBackgroundColor(Color.BLACK);
         root.addView(stage,new LinearLayout.LayoutParams(-1,0,1));
@@ -142,6 +144,17 @@ public final class ImageViewerActivity extends LocalizedActivity {
         info.setGravity(Gravity.CENTER);
         root.addView(info,Ui.lp(this,-1,29));
         updateTitle();
+        installViewerChrome(imageBar,()->ViewerUiPolicy.state("image",
+                currentPhoto().name+(sequence!=null&&sequence.photos.size()>1?
+                        "  ("+(sequenceIndex+1)+"/"+sequence.photos.size()+")":""),
+                0xFF080C10,Color.WHITE,-1,false,"back",
+                currentReady&&!animating&&!fingerDown&&neighbor(-1)>=0?"previous":null,
+                currentReady&&!animating&&!fingerDown&&neighbor(1)>=0?"next":null),
+                ()->!destroyed,(action,value)->{
+                    if("back".equals(action))finish();
+                    else if("previous".equals(action))releasePhoto(-1);
+                    else if("next".equals(action))releasePhoto(1);
+                });
         requestPhoto(currentIndex());
     }
 

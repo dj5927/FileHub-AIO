@@ -1,0 +1,26 @@
+name: filehub_flutter
+description: Shared FileHub AIO Android interface migration.
+publish_to: none
+version: 1.0.0+1
+environment:
+  sdk: ">=3.14.0 <4.0.0"
+  flutter: ">=3.50.1"
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  material_ui: 1.1.0
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: 6.0.0
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/filehub_aio_icon.png
+    - assets/filehub_aio_wordmark.png
+  module:
+    androidX: true
+    androidPackage: com.filehubaio.filehub_flutter
+    iosBundleIdentifier: com.filehubaio.filehubFlutter

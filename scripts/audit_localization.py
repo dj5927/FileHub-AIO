@@ -9,6 +9,12 @@ for line in CAT.read_text(encoding="utf-8").splitlines():
     fields=line.split("\t")
     assert len(fields)==4 and all(fields),line
     assert fields[0] not in rows,fields[0]
+    # Positional format placeholders must have identical types and counts in
+    # every translation (reordering is allowed).
+    placeholders=lambda value: sorted(re.findall(r"%\d+\$[sd]",value))
+    if placeholders(fields[0]):
+        assert all(placeholders(value)==placeholders(fields[0]) for value in fields[1:]),line
+        assert all(not re.search(r"%(?!\d+\$[sd]|%)",value) for value in fields),line
     rows[fields[0]]=fields[1:]
 lit=r'"(?:\\.|[^"\\\r\n])*"'
 lit_re=re.compile(lit)
@@ -29,7 +35,7 @@ calls={"setTitle":(0,), "setMessage":(0,), "setPositiveButton":(0,), "setNegativ
     "readerSelect":(0,), "select":(0,), "number":(0,1), "toggle":(0,1),
     "text":(1,), "makeText":(1,), "createChooser":(1,), "setDialogTitle":(0,),
     "setSummary":(0,), "setButton":(1,), "heading":(0,), "muted":(0,),
-    "showStatus":(0,), "render":(0,), "row":(1,2), "t":(0,)}
+    "showStatus":(0,), "render":(0,), "row":(1,2), "t":(0,), "f":(0,)}
 arrays={"setItems":0,"setSingleChoiceItems":0,"setMultiChoiceItems":0,"select":1,"readerSelect":1}
 def args_at(s,mask,start):
     depth=0;begin=start;out=[]
@@ -45,6 +51,7 @@ def args_at(s,mask,start):
 missing={}
 seen=set()
 changes=0
+pending=0
 apply="--apply" in sys.argv
 for edition in ("main","direct","play"):
     for f in (ROOT/f"app/src/{edition}/java/com/nasmount/mobile").glob("*.java"):
@@ -60,7 +67,7 @@ for edition in ("main","direct","play"):
                 edits[(a,b)]="L10n.t("+value+")"
         for m in re.finditer(r'\b('+"|".join(sorted(set(calls)|set(arrays)))+r')\s*\(',mask):
             name=m.group(1)
-            if name=="t" and not mask[max(0,m.start()-5):m.start()].endswith("L10n."):continue
+            if name in ("t","f") and not mask[max(0,m.start()-5):m.start()].endswith("L10n."):continue
             if name in ("render","row","heading","muted","tile","drawerSection","drawerLink") and f.name!="MainActivity.java":continue
             args=args_at(s,mask,m.end());indices=calls.get(name,())
             if name=="action" and mask[max(0,m.start()-3):m.start()]=="Ui.":indices=(1,)
@@ -70,7 +77,7 @@ for edition in ("main","direct","play"):
                 if match:
                     following=raw[match.end(1):].lstrip()
                     if not following or following.startswith("+"):
-                        mark(a+match.start(1),a+match.end(1),match.group(1),name=="t")
+                        mark(a+match.start(1),a+match.end(1),match.group(1),name in ("t","f"))
             idx=arrays.get(name,-1)
             if idx>=0 and idx<len(args):
                 a,b=args[idx];raw=s[a:b]
@@ -78,11 +85,14 @@ for edition in ("main","direct","play"):
                     for match in lit_re.finditer(raw):
                         mark(a+match.start(),a+match.end(),match.group(0),
                              raw[max(0,match.start()-7):match.start()].endswith("L10n.t("))
+        pending+=len(edits)
         if apply and edits:
             for (a,b),v in sorted(edits.items(),reverse=True):s=s[:a]+v+s[b:]
             f.write_text(s,encoding="utf-8",newline="\n")
             changes+=len(edits)
-print(f"CATALOG={len(rows)} UI_KEYS={len(seen)} MISSING={len(missing)} WRAPPED={changes}")
+print(f"CATALOG={len(rows)} UI_KEYS={len(seen)} MISSING={len(missing)} PENDING={pending-changes} WRAPPED={changes}")
 if "--all" in sys.argv:
     for k,files in sorted(missing.items(),key=lambda kv:(0 if 'SettingsActivity.java' in kv[1] else 1 if 'MainActivity.java' in kv[1] else 2, sorted(kv[1])[0], kv[0])):
         print(k+" | "+",".join(sorted(files)))
+if "--check" in sys.argv and (missing or pending!=changes):
+    sys.exit(1)

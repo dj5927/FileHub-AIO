@@ -38,6 +38,12 @@ public class PlayReceiptVerifierTest {
         String empty=receipt.put("productId",MonetizationPolicy.PRODUCT_ID)
                 .put("purchaseToken","").toString();
         assertFalse(verifier.valid(empty,sign(key,empty),PACKAGE));
+        String annual=receipt.put("productId",MonetizationPolicy.ANNUAL_PRODUCT_ID)
+                .put("purchaseToken","annual-test-token").toString();
+        String annualSig=sign(key,annual);
+        assertTrue(verifier.validForProduct(annual,annualSig,PACKAGE,MonetizationPolicy.ANNUAL_PRODUCT_ID));
+        assertFalse(verifier.valid(annual,annualSig,PACKAGE));
+        assertFalse(verifier.validForProduct(raw,sig,PACKAGE,MonetizationPolicy.ANNUAL_PRODUCT_ID));
         assertFalse(SettingsBackup.transfersPreferenceFile("filehub_play_receipt"));
         assertFalse(SettingsBackup.transfersPreferenceFile("filehub_ad_usage"));
     }

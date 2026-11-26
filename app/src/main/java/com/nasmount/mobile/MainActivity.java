@@ -79,7 +79,17 @@ public class MainActivity extends LocalizedActivity {
     static final int REQ_LAN_QR_SCAN = 511;
     private static final int ICON_BLUE = 0xFF4989CF;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    // Shelf listing is read-only and must not wait behind unrelated file I/O.
+    private final ExecutorService assignedShelfWorker=Executors.newFixedThreadPool(2);
+    private Future<?> assignedShelfTask;
     private final ExecutorService previewWorker = Executors.newFixedThreadPool(2);
+    // Counts never compete with thumbnails, subtitle probes, or file I/O.
+    private final java.util.concurrent.ThreadPoolExecutor localCountWorker=
+            (java.util.concurrent.ThreadPoolExecutor)Executors.newFixedThreadPool(4);
+    private final java.util.concurrent.ThreadPoolExecutor remoteCountWorker=
+            (java.util.concurrent.ThreadPoolExecutor)Executors.newFixedThreadPool(4);
+    private final Handler folderCountHandler=new Handler(Looper.getMainLooper());
+    private final Map<java.util.concurrent.FutureTask<Integer>,Runnable> folderCountTasks=new LinkedHashMap<>();
     private final ExecutorService subtitleProbeWorker =
             Executors.newSingleThreadExecutor();
     private final ExecutorService recursiveSearchWorker=
@@ -124,6 +134,67 @@ public class MainActivity extends LocalizedActivity {
     private String assignedMode;
     private AssignedFolderBackBoundary assignedBackBoundary;
     private boolean drawerShown;
+    private FlutterNavigationSurface flutterHomeSurface, flutterDrawerSurface, flutterExplorerSurface;
+    private ExplorerSession explorerSession;
+    private boolean nativeExplorerOnly;
+    private List<RemoteBreadcrumbs.Step> explorerCrumbs=Collections.emptyList();
+    private Consumer<String> explorerCrumbAction;
+    private String explorerQuota="";
+    private boolean nativeDrawerOnly, activityResumed;
+    // A single attached Flutter viewport for MainActivity navigation.
+    // Native toolbar/permissions/I/O remain owned by this Activity.
+    private FrameLayout flutterBodyLayer;
+    private FlutterNavigationSurface flutterBodySurface;
+    private FlutterRemoteEditor embeddedRemoteEditor;
+    private String embeddedEditorToken;
+    private boolean embeddedEditorSaved,editorAddedSecureFlag;
+    private View editorToolbarShade;
+    private boolean bodyDisplayed, bodyWaiting;
+    private boolean initialHome=true;
+    private LinearLayout startupPage;
+    private View startupPlaceholder;
+    private void clearStartupPlaceholder(){
+        if(startupPage!=null&&startupPlaceholder!=null){
+            startupPage.removeView(startupPlaceholder);
+            for(int i=0;i<startupPage.getChildCount();i++)
+                startupPage.getChildAt(i).setVisibility(View.VISIBLE);
+        }
+        startupPage=null;startupPlaceholder=null;
+    }
+    private void showStartupPlaceholder(){
+        if(!initialHome)return;
+        initialHome=false;
+        if(!FlutterUiMode.enabled(this))return;
+        startupPage=page;
+        for(int i=0;i<page.getChildCount();i++)page.getChildAt(i).setVisibility(View.GONE);
+        LinearLayout loading=Ui.vertical(this);
+        loading.setGravity(Gravity.CENTER);
+        ImageView logo=new ImageView(this);
+        logo.setImageResource(R.drawable.filehub_aio_icon);
+        logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        loading.addView(logo,Ui.lp(this,112,112));
+        android.widget.ProgressBar progress=new android.widget.ProgressBar(this);
+        LinearLayout.LayoutParams bar=Ui.lp(this,26,26);bar.topMargin=dp(18);
+        loading.addView(progress,bar);
+        startupPlaceholder=loading;
+        page.addView(loading,Ui.lp(this,-1,360));
+        currentScroll.post(()->{if(startupPlaceholder==loading&&currentScroll!=null){
+            int available=currentScroll.getHeight()-startupPage.getPaddingTop()-startupPage.getPaddingBottom();
+            if(available>0)loading.setLayoutParams(new LinearLayout.LayoutParams(-1,available));
+        }});
+        loading.postDelayed(()->{if(startupPlaceholder==loading)clearStartupPlaceholder();},12000);
+    }
+    private SettingsContent settingsContent;
+    private String settingsReturnScreen="home",settingsScope;
+    private final Handler screenHandoffHandler=new Handler(Looper.getMainLooper());
+    private final Runnable screenHandoffTimeout=()->{
+        if(bodyWaiting){
+            bodyDisplayed=false;
+            if(flutterBodySurface==null||!flutterBodySurface.isActive())bodyWaiting=false;
+            presentBodyLayer();
+        }
+    };
+    private boolean flutterRemoteOrigin;
     private FrameLayout drawerLayer;
     private View drawerShade;
     private View drawerPanel;
@@ -143,7 +214,7 @@ public class MainActivity extends LocalizedActivity {
     private int layoutMode = FileViewOptions.LIST;
     private int sortMode = FileViewOptions.NAME_ASC;
     private boolean showHidden = true; // Older versions showed dot files.
-    private boolean showThumbnails = false;
+    private boolean showThumbnails = true;
     private boolean showVideoThumbnails = true;
     private Map<String, Set<String>> siblingSubtitleIndex = Collections.emptyMap();
     private boolean refreshAfterVideo;
@@ -161,6 +232,10 @@ public class MainActivity extends LocalizedActivity {
     private boolean stagedMove;
     private Runnable pendingTransferPermission;
     private AlertDialog transferDialog;
+    private FlutterNavigationSurface flutterTransferSurface;
+    private FlutterFilePrompt flutterFilePrompt;
+    private Map<String,Object> lastFlutterTransfer=Collections.emptyMap();
+    private boolean lastOperationTransferActive, nativeTransferOnly, destroyingActivity;
     private ProgressBar transferProgressBar;
     private TextView transferName, transferPercent, transferAmount, transferFiles;
     private TextView transferChip;
@@ -181,6 +256,8 @@ public class MainActivity extends LocalizedActivity {
     private ToolbarIconView toolbarFavorite;
     private final EditionApkInstaller apkInstaller = new EditionApkInstaller(this);
     private LinearLayout miniPlayerBar;
+    private FrameLayout miniPlayerOverlay;
+    private boolean miniPlayerShown;
     private TextView miniTitle,miniToggle;
     private SeekBar miniProgress;
     private boolean miniSeeking;
@@ -211,6 +288,7 @@ public class MainActivity extends LocalizedActivity {
         setTheme(Ui.darkMode ? R.style.AppThemeDark : R.style.AppTheme);
         super.onCreate(state);
         tvDevice = TvMode.isTv(this);
+        FlutterUiMode.prewarm(this);
         if (tvDevice) {
             getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
                     WindowManager.LayoutParams.FLAG_FULLSCREEN);
@@ -257,7 +335,7 @@ public class MainActivity extends LocalizedActivity {
         layoutMode = viewSettings.getInt("layout", FileViewOptions.LIST);
         sortMode = viewSettings.getInt("sort", FileViewOptions.NAME_ASC);
         showHidden = viewSettings.getBoolean("hidden", true);
-        showThumbnails = viewSettings.getBoolean("thumbnails", false);
+        showThumbnails = viewSettings.getBoolean("thumbnails", true);
         showVideoThumbnails = viewSettings.getBoolean("video_thumbnails", true);
         container = new FrameLayout(this);
         container.setBackgroundColor(Ui.BG);
@@ -329,6 +407,13 @@ public class MainActivity extends LocalizedActivity {
                 statusBarBackground.setLayoutParams(top);
             }
         }
+        if (miniPlayerOverlay != null && miniPlayerOverlay.getParent() == container) {
+            FrameLayout.LayoutParams musicBounds = (FrameLayout.LayoutParams) miniPlayerOverlay.getLayoutParams();
+            if (musicBounds.bottomMargin != navigationBarInsetPx) {
+                musicBounds.bottomMargin = navigationBarInsetPx;
+                miniPlayerOverlay.setLayoutParams(musicBounds);
+            }
+        }
         if (navigationBarBackground != null &&
                 navigationBarBackground.getParent() == container) {
             FrameLayout.LayoutParams bottom = (FrameLayout.LayoutParams)
@@ -341,6 +426,12 @@ public class MainActivity extends LocalizedActivity {
     }
 
     @Override public void onDestroy() {
+        destroyingActivity=true;
+        if(settingsContent!=null)settingsContent.deactivate();
+        finishScreenHandoff();
+        if(flutterFilePrompt!=null)flutterFilePrompt.close();
+        if(flutterTransferSurface!=null){flutterTransferSurface.close();flutterTransferSurface=null;}
+        disposeFlutterNavigation();
         if(otaUpdater!=null)otaUpdater.close();
         stopTvPairing();
         if(settingsBackupUi!=null)settingsBackupUi.shutdown();
@@ -348,6 +439,11 @@ public class MainActivity extends LocalizedActivity {
         if (transferDialog != null) transferDialog.dismiss();
         musicHandler.removeCallbacks(musicTicker);
         worker.shutdownNow();
+        if(assignedShelfTask!=null)assignedShelfTask.cancel(true);
+        assignedShelfWorker.shutdownNow();
+        cancelFolderCountJobs();
+        localCountWorker.shutdownNow();
+        remoteCountWorker.shutdownNow();
         previewWorker.shutdownNow();
         subtitleProbeWorker.shutdownNow();
         if(recursiveSearchTask!=null)recursiveSearchTask.cancel(true);
@@ -476,6 +572,11 @@ public class MainActivity extends LocalizedActivity {
         showError(safeError(error));
     }
     void showError(String message) {
+        if(useFlutterFileChrome()&&flutterFilePrompt==null&&!destroyingActivity&&
+                (transferDialog==null||!transferDialog.isShowing())){
+            showFilePrompt("FileHub AIO",message,null,L10n.t("확인"),null);
+            return;
+        }
         new AlertDialog.Builder(this).setTitle("FileHub AIO")
                 .setMessage(message).setPositiveButton(L10n.t("확인"), null).show();
     }
@@ -511,6 +612,24 @@ public class MainActivity extends LocalizedActivity {
         });
     }
 
+    /** Folder navigation already has a loading row in its destination.
+     * Do not create/dismiss another window for ordinary directory reads. */
+    private <T> void runFolderJob(int generation,String label,Job<T> operation,Consumer<T> onSuccess){
+        worker.execute(()->{
+            T value=null;Throwable error=null;
+            try{value=operation.execute();}catch(Throwable failure){error=failure;}
+            final T result=value;final Throwable problem=error;
+            runOnUiThread(()->{
+                if(isFinishing()||isDestroyed()||generation!=renderGeneration)return;
+                if(problem instanceof NasShareApi.OtpRequired){
+                    showNasOtpPrompt((NasShareApi.OtpRequired)problem,label,operation,
+                            data->{if(generation==renderGeneration)onSuccess.accept(data);});
+                }else if(problem!=null){
+                    finishScreenHandoff();failure(problem);
+                }else onSuccess.accept(result);
+            });
+        });
+    }
     private <T> void showNasOtpPrompt(NasShareApi.OtpRequired challenge,
                                       String label, Job<T> operation,
                                       Consumer<T> onSuccess) {
@@ -586,7 +705,99 @@ public class MainActivity extends LocalizedActivity {
         }
     }
 
+    private void ensureBodyLayer(){
+        if(flutterBodyLayer!=null)return;
+        flutterBodyLayer=new FrameLayout(this){
+            @Override public boolean dispatchTouchEvent(android.view.MotionEvent event){
+                if(bodyWaiting&&bodyDisplayed)return true;
+                if(!bodyDisplayed||flutterBodySurface==null||!flutterBodySurface.isShown())return false;
+                return super.dispatchTouchEvent(event);
+            }
+        };
+        flutterBodyLayer.setAlpha(0f);
+        flutterBodyLayer.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+        container.addView(flutterBodyLayer,new FrameLayout.LayoutParams(1,1));
+        container.getViewTreeObserver().addOnPreDrawListener(()->{
+            if(flutterBodyLayer==null||currentScroll==null||
+                    !currentScroll.isAttachedToWindow()||currentScroll.getWidth()<=0||
+                    currentScroll.getHeight()<=0)return true;
+            int[] a=new int[2],b=new int[2];
+            currentScroll.getLocationInWindow(a);container.getLocationInWindow(b);
+            FrameLayout.LayoutParams lp=(FrameLayout.LayoutParams)flutterBodyLayer.getLayoutParams();
+            int left=a[0]-b[0],top=a[1]-b[1],w=currentScroll.getWidth(),h=currentScroll.getHeight();
+            if(lp.leftMargin==left&&lp.topMargin==top&&lp.width==w&&lp.height==h)return true;
+            lp.gravity=Gravity.TOP|Gravity.LEFT;lp.leftMargin=left;lp.topMargin=top;lp.width=w;lp.height=h;
+            flutterBodyLayer.setLayoutParams(lp);
+            return false;
+        });
+    }
+    private void presentBodyLayer(){
+        if(flutterBodyLayer==null)return;
+        // Keep the texture attached even when native-only content is shown.
+        // Near-zero opacity permits buffer acquisition during startup.
+        flutterBodyLayer.setAlpha(bodyDisplayed||bodyWaiting?1f:0f);
+        if(!bodyDisplayed&&bodyWaiting&&flutterBodySurface!=null)
+            flutterBodySurface.dimUntilReady();
+        flutterBodyLayer.setImportantForAccessibility(
+                bodyDisplayed&&!bodyWaiting?View.IMPORTANT_FOR_ACCESSIBILITY_AUTO:
+                        View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+        flutterBodyLayer.bringToFront();
+        if(miniPlayerOverlay!=null)miniPlayerOverlay.bringToFront();
+        if(transferChip!=null)transferChip.bringToFront();
+        if(drawerLayer!=null)drawerLayer.bringToFront();
+    }
+    private void beginScreenHandoff(){
+        clearStartupPlaceholder();
+        closeEmbeddedEditor(true);
+        if(assignedShelfTask!=null){assignedShelfTask.cancel(true);assignedShelfTask=null;}
+        cancelFolderCountJobs();
+        screenHandoffHandler.removeCallbacks(screenHandoffTimeout);
+        if(explorerSession!=null)explorerSession.detached=true;
+        explorerSession=null;
+        bodyDisplayed=activityResumed&&FlutterUiMode.enabled(this)&&
+                flutterBodySurface!=null&&flutterBodySurface.isShown();
+        bodyWaiting=bodyDisplayed;
+        if(flutterBodySurface!=null)flutterBodySurface.unbind();
+        if(flutterBodySurface!=null&&!FlutterUiMode.enabled(this)){
+            flutterBodySurface.close();flutterBodySurface=null;
+        }
+        flutterHomeSurface=null;flutterExplorerSurface=null;
+        if(flutterDrawerSurface!=null){flutterDrawerSurface.close();flutterDrawerSurface=null;}
+        if(bodyWaiting)screenHandoffHandler.postDelayed(screenHandoffTimeout,1500);
+    }
+    private void finishScreenHandoff(){
+        closeEmbeddedEditor(true);
+        screenHandoffHandler.removeCallbacks(screenHandoffTimeout);
+        bodyWaiting=false;bodyDisplayed=false;
+        if(flutterBodySurface!=null)flutterBodySurface.unbind();
+        presentBodyLayer();
+    }
+    private void screenHandoffReady(int generation){
+        if(generation!=renderGeneration)return;
+        clearStartupPlaceholder();
+        screenHandoffHandler.removeCallbacks(screenHandoffTimeout);
+        bodyWaiting=false;
+        bodyDisplayed=flutterBodySurface!=null&&flutterBodySurface.isShown();
+        presentBodyLayer();
+    }
+    private FlutterNavigationSurface bindBody(String route,FlutterNavigationSurface.Host host){
+        if(!FlutterUiMode.enabled(this)||currentScroll==null)return null;
+        ensureBodyLayer();
+        bodyWaiting=true;
+        if(flutterBodySurface==null||flutterBodySurface.isClosed()){
+            bodyDisplayed=false;
+            flutterBodySurface=new FlutterNavigationSurface(this,flutterBodyLayer,currentScroll,
+                    route,host,activityResumed,true);
+        }else flutterBodySurface.rebind(currentScroll,route,host,activityResumed);
+        presentBodyLayer();
+        return flutterBodySurface;
+    }
     private void render(String title, boolean back, String right, Runnable onRight) {
+        beginScreenHandoff();
+        if(settingsContent!=null){settingsContent.deactivate();settingsContent=null;}
+        explorerCrumbs=Collections.emptyList();
+        explorerCrumbAction=null;
+        explorerQuota="";
         currentTitle = title;
         visibleComicVolumes.clear();
         try {
@@ -614,7 +825,9 @@ public class MainActivity extends LocalizedActivity {
         mediaFolderEpisodeQueues = Collections.emptyMap();
         gridCellIndex = 0;
         activeGridRow = null;
-        container.removeAllViews();
+        for(int i=container.getChildCount()-1;i>=0;i--){
+            if(container.getChildAt(i)!=flutterBodyLayer && container.getChildAt(i)!=miniPlayerOverlay)container.removeViewAt(i);
+        }
         transferChip = null;
         drawerShown = false;
         drawerLayer = null;
@@ -649,7 +862,7 @@ public class MainActivity extends LocalizedActivity {
         ToolbarIconView hamburger = new ToolbarIconView(this, ToolbarIconView.MENU);
         top.addView(hamburger, Ui.lp(this, 40, -1));
         hamburger.setContentDescription(L10n.t("왼쪽 탐색 메뉴"));
-        hamburger.setOnClickListener(v -> showDrawer());
+        hamburger.setOnClickListener(v -> {if(drawerShown)closeDrawer();else showDrawer();});
         if (!"home".equals(currentScreen)) {
             ToolbarIconView home = new ToolbarIconView(this, ToolbarIconView.HOME);
             home.setContentDescription(L10n.t("홈으로 이동"));
@@ -710,6 +923,18 @@ public class MainActivity extends LocalizedActivity {
             actions.setContentDescription(L10n.t("현재 폴더 작업"));
             top.addView(actions, Ui.lp(this, 40, -1));
             actions.setOnClickListener(v -> fileActionsForCurrent());
+        } else if ("home".equals(currentScreen)) {
+            if(!EditionMonetization.full(this)){
+                ToolbarIconView crown=new ToolbarIconView(this,ToolbarIconView.CROWN);
+                crown.setTint(0xFFFFD27A);
+                crown.setContentDescription(L10n.t("풀버전으로 업그레이드"));
+                top.addView(crown,Ui.lp(this,40,-1));
+                crown.setOnClickListener(v->EditionMonetization.showUpgrade(this));
+            }
+            ToolbarIconView more=new ToolbarIconView(this,ToolbarIconView.MORE);
+            top.addView(more,Ui.lp(this,40,-1));
+            more.setContentDescription(L10n.t("메뉴"));
+            more.setOnClickListener(v->menu(more));
         } else if (right != null) {
             TextView action = Ui.text(this, right, 22, Color.WHITE, false);
             action.setGravity(Gravity.CENTER);
@@ -732,7 +957,7 @@ public class MainActivity extends LocalizedActivity {
         });
         screenRoot.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         page = Ui.vertical(this);
-        page.setPadding(dp(16), dp(18), dp(16), dp(36));
+        page.setPadding(dp(16), dp(18), dp(16), dp(97));
         int contentWidthDp = FoldPlayerLayoutPolicy.contentWidthDp(
                 expandedLayout(), currentScreenWidthDp());
         scroll.addView(page, new FrameLayout.LayoutParams(
@@ -746,6 +971,12 @@ public class MainActivity extends LocalizedActivity {
         }
         createMiniPlayerBar();
         updateFileOperationChrome();
+        // The home, explorer and designated-folder routes bind into the
+        // same viewport; a native-only destination never waits on Dart.
+        if(!fileScreen&&!"home".equals(currentScreen)&&!"assigned".equals(currentScreen)&&
+                !"remotes".equals(currentScreen)&&!"favorites".equals(currentScreen)&&!"settings".equals(currentScreen))
+            finishScreenHandoff();
+        presentBodyLayer();
     }
 
     /** Renders only a small number of file/folder rows per UI frame.
@@ -769,6 +1000,7 @@ public class MainActivity extends LocalizedActivity {
                 appendDirectoryPage(entries,end,generation,showRow);
             });
         }
+        if(offset==0)attachFlutterExplorer(entries,generation);
     }
 
     /** Search all files even if only 60 rows are currently inflated. */
@@ -792,9 +1024,19 @@ public class MainActivity extends LocalizedActivity {
     }
 
     private void createMiniPlayerBar(){
+        if(miniPlayerOverlay!=null && miniPlayerOverlay.getParent()==container){
+            miniPlayerBar.setBackgroundColor(Ui.darkMode?0xFF0D2527:0xFF153E40);
+            miniPlayerOverlay.bringToFront();
+            refreshMiniPlayer();
+            return;
+        }
+        miniPlayerShown=false;
+        miniPlayerOverlay=new FrameLayout(this);
+        miniPlayerOverlay.setClipChildren(true);
+        miniPlayerOverlay.setVisibility(View.INVISIBLE);
         miniPlayerBar=Ui.vertical(this);
         miniPlayerBar.setBackgroundColor(Ui.darkMode?0xFF0D2527:0xFF153E40);
-        miniPlayerBar.setVisibility(View.GONE);
+        miniPlayerBar.setTranslationY(dp(61));
         LinearLayout controls=Ui.horizontal(this);
         controls.setPadding(dp(9),0,dp(7),0);
         miniPlayerBar.addView(controls,Ui.lp(this,-1,42));
@@ -834,16 +1076,29 @@ public class MainActivity extends LocalizedActivity {
                 }
             }
         });
-        screenRoot.addView(miniPlayerBar,Ui.lp(this,-1,61));
+        miniPlayerOverlay.addView(miniPlayerBar,new FrameLayout.LayoutParams(-1,-1));
+        FrameLayout.LayoutParams musicBounds=new FrameLayout.LayoutParams(-1,dp(61),Gravity.BOTTOM);
+        musicBounds.bottomMargin=navigationBarInsetPx;
+        container.addView(miniPlayerOverlay,musicBounds);
         refreshMiniPlayer();
     }
     private void refreshMiniPlayer(){
-        if(miniPlayerBar==null||miniPlayerBar.getParent()!=screenRoot)return;
-        if(!MusicPlaybackService.active){
-            miniPlayerBar.setVisibility(View.GONE);
-            return;
+        if(miniPlayerOverlay==null||miniPlayerOverlay.getParent()!=container)return;
+        boolean visible=MusicPlaybackService.active&&!drawerShown&&selection.isEmpty()&&stagedFiles.isEmpty();
+        if(visible!=miniPlayerShown){
+            miniPlayerShown=visible;
+            final View bar=miniPlayerBar;
+            bar.animate().cancel();
+            if(visible){
+                miniPlayerOverlay.setVisibility(View.VISIBLE);
+                bar.animate().translationY(0).setDuration(220).start();
+            }else{
+                bar.animate().translationY(dp(61)).setDuration(180).withEndAction(()->{
+                    if(bar==miniPlayerBar&&!miniPlayerShown)miniPlayerOverlay.setVisibility(View.INVISIBLE);
+                }).start();
+            }
         }
-        miniPlayerBar.setVisibility(View.VISIBLE);
+        if(!visible)return;
         String error=MusicPlaybackService.error;
         miniTitle.setText(error.isEmpty()?MusicPlaybackService.title:error);
         miniToggle.setText(MusicPlaybackService.playing?"Ⅱ":"▶");
@@ -995,6 +1250,74 @@ public class MainActivity extends LocalizedActivity {
                     this::pasteStagedFiles);
             screenRoot.addView(operationBottomBar, Ui.lp(this, -1, 74));
         }
+        syncFileOperationChrome();
+        refreshMiniPlayer();
+        if(flutterExplorerSurface!=null)flutterExplorerSurface.refresh();
+    }
+
+    private boolean useFlutterFileChrome(){
+        return !tvDevice&&!destroyingActivity&&flutterExplorerSurface!=null&&flutterExplorerSurface.isShown();
+    }
+    private void syncFileOperationChrome(){
+        int visibility=useFlutterFileChrome()?View.GONE:View.VISIBLE;
+        if(selectionToolbar!=null)selectionToolbar.setVisibility(visibility);
+        if(operationBottomBar!=null)operationBottomBar.setVisibility(visibility);
+    }
+    private void showFilePrompt(String title,String message,String initial,String positive,Consumer<String> confirm){
+        final int generation=renderGeneration;
+        FlutterFilePrompt prompt=new FlutterFilePrompt(this,title,message,initial,positive,confirm,
+                ()->!destroyingActivity&&!isFinishing()&&!isDestroyed()&&renderGeneration==generation,
+                closed->{if(flutterFilePrompt==closed)flutterFilePrompt=null;});
+        if(flutterFilePrompt!=null)flutterFilePrompt.close();
+        flutterFilePrompt=prompt;
+        prompt.show(activityResumed);
+    }
+
+    private boolean allSelectedWritable(){
+        for(FileTransferEngine.Item item:selection.snapshot())if(!item.writable())return false;
+        return true;
+    }
+    private boolean pasteDestinationWritable(){
+        if("local".equals(currentScreen))return localFolder!=null;
+        if("saf".equals(currentScreen))return safFolder!=null;
+        return "remote".equals(currentScreen)&&remote!=null&&!remote.readOnly&&!CloudProvider.isReadOnly(remote);
+    }
+    private boolean hasPasteDestination(){
+        return ("local".equals(currentScreen)&&localFolder!=null)||
+                ("saf".equals(currentScreen)&&safFolder!=null)||
+                ("remote".equals(currentScreen)&&remote!=null);
+    }
+    private boolean permitFileOperation(String action){
+        return FileOperationUiPolicy.permits(action,selection.size(),visibleFileItems.size(),stagedFiles.size(),
+                allSelectedWritable(),hasPasteDestination(),pasteDestinationWritable(),FileTransferService.snapshot().active);
+    }
+    private Map<String,Object> fileOperationSnapshot(){
+        Map<String,Object> data=new LinkedHashMap<>();
+        data.put("selected",selection.size());data.put("selectable",visibleFileItems.size());
+        data.put("staged",stagedFiles.size());data.put("moving",stagedMove);
+        List<String> allowed=new ArrayList<>();
+        boolean writable=allSelectedWritable(),destination=hasPasteDestination(),
+                destWritable=pasteDestinationWritable(),active=FileTransferService.snapshot().active;
+        for(String action:FileOperationUiPolicy.ACTIONS)
+            if(FileOperationUiPolicy.permits(action,selection.size(),visibleFileItems.size(),stagedFiles.size(),
+                    writable,destination,destWritable,active))allowed.add(action);
+        data.put("allowed",allowed);data.put("destination",hasPasteDestination());
+        return data;
+    }
+    private void handleFileOperation(String action){
+        if(!permitFileOperation(action))return;
+        switch(action){
+            case "selectAll":selection.selectAll(visibleFileItems);updateFileOperationChrome();break;
+            case "clearSelection":selection.clear();updateFileOperationChrome();break;
+            case "copySelected":stageSelected(false);break;
+            case "moveSelected":stageSelected(true);break;
+            case "renameSelected":renameSelected();break;
+            case "deleteSelected":deleteSelected();break;
+            case "selectedMore":showSelectedMore();break;
+            case "pasteClipboard":pasteStagedFiles();break;
+            case "clearClipboard":stagedFiles=Collections.emptyList();stagedMove=false;updateFileOperationChrome();break;
+            default:break;
+        }
     }
 
     private LinearLayout newOperationBar() {
@@ -1059,6 +1382,7 @@ public class MainActivity extends LocalizedActivity {
     }
 
     private void pasteStagedFiles() {
+        if(stagedFiles.isEmpty())return;
         if (FileTransferService.snapshot().active) {
             showError(L10n.t("기존 파일 전송이 완료된 뒤 붙여넣기를 사용할 수 있습니다."));
             return;
@@ -1083,12 +1407,15 @@ public class MainActivity extends LocalizedActivity {
                         names.append("• ").append(conflicts.get(i));
                     }
                     if (conflicts.size() > 4)
-                        names.append("\n외 ").append(conflicts.size() - 4).append("개");
-                    new AlertDialog.Builder(this)
-                            .setTitle(L10n.t("같은 이름의 파일이 ") + conflicts.size() + "개 있습니다")
-                            .setMessage(names + "\n\n기존 파일을 덮어쓸까요? " +
-                                    "폴더가 포함된 경우 하위 동일 이름의 파일도 교체됩니다. " +
-                                    "원본 파일은 덮어쓰기 전에 백업해 두는 것이 안전합니다.")
+                        names.append("\n").append(L10n.f("외 %1$d개", conflicts.size() - 4));
+                    String title=L10n.f("같은 이름의 파일이 %1$d개 있습니다",conflicts.size());
+                    String message=names+"\n\n"+L10n.t("기존 파일을 덮어쓸까요? 폴더가 포함된 경우 하위 동일 이름의 파일도 교체됩니다. 원본 파일은 덮어쓰기 전에 백업해 두는 것이 안전합니다.");
+                    if(useFlutterFileChrome()){
+                        showFilePrompt(title,message,null,L10n.t("덮어쓰기"),
+                                ignored->commitStagedPaste(sources,dest,moving,true));
+                        return;
+                    }
+                    new AlertDialog.Builder(this).setTitle(title).setMessage(message)
                             .setNegativeButton(L10n.t("취소"), null)
                             .setPositiveButton(L10n.t("덮어쓰기"), (dialog, which) ->
                                     commitStagedPaste(sources, dest, moving, true))
@@ -1105,6 +1432,7 @@ public class MainActivity extends LocalizedActivity {
     private void runTransferJob(List<FileTransferEngine.Item> sources,
                                 FileTransferEngine.Destination dest,
                                 boolean moving, boolean overwrite) {
+        if(sources.isEmpty()||!validateOperationProfiles(sources,dest,moving))return;
         if (FileTransferService.snapshot().active) {
             showError(L10n.t("이미 파일 전송 중입니다. 진행률 아이콘에서 확인하세요."));
             return;
@@ -1168,7 +1496,10 @@ public class MainActivity extends LocalizedActivity {
         transferFiles = Ui.text(this, L10n.t("0개 완료"), 12, Ui.MUTED, false);
         box.addView(transferFiles, Ui.lp(this, -1, 24));
 
-        AlertDialog dialog = new AlertDialog.Builder(this).setView(box)
+        FrameLayout frame=new FrameLayout(this);
+        frame.setMinimumHeight(dp(310));
+        frame.addView(box,new FrameLayout.LayoutParams(-1,dp(310)));
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(frame)
                 .setCancelable(false)
                 .setNegativeButton(L10n.t("숨기기"), null)
                 .setPositiveButton(L10n.t("취소"), null)
@@ -1189,11 +1520,55 @@ public class MainActivity extends LocalizedActivity {
             });
         });
         dialog.setOnDismissListener(ignored -> {
+            if(flutterTransferSurface!=null){flutterTransferSurface.close();flutterTransferSurface=null;}
+            lastFlutterTransfer=Collections.emptyMap();
             if (transferDialog == dialog) transferDialog = null;
-            updateTransferUi();
+            if(!destroyingActivity)updateTransferUi();
         });
         dialog.show();
+        if(FlutterUiMode.enabled(this)&&!nativeTransferOnly)attachFlutterTransfer(frame,box,dialog);
         updateTransferUi();
+    }
+
+    private void attachFlutterTransfer(FrameLayout frame,View fallback,AlertDialog dialog){
+        lastFlutterTransfer=Collections.emptyMap();
+        flutterTransferSurface=new FlutterNavigationSurface(this,frame,fallback,
+                FlutterUiContract.TRANSFER,new FlutterNavigationSurface.Host(){
+            private boolean live(){return !destroyingActivity&&transferDialog==dialog&&dialog.isShowing();}
+            @Override public Map<String,Object> snapshot(String route){
+                if(!live())throw new IllegalStateException("closed transfer dialog");
+                Map<String,Object> data=FlutterOperationSnapshot.base(MainActivity.this,route,FlutterOperationSnapshot.labels());
+                data.put("transfer",FlutterOperationSnapshot.transfer());
+                return data;
+            }
+            @Override public void action(String route,String action,String id){
+                if(!live())return;
+                if("transferHide".equals(action)){
+                    transferHidden=true;dialog.dismiss();updateTransferUi();
+                }else if("transferCancel".equals(action)){
+                    FileTransferService.State s=FileTransferService.snapshot();
+                    if(s.active&&!s.cancelling)FileTransferService.requestCancel(MainActivity.this);
+                    updateTransferUi();
+                }else if("transferClassic".equals(action)){
+                    nativeTransferOnly=true;
+                    if(flutterTransferSurface!=null){flutterTransferSurface.close();flutterTransferSurface=null;}
+                }
+            }
+            @Override public void reorderFavorites(Object order){throw new IllegalStateException("transfer");}
+            private void buttons(boolean visible){
+                if(!live())return;
+                for(int id:new int[]{AlertDialog.BUTTON_NEGATIVE,AlertDialog.BUTTON_POSITIVE}){
+                    Button button=dialog.getButton(id);
+                    if(button!=null)button.setVisibility(visible?View.VISIBLE:View.GONE);
+                }
+            }
+            @Override public void flutterShown(){
+                buttons(false);
+                lastFlutterTransfer=Collections.emptyMap();
+                updateTransferUi();
+            }
+            @Override public void fallbackShown(){buttons(true);}
+        },activityResumed);
     }
 
     private void attachTransferChip() {
@@ -1214,7 +1589,12 @@ public class MainActivity extends LocalizedActivity {
     }
 
     private void updateTransferUi() {
+        if(destroyingActivity)return;
         FileTransferService.State s = FileTransferService.snapshot();
+        if(lastOperationTransferActive!=s.active){
+            lastOperationTransferActive=s.active;
+            updateFileOperationChrome();
+        }
         int progress = s.percent();
         if (transferChip != null) {
             transferChip.setVisibility(s.active && transferHidden ? View.VISIBLE : View.GONE);
@@ -1231,6 +1611,17 @@ public class MainActivity extends LocalizedActivity {
                 transferPercent.setText(progress < 0 ? "--%" : progress + "%");
                 transferAmount.setText(TransferProgressFormat.amount(s.done, s.total));
                 transferFiles.setText(s.completed + " / " + s.count + "개 항목");
+                if(s.cancelling){
+                    Button cancel=transferDialog.getButton(AlertDialog.BUTTON_POSITIVE);
+                    if(cancel!=null){cancel.setEnabled(false);cancel.setText(L10n.t("취소 중..."));}
+                }
+                if(flutterTransferSurface!=null&&flutterTransferSurface.isShown()){
+                    Map<String,Object> next=FlutterOperationSnapshot.transfer();
+                    if(!next.equals(lastFlutterTransfer)){
+                        lastFlutterTransfer=next;
+                        flutterTransferSurface.push("transferUpdate",next);
+                    }
+                }
             }
         }
         if (transferHadActive && !s.active) {
@@ -1254,6 +1645,10 @@ public class MainActivity extends LocalizedActivity {
             return;
         }
         FileTransferEngine.Item item = selection.snapshot().get(0);
+        if(!item.writable()){
+            showError(L10n.t("읽기 전용 저장소입니다."));return;
+        }
+        if(!validateOperationProfiles(Collections.singletonList(item),null,true))return;
         selection.clear();
         updateFileOperationChrome();
         if ("local".equals(item.kind)) renameLocal(item.local, null, item.name);
@@ -1272,13 +1667,21 @@ public class MainActivity extends LocalizedActivity {
             showError(L10n.t("읽기 전용 파일은 삭제할 수 없습니다."));
             return;
         }
-        new AlertDialog.Builder(this).setTitle(sources.size() + "개 항목 삭제")
-                .setMessage(L10n.t("선택한 파일과 폴더를 삭제하시겠습니까? 폴더 안의 파일도 삭제되며 ") +
+        String title=L10n.f("%1$d개 항목 삭제",sources.size());
+        String message=L10n.t("선택한 파일과 폴더를 삭제하시겠습니까? 폴더 안의 파일도 삭제되며 ") +
                         L10n.t("SD·일반 NAS는 휴지통 없이 삭제될 수 있습니다. ") +
-                        L10n.t("네이버 MYBOX 파일은 MYBOX 휴지통으로 이동합니다."))
+                        L10n.t("네이버 MYBOX 파일은 MYBOX 휴지통으로 이동합니다.");
+        if(useFlutterFileChrome()){
+            showFilePrompt(title,message,null,L10n.t("삭제"),ignored->commitSelectedDelete(sources));
+            return;
+        }
+        new AlertDialog.Builder(this).setTitle(title).setMessage(message)
                 .setNegativeButton(L10n.t("취소"), null)
-                .setPositiveButton(L10n.t("삭제"), (dialog, which) ->
-                        runJob(L10n.t("선택 항목 삭제 중..."),
+                .setPositiveButton(L10n.t("삭제"), (dialog, which) ->commitSelectedDelete(sources)).show();
+    }
+    private void commitSelectedDelete(List<FileTransferEngine.Item> sources){
+        if(sources.isEmpty()||!validateOperationProfiles(sources,null,true))return;
+        runJob(L10n.t("선택 항목 삭제 중..."),
                                 () -> FileTransferEngine.delete(this, sources),
                                 count -> {
                                     for (FileTransferEngine.Item item : sources)
@@ -1287,7 +1690,34 @@ public class MainActivity extends LocalizedActivity {
                                     folderCache.clearCounts();
                                     toast(count + "개 삭제했습니다.");
                                     refreshCurrent();
-                                })).show();
+                                });
+    }
+
+    /** Check access to staged sources again at commit, including after a
+     * permission prompt or navigation into a different destination. */
+    private boolean validateOperationProfiles(List<FileTransferEngine.Item> sources,
+                                              FileTransferEngine.Destination dest,boolean removeSources){
+        try{
+            Map<String,Boolean> checked=new LinkedHashMap<>();
+            for(FileTransferEngine.Item item:sources){
+                if(removeSources&&!item.writable()){
+                    showError(L10n.t("읽기 전용 저장소입니다."));return false;
+                }
+                if(item.remote!=null)checked.put(item.remote.id,removeSources);
+            }
+            if(dest!=null&&dest.remote!=null)checked.put(dest.remote.id,true);
+            if(checked.isEmpty())return true;
+            Map<String,Models.RemoteProfile> active=new LinkedHashMap<>();
+            for(Models.RemoteProfile p:store.activeRemotes())active.put(p.id,p);
+            for(Map.Entry<String,Boolean> entry:checked.entrySet()){
+                Models.RemoteProfile p=active.get(entry.getKey());
+                if(p==null){showError(L10n.t("연결 설정이 변경되었습니다. 화면을 닫고 다시 열어 주세요."));return false;}
+                if(entry.getValue()&&(p.readOnly||CloudProvider.isReadOnly(p))){
+                    showError(L10n.t("읽기 전용 저장소입니다."));return false;
+                }
+            }
+            return true;
+        }catch(Exception e){failure(e);return false;}
     }
 
     private void showSelectedMore() {
@@ -1694,6 +2124,7 @@ public class MainActivity extends LocalizedActivity {
                 current.startsWith(rootPath + File.separator);
     }
     private void showHome() {
+        flutterRemoteOrigin=false;
         assignedBackBoundary = null;
         currentScreen = "home";
         remote = null;
@@ -1701,12 +2132,6 @@ public class MainActivity extends LocalizedActivity {
         safFolder = null;
         mediaKind = null;
         render("FileHub AIO", false, "⋮", this::menu);
-        if(!EditionMonetization.full(this)){
-            TextView upgrade=Ui.action(this,L10n.t("풀버전으로 업그레이드"));
-            page.addView(upgrade,Ui.lp(this,-1,43));
-            upgrade.setOnClickListener(v->EditionMonetization.showUpgrade(this));
-            Ui.gap(page,this,6);
-        }
         heading(L10n.t("저장소"), 0);
         LinearLayout r1 = Ui.horizontal(this);
         page.addView(r1, Ui.lp(this, -1, expandedLayout() ? 195 : 158));
@@ -1775,8 +2200,465 @@ public class MainActivity extends LocalizedActivity {
         }
         TextView arrow = Ui.text(this, "›", 28, Ui.MUTED, false);
         remoteEntry.addView(arrow, Ui.lp(this, 20, 42));
-        remoteEntry.setOnClickListener(v -> showRemoteList());
+        remoteEntry.setOnClickListener(v -> openFlutterConnections());
         Ui.gap(page,this,14);
+        if (FlutterUiMode.enabled(this)) {showStartupPlaceholder();attachFlutterHome();}
+    }
+
+    private void openFlutterConnections() {
+        showRemoteList();
+    }
+
+    private void disposeFlutterNavigation() {
+        if(explorerSession!=null)explorerSession.detached=true;
+        explorerSession=null;
+        flutterHomeSurface=null;flutterExplorerSurface=null;
+        if(flutterBodySurface!=null){flutterBodySurface.close();flutterBodySurface=null;}
+        if(flutterBodyLayer!=null&&flutterBodyLayer.getParent()==container)
+            container.removeView(flutterBodyLayer);
+        flutterBodyLayer=null;
+        if (flutterDrawerSurface != null) { flutterDrawerSurface.close(); flutterDrawerSurface=null; }
+    }
+
+    private FlutterNavigationSurface.Host flutterNavigationHost() {
+        final int generation=renderGeneration;
+        return new FlutterNavigationSurface.Host() {
+            @Override public void flutterShown(){screenHandoffReady(generation);}
+            @Override public void fallbackShown(){screenHandoffReady(generation);}
+            @Override public Map<String,Object> snapshot(String route) {
+                return FlutterHomeSnapshot.create(MainActivity.this,route,hasSd(),
+                        drawerSections.expanded(DrawerSectionState.FAVORITES),
+                        drawerSections.expanded(DrawerSectionState.NETWORK));
+            }
+            @Override public void action(String route,String action,String id) {
+                if(embeddedRemoteEditor==null)handleFlutterNavigationAction(route,action,id);
+            }
+            @Override public void explorerCall(io.flutter.plugin.common.MethodCall call,
+                    io.flutter.plugin.common.MethodChannel.Result result){
+                if(generation!=renderGeneration||!"remotes".equals(currentScreen)){
+                    result.error("stale",null,null);return;
+                }
+                embeddedEditorCall(call,result);
+            }
+            @Override public void reorderFavorites(Object order) throws Exception {
+                if (!drawerShown) throw new IllegalStateException("Drawer closed");
+                store.reorderFavorites(FlutterUiContract.resolveFavoriteOrder(store.activeFavorites(),order));
+            }
+        };
+    }
+
+    private void attachFlutterHome() {
+        flutterHomeSurface=bindBody(FlutterUiContract.HOME,flutterNavigationHost());
+    }
+
+    private FileTransferEngine.Item explorerItem(Models.Entry e) {
+        switch(currentScreen) {
+            case "local":
+                if(e.file!=null)return new FileTransferEngine.Item("local",e.name,e.path,
+                        e.directory,false,e.file,null,null,null,"",e.size);
+                break;
+            case "saf":
+                if(e.document!=null)return new FileTransferEngine.Item("saf",e.name,
+                        RemoteProvider.child(safRelative,e.name),e.directory,false,
+                        null,e.document,null,null,activeTreeUri,e.size>0?e.size:-1);
+                break;
+            case "remote":
+                if(remote!=null)return FileTransferEngine.remote(remote,e);
+                break;
+            case "media":
+                if(e.uri!=null)return FileTransferEngine.media(e.uri,e.name);
+                break;
+        }
+        return null;
+    }
+    private static final class ExplorerRow {
+        final Models.Entry entry;
+        final FileTransferEngine.Item item;
+        ExplorerRow(Models.Entry entry,FileTransferEngine.Item item){this.entry=entry;this.item=item;}
+    }
+    private final class ExplorerSession implements FlutterNavigationSurface.Host {
+        final int generation,layout,columns;
+        final String kind,revision=java.util.UUID.randomUUID().toString();
+        final Models.RemoteProfile provider;
+        final List<RemoteBreadcrumbs.Step> crumbs;
+        final Consumer<String> navigate;
+        final ExplorerPageIndex<ExplorerRow> index;
+        final boolean hidden,images,videos;
+        final Map<String,Integer> indicesByKey=new java.util.HashMap<>();
+        int inFlight;
+        volatile boolean detached;
+        ExplorerSession(List<Models.Entry> source,int generation) {
+            this.generation=generation;kind=currentScreen;provider=remote;
+            crumbs=new ArrayList<>(explorerCrumbs);navigate=explorerCrumbAction;
+            layout=layoutMode;columns=FoldPlayerLayoutPolicy.fileGridColumns(expandedLayout(),currentScreenWidthDp());
+            hidden=showHidden;images=showThumbnails;videos=showVideoThumbnails;
+            List<ExplorerRow> rows=new ArrayList<>();
+            String scope=folderScope();
+            Boolean hideSubtitles=null;
+            for(Models.Entry entry:source){
+                if(!FileViewOptions.visible(entry.name,entry.name.startsWith("."),hidden))continue;
+                if(FolderScopeFilter.isSubtitleDocument(entry.name)) {
+                    if(hideSubtitles==null)hideSubtitles=PlayerSettings.hideThisFile(MainActivity.this,scope,entry.name);
+                    if(hideSubtitles)continue;
+                }
+                FileTransferEngine.Item item=explorerItem(entry);
+                if(item!=null)indicesByKey.put(item.key(),rows.size());
+                rows.add(new ExplorerRow(entry,item));
+            }
+            index=new ExplorerPageIndex<>(revision,rows);
+        }
+        boolean live(){return !detached&&explorerSession==this&&generation==renderGeneration&&!isFinishing()&&!isDestroyed();}
+        boolean allowed(){
+            if(!live())return false;
+            if(provider==null||EditionMonetization.full(MainActivity.this))return true;
+            try{return store.remoteAllowed(provider.id);}catch(Exception ignored){return false;}
+        }
+        Map<String,Object> pageData(int offset) {
+            if(!live())throw new IllegalStateException("stale directory");
+            int end=index.end(offset);
+            List<Map<String,Object>> list=new ArrayList<>();
+            for(int i=offset;i<end;i++){
+                ExplorerRow row=index.get(i);Models.Entry e=row.entry;
+                Map<String,Object> m=new LinkedHashMap<>();
+                m.put("id",index.id(i));m.put("name",e.name);
+                m.put("directory",e.directory);m.put("kind",e.directory?"folder":iconFor(e.name));
+                m.put("secondary",L10n.t(fileSecondary(e)));m.put("date",shortDate(e.modified));
+                m.put("selectable",row.item!=null);
+                m.put("reading",readingProgressFor(e));
+                m.put("purpose",folderPurposeFlags(e,row.item));
+                m.put("subtitles",subtitleBadgeFlags(e));
+                boolean thumb=!e.directory&&(VideoThumbnailPolicy.eligible(e.name,false)?videos:
+                        images&&"image".equals(iconFor(e.name)));
+                Integer remembered=e.directory&&!e.symbolicLink?folderCache.count(countKey(e)):null;
+                boolean count=e.directory&&!e.symbolicLink&&!"media".equals(kind);
+                if(remembered!=null)m.put("secondary",L10n.f("%d개 항목",remembered));
+                m.put("preview",thumb||(count&&remembered==null)||(!e.directory&&isVideo(e.name)));
+                list.add(m);
+            }
+            Map<String,Object> data=new LinkedHashMap<>();
+            data.put("revision",revision);data.put("offset",offset);data.put("next",end);
+            data.put("total",index.size());data.put("rows",list);
+            return data;
+        }
+        Map<String,Object> selected(){
+            List<Integer> yes=new ArrayList<>(),no=new ArrayList<>();
+            for(FileTransferEngine.Item item:selection.snapshot()){
+                Integer i=indicesByKey.get(item.key());if(i!=null)yes.add(i);
+            }
+            boolean inverted=yes.size()>index.size()/2;
+            if(inverted){
+                Set<Integer> chosen=new java.util.HashSet<>(yes);
+                for(int i=0;i<index.size();i++)if(!chosen.contains(i))no.add(i);
+            }
+            Map<String,Object> state=new LinkedHashMap<>();
+            state.put("count",selection.size());state.put("inverted",inverted);
+            state.put("indices",inverted?no:yes);
+            return state;
+        }
+        @Override public Map<String,Object> snapshot(String route) {
+            if(!live())throw new IllegalStateException("stale directory");
+            Map<String,Object> data=new LinkedHashMap<>();
+            data.put("route",route);data.put("language",L10n.language());
+            data.put("languageIndex",L10n.selectedIndex(MainActivity.this));
+            data.put("themeIndex",AppearanceSettings.mode(MainActivity.this));
+            data.put("dark",AppearanceSettings.isDark(MainActivity.this));
+            data.put("direct",BuildConfig.DIRECT_EDITION);data.put("full",EditionMonetization.full(MainActivity.this));
+            data.put("version",BuildConfig.VERSION_NAME);
+            data.put("languages",Collections.emptyList());data.put("themes",Collections.emptyList());
+            data.put("profiles",Collections.emptyList());data.put("profileError",false);
+            Map<String,String> labels=new LinkedHashMap<>();
+            labels.put("empty",L10n.t("이 폴더는 비어 있습니다."));
+            labels.put("classicExplorer",L10n.t("기존 파일 탐색기"));
+            labels.put("more",L10n.t("더 보기"));
+            labels.put("refresh",L10n.t("새로고침"));labels.put("error",L10n.t("설정을 확인해 주세요"));
+            labels.put("reading",L10n.t("읽음"));labels.put("external",L10n.t("외부"));
+            labels.put("embedded",L10n.t("내장"));labels.put("videoFolder",L10n.t("동영상폴더"));
+            labels.put("readingFolder",L10n.t("독서용폴더"));
+            labels.put("root",L10n.t("저장소 최상위"));
+            labels.put("items",L10n.t("항목"));
+            labels.put("countUnknown",L10n.t("항목 수 미확인"));
+            labels.putAll(FlutterOperationSnapshot.labels());
+            data.put("labels",labels);
+            Map<String,Object> explorer=pageData(0);
+            explorer.put("layout",layout);explorer.put("columns",columns);explorer.put("selection",selected());
+            explorer.put("quota",explorerQuota);
+            explorer.put("operations",fileOperationSnapshot());
+            List<Map<String,Object>> steps=new ArrayList<>();
+            for(int i=0;i<crumbs.size();i++){
+                Map<String,Object> step=new LinkedHashMap<>();
+                step.put("id",revision+":"+i);step.put("label",i==0?labels.get("root"):crumbs.get(i).label);
+                steps.add(step);
+            }
+            explorer.put("crumbs",steps);data.put("explorer",explorer);
+            return data;
+        }
+        @Override public void action(String route,String action,String id){
+            if(!allowed()||drawerShown)return;
+            if(FileOperationUiPolicy.ACTIONS.contains(action)){
+                if(revision.equals(id))handleFileOperation(action);
+                return;
+            }
+            if("classicExplorer".equals(action)){
+                nativeExplorerOnly=true;
+                if(flutterExplorerSurface!=null){
+                    detached=true;flutterExplorerSurface=null;
+                    finishScreenHandoff();syncFileOperationChrome();
+                    if(currentScroll!=null)currentScroll.post(MainActivity.this::requestVisibleJobs);
+                }
+                return;
+            }
+            if("crumb".equals(action)){
+                if(navigate==null||id==null||!id.startsWith(revision+":"))return;
+                try{
+                    int i=Integer.parseInt(id.substring(revision.length()+1));
+                    if(i>=0&&i<crumbs.size()-1&&selection.isEmpty())navigate.accept(crumbs.get(i).path);
+                }catch(NumberFormatException ignored){}
+                return;
+            }
+            int i=index.resolve(id);if(i<0)return;
+            ExplorerRow row=index.get(i);
+            if("entrySelect".equals(action)||!selection.isEmpty()){
+                if(row.item!=null)toggleFileSelection(row.item);
+            }else if("entryOpen".equals(action))openExplorerEntry(row.entry);
+        }
+        @Override public void reorderFavorites(Object order){throw new IllegalStateException("explorer");}
+        @Override public void fallbackShown(){
+            detached=true;
+            syncFileOperationChrome();
+            screenHandoffReady(generation);
+            if(explorerSession==this&&generation==renderGeneration&&currentScroll!=null)
+                currentScroll.post(MainActivity.this::requestVisibleJobs);
+        }
+        @Override public void flutterShown(){syncFileOperationChrome();screenHandoffReady(generation);}
+        @Override public void explorerCall(io.flutter.plugin.common.MethodCall call,
+                                           io.flutter.plugin.common.MethodChannel.Result result){
+            if(!live()){result.error("STALE_DIRECTORY",null,null);return;}
+            if("explorerPage".equals(call.method)){
+                try{
+                    if(!(call.arguments instanceof Map)||!revision.equals(call.argument("revision"))||
+                            !(call.argument("offset") instanceof Integer))throw new IllegalArgumentException();
+                    result.success(pageData((Integer)call.argument("offset")));
+                }catch(Exception error){result.error("INVALID_PAGE",null,null);}
+                return;
+            }
+            if(!"explorerPreview".equals(call.method)){result.notImplemented();return;}
+            int i=call.arguments instanceof String?index.resolve((String)call.arguments):-1;
+            if(i<0){result.error("STALE_DIRECTORY",null,null);return;}
+            Models.Entry e=index.get(i).entry;
+            String key=countKey(e);
+            boolean canCount=e.directory&&!e.symbolicLink&&key!=null&&!"media".equals(kind);
+            if(canCount){
+                Integer remembered=folderCache.count(key);
+                if(remembered!=null){
+                    result.success(Collections.singletonMap("secondary",countLabel(remembered)));
+                    return;
+                }
+                if(!allowed()){result.error("STALE_DIRECTORY",null,null);return;}
+                submitFolderCount(provider!=null,()->explorerCount(e,provider,hidden),count->{
+                    if(!live()){result.error("STALE_DIRECTORY",null,null);return;}
+                    if(count>=0)folderCache.rememberCount(key,count);
+                    result.success(Collections.singletonMap("secondary",countLabel(count)));
+                });
+                return;
+            }
+            if(inFlight>=6){result.success(Collections.singletonMap("deferred",true));return;}
+            boolean video=VideoThumbnailPolicy.eligible(e.name,false);
+            boolean thumbnail=!e.directory&&(video?videos:images&&"image".equals(iconFor(e.name)));
+            inFlight++;
+            previewWorker.execute(()->{
+                Map<String,Object> payload=new LinkedHashMap<>();
+                try{
+                    if(detached)throw new IllegalStateException("stale directory");
+                    if(provider!=null&&!EditionMonetization.full(MainActivity.this)&&
+                            !new SecureStore(MainActivity.this).remoteAllowed(provider.id))
+                        throw new IllegalStateException("locked");
+                    if(thumbnail&&!detached){
+                        Bitmap original=loadExplorerThumbnail(e,provider,video);
+                        if(original!=null){
+                            Bitmap small=original;
+                            try{
+                                int longest=Math.max(original.getWidth(),original.getHeight());
+                                if(longest>192)small=Bitmap.createScaledBitmap(original,
+                                        Math.max(1,original.getWidth()*192/longest),
+                                        Math.max(1,original.getHeight()*192/longest),true);
+                                ByteArrayOutputStream out=new ByteArrayOutputStream();
+                                if(small.compress(Bitmap.CompressFormat.JPEG,80,out)&&out.size()<=160*1024)
+                                    payload.put("image",out.toByteArray());
+                            }finally{if(small!=original)small.recycle();original.recycle();}
+                        }
+                    }
+                    if(!detached&&!e.directory&&isVideo(e.name)){
+                        String sid=SubtitleInventory.entryId(e,provider);
+                        if(sid!=null&&SubtitleInventory.status(MainActivity.this,sid)!=1){
+                            if(provider==null&&SubtitleInventory.canProbeLocally(e)&&localSubtitleProbed.add(sid))
+                                SubtitleInventory.record(MainActivity.this,sid,SubtitleInventory.probeLocal(getApplicationContext(),e));
+                            else if(provider!=null&&MatroskaSubtitleProbe.supportsName(e.name)&&videoHeadersProbed.add(sid)){
+                                try{
+                                    if(MatroskaSubtitleProbe.remoteHeaderContainsSubtitles(provider,e))
+                                        SubtitleInventory.record(MainActivity.this,sid,true);
+                                }catch(Exception error){videoHeadersProbed.remove(sid);}
+                            }
+                        }
+                    }
+                }catch(Exception ignored){}
+                runOnUiThread(()->{
+                    inFlight--;
+                    if(!live()){result.error("STALE_DIRECTORY",null,null);return;}
+                    payload.put("subtitles",subtitleBadgeFlags(e));
+                    result.success(payload);
+                });
+            });
+        }
+    }
+
+    private int explorerCount(Models.Entry entry,Models.RemoteProfile provider,boolean hidden)throws Exception{
+        int count=0;
+        if(entry.file!=null){
+            String[] children=entry.file.list();if(children==null)return -1;
+            for(String child:children)if(FileViewOptions.visible(child,false,hidden))count++;
+        }else if(entry.document!=null){
+            // One provider query instead of one Binder metadata call per child.
+            Uri uri=entry.document.getUri();
+            Uri children=DocumentsContract.buildChildDocumentsUriUsingTree(uri,DocumentsContract.getDocumentId(uri));
+            try(android.database.Cursor cursor=getContentResolver().query(children,
+                    new String[]{DocumentsContract.Document.COLUMN_DISPLAY_NAME},null,null,null)){
+                if(cursor==null)return -1;
+                while(cursor.moveToNext())if(FileViewOptions.visible(cursor.getString(0),false,hidden))count++;
+            }
+        }else if(provider!=null){
+            // A count-only request must not hold the foreground listing lock.
+            List<Models.Entry> cached=folderCache.peek(provider,entry.path);
+            if(cached==null)return RemoteProvider.countChildren(provider,entry.path,hidden);
+            for(Models.Entry child:cached)if(FileViewOptions.visible(child.name,false,hidden))count++;
+        }else return -1;
+        return count;
+    }
+    private void openExplorerEntry(Models.Entry e){
+        switch(currentScreen){
+            case "local":
+                if(e.directory)browseLocal(e.file);
+                else if(isVideo(e.name))openVideo(Uri.fromFile(e.file),e.name);
+                else openFile(e.file);break;
+            case "saf":
+                if(e.directory)browseSaf(e.document,RemoteProvider.child(safRelative,e.name));
+                else if(isVideo(e.name))openVideo(e.document.getUri(),e.name);
+                else openNamedUri(e.document.getUri(),e.name);break;
+            case "remote":
+                if(e.symbolicLink&&e.linkTargetUnavailable){
+                    showError(L10n.t("심볼릭 링크가 가리키는 대상에 접근할 수 없습니다. ")+
+                            L10n.t("끊어진 링크 또는 서버 권한을 확인하세요."));return;
+                }
+                if(e.directory)openRemote(remote,e.path);
+                else if(isVideo(e.name))openRemoteVideo(remote,e);
+                else openRemoteFile(remote,e);break;
+            case "media":
+                if(isVideo(e.name)){visibleEpisodeQueue=mediaFolderEpisodeQueues.get(e.path);openVideo(e.uri,e.name);}
+                else if(MediaFileTypes.isAudio(e.name))playMusic(e.uri,e.name);
+                else if(MediaFileTypes.isImage(e.name))viewImage("uri",e.name,null,e.uri,null);
+                else openUri(e.uri,mime(e.name));break;
+        }
+    }
+    private void attachFlutterExplorer(List<Models.Entry> entries,int generation){
+        if(!FlutterUiMode.enabled(this)||nativeExplorerOnly||explorerSession!=null||generation!=renderGeneration||
+                currentScroll==null||currentScroll.getParent()!=screenRoot)return;
+        ExplorerSession session=new ExplorerSession(entries,generation);
+        explorerSession=session;
+        visibleFileItems.clear();currentSearch.clear();visibleComicVolumes.clear();
+        for(int i=0;i<session.index.size();i++){
+            ExplorerRow row=session.index.get(i);Models.Entry e=row.entry;
+            if(row.item!=null)visibleFileItems.put(row.item.key(),row.item);
+            currentSearch.add(new SearchResult(e.name,()->openExplorerEntry(e)));
+            if(!e.directory&&ComicArchive.supports(e.name)&&visibleComicVolumes.size()<BookSeriesQueue.MAX_VOLUMES){
+                if("local".equals(session.kind)&&e.file!=null)visibleComicVolumes.add(new BookSeriesQueue.Volume(e.name,e.path,null));
+                else if("saf".equals(session.kind)&&e.document!=null)visibleComicVolumes.add(new BookSeriesQueue.Volume(e.name,null,e.path));
+                else if("remote".equals(session.kind))visibleComicVolumes.add(new BookSeriesQueue.Volume(e.name,e.path,null));
+            }
+        }
+        completeFolderSearchIndexed=true;
+        flutterExplorerSurface=bindBody(FlutterUiContract.EXPLORER,session);
+    }
+
+    private void handleFlutterNavigationAction(String route,String action,String id) {
+        if (!FlutterUiContract.validNavigationAction(route,action,id) ||
+                isFinishing() || isDestroyed()) return;
+        if(FlutterUiContract.CONNECTIONS.equals(route)){
+            if("remotes".equals(currentScreen)&&!drawerShown)
+                handleFlutterConnectionAction(new Intent().putExtra(FlutterUiContract.ACTION,action)
+                        .putExtra(FlutterUiContract.PROFILE_ID,id));
+            return;
+        }
+        if(FlutterUiContract.FAVORITES.equals(route)){
+            if(!"favorites".equals(currentScreen)||drawerShown)return;
+            try{
+                for(Models.Favorite favorite:store.activeFavorites())
+                    if(FlutterUiContract.favoriteId(favorite).equals(id)){
+                        if("favoriteManage".equals(action))showFavoriteActions(favorite);
+                        else openFavorite(favorite);
+                        return;
+                    }
+                showFavorites();
+            }catch(Exception error){failure(error);}
+            return;
+        }
+        if (FlutterUiContract.HOME.equals(route)) {
+            if (!"home".equals(currentScreen) || drawerShown) return;
+            switch (action) {
+                case "storage": browseLocal(Environment.getExternalStorageDirectory()); break;
+                case "sd": openSd(); break;
+                case "downloads": browseLocal(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)); break;
+                case "images": openMedia("image"); break;
+                case "audio": openMedia("audio"); break;
+                case "videos": openMedia("video"); break;
+                case "videoShelf": showAssignedFolders(AssignedFolderCatalog.VIDEO); break;
+                case "comicShelf": showAssignedFolders(AssignedFolderCatalog.COMIC); break;
+                case "textShelf": showAssignedFolders(AssignedFolderCatalog.TEXT); break;
+                case "connections": openFlutterConnections(); break;
+                case "upgrade": EditionMonetization.showUpgrade(this); break;
+                default: break;
+            }
+            return;
+        }
+        if (!drawerShown) return;
+        if ("toggleFavorites".equals(action)) { drawerSections.toggle(DrawerSectionState.FAVORITES); return; }
+        if ("toggleNetwork".equals(action)) { drawerSections.toggle(DrawerSectionState.NETWORK); return; }
+        if ("nativeDrawer".equals(action)) {
+            nativeDrawerOnly=true;
+            // Rebuild so native fallback reflects any Flutter reordering/toggles.
+            closeDrawer();
+            showDrawer();
+            return;
+        }
+        closeDrawer();
+        try {
+            switch (action) {
+                case "home": showHome(); break;
+                case "connections": openFlutterConnections(); break;
+                case "settings": openSettings(); break;
+                case "upgrade": if(!BuildConfig.DIRECT_EDITION)EditionMonetization.showUpgrade(this);break;
+                case "favorites": showFavorites(); break;
+                case "open":
+                    for (Models.RemoteProfile p:store.activeRemotes())
+                        if (p.id.equals(id)) {
+                            flutterRemoteOrigin=true;
+                            openRemoteStart(p);
+                            return;
+                        }
+                    showError(L10n.t("삭제된 원격 연결입니다.")); break;
+                case "favorite":
+                case "favoriteManage":
+                    for (Models.Favorite f:store.activeFavorites())
+                        if (FlutterUiContract.favoriteId(f).equals(id)) {
+                            if ("favorite".equals(action)) {
+                                flutterRemoteOrigin="remote".equals(f.kind);
+                                openFavorite(f);
+                            }
+                            else showFavoriteActions(f);
+                            return;
+                        }
+                    showFavorites(); break;
+                default: break;
+            }
+        } catch (Exception e) { failure(e); }
     }
     /** Virtual shelves list all explicitly designated folders across storage
      * providers. Open each item in the original file manager, not a copy. */
@@ -1801,15 +2683,24 @@ public class MainActivity extends LocalizedActivity {
             if(roots.isEmpty()){
                 muted(L10n.t("아직 ")+title+"으로 지정한 폴더가 없습니다.");
                 muted(L10n.t("오른쪽 위 + 를 눌러 로컬·SD·네트워크 폴더를 찾아 지정하세요."));
+                attachAssignedShelf(Collections.emptyList(),Collections.emptyList(),roots,mode,screen,
+                        L10n.t("오른쪽 위 + 를 눌러 로컬·SD·네트워크 폴더를 찾아 지정하세요."));
                 return;
             }
-            TextView loading=muted(L10n.t("지정한 폴더의 하위 폴더를 찾는 중..."));
-            worker.execute(()->{
+            String loadingText=L10n.t("지정한 폴더의 하위 폴더를 찾는 중...");
+            TextView loading=muted(loadingText);
+            // Paint the new shelf immediately, then publish results to that
+            // same Flutter surface; network delay no longer holds Home open.
+            final AssignedShelfSession session=attachAssignedShelf(
+                    Collections.emptyList(),Collections.emptyList(),roots,mode,screen,loadingText);
+            if(session!=null)session.loading=true;
+            assignedShelfTask=assignedShelfWorker.submit(()->{
                 Map<String,AssignedFolderCatalog.Folder> unique=new LinkedHashMap<>();
                 List<Models.RemoteProfile> profiles;
                 try{profiles=store.activeRemotes();}
                 catch(Exception e){profiles=Collections.emptyList();}
                 for(AssignedFolderCatalog.Folder root:roots){
+                    if(Thread.currentThread().isInterrupted())return;
                     try{
                         List<AssignedFolderCatalog.Folder> children=
                                 assignedChildFolders(root,profiles);
@@ -1826,6 +2717,7 @@ public class MainActivity extends LocalizedActivity {
                             unique.put(root.key(),root);
                     }
                 }
+                if(Thread.currentThread().isInterrupted())return;
                 List<AssignedFolderCatalog.Folder> visible=
                         new ArrayList<>(unique.values());
                 visible.sort((a,b)->a.name().compareToIgnoreCase(b.name()));
@@ -1834,17 +2726,118 @@ public class MainActivity extends LocalizedActivity {
                     if(screen!=renderGeneration||!"assigned".equals(currentScreen)||
                             !mode.equals(assignedMode)||isFinishing()||isDestroyed())
                         return;
-                    page.removeView(loading);
-                    if(visible.isEmpty()){
-                        muted(L10n.t("표시할 하위 폴더가 없습니다. + 버튼으로 폴더를 추가하세요."));
-                        return;
-                    }
-                    muted(L10n.t("폴더 ")+visible.size()+"개 · 길게 누르면 해당 폴더의 용도 지정 해제");
-                    appendAssignedFolderPage(visible,accounts,roots,mode,0,screen);
+                    assignedShelfTask=null;
+                    String empty=visible.isEmpty()?
+                            L10n.t("표시할 하위 폴더가 없습니다. + 버튼으로 폴더를 추가하세요."):"";
+                    if(session!=null)session.complete(visible,accounts,empty);
+                    else attachAssignedShelf(visible,accounts,roots,mode,screen,empty);
+                    // Preserve native fallback, without blocking the first
+                    // Flutter loading frame while creating native row views.
+                    final LinearLayout fallbackPage=page;
+                    fallbackPage.post(()->{
+                        if(screen!=renderGeneration||page!=fallbackPage||isFinishing()||isDestroyed())return;
+                        fallbackPage.removeView(loading);
+                        if(visible.isEmpty()){muted(empty);return;}
+                        muted(L10n.t("폴더 ")+visible.size()+"개 · 길게 누르면 해당 폴더의 용도 지정 해제");
+                        appendAssignedFolderPage(visible,accounts,roots,mode,0,screen);
+                    });
                 });
             });
         }catch(Exception error){
+            finishScreenHandoff();
             showError(L10n.t("지정 폴더를 표시하지 못했습니다: ")+error.getMessage());
+        }
+    }
+
+    private AssignedShelfSession attachAssignedShelf(List<AssignedFolderCatalog.Folder> folders,
+            List<Models.RemoteProfile> accounts,List<AssignedFolderCatalog.Folder> roots,
+            String mode,int generation,String empty){
+        if(!FlutterUiMode.enabled(this)||generation!=renderGeneration)return null;
+        AssignedShelfSession session=new AssignedShelfSession(folders,accounts,roots,mode,generation,empty);
+        bindBody(FlutterUiContract.SHELF,session);
+        return session;
+    }
+    private final class AssignedShelfSession implements FlutterNavigationSurface.Host {
+        private List<AssignedFolderCatalog.Folder> folders;
+        private final List<AssignedFolderCatalog.Folder> roots;
+        private List<Models.RemoteProfile> accounts;
+        private final String mode;
+        private String empty;
+        private boolean loading;
+        private final int generation;
+        private NativePanelModel model;
+        AssignedShelfSession(List<AssignedFolderCatalog.Folder> folders,List<Models.RemoteProfile> accounts,
+                List<AssignedFolderCatalog.Folder> roots,String mode,int generation,String empty){
+            this.folders=new ArrayList<>(folders);this.accounts=new ArrayList<>(accounts);
+            this.roots=new ArrayList<>(roots);this.mode=mode;this.generation=generation;this.empty=empty;
+            rebuild(0);
+        }
+        private boolean live(){
+            return generation==renderGeneration&&"assigned".equals(currentScreen)&&mode.equals(assignedMode)
+                    &&!isFinishing()&&!isDestroyed();
+        }
+        private void rebuild(int offset){
+            model=new NativePanelModel("",new String[0],offset/LargeFolderPagePolicy.ROWS_PER_PAGE,null);
+            if(folders.isEmpty()){
+                model.note(empty);return;
+            }
+            int end=LargeFolderPagePolicy.end(folders.size(),offset);
+            model.note(folders.size()+" "+L10n.t("항목")+" · "+(offset+1)+"–"+end);
+            if(offset>0)model.action(L10n.t("이전"),"",true,
+                    ()->changePage(Math.max(0,offset-LargeFolderPagePolicy.ROWS_PER_PAGE)));
+            for(int i=offset;i<end;i++){
+                AssignedFolderCatalog.Folder f=folders.get(i);
+                String origin=L10n.t("메인·로컬 저장소");
+                if("remote".equals(f.kind)){
+                    origin=L10n.t("네트워크 폴더");
+                    for(Models.RemoteProfile account:accounts)
+                        if(account.id.equals(f.owner)){origin=account.label();break;}
+                }else if("saf".equals(f.kind)||"storage".equals(f.kind))origin=L10n.t("SD·USB 저장소");
+                model.folder(f.name(),origin+" · "+f.path,
+                        ()->openAssignedFolder(f,AssignedFolderCatalog.configuredRoot(roots,f)),
+                        ()->confirmRemoveAssignedRole(mode,f));
+            }
+            if(end<folders.size())model.action(L10n.t("더 보기"),"",true,()->changePage(end));
+        }
+        private void complete(List<AssignedFolderCatalog.Folder> updated,
+                              List<Models.RemoteProfile> profiles,String message){
+            if(!live())return;
+            folders=new ArrayList<>(updated);accounts=new ArrayList<>(profiles);
+            empty=message;loading=false;
+            rebuild(0);
+            if(flutterBodySurface!=null)flutterBodySurface.refresh();
+        }
+        private void changePage(int offset){
+            if(!live())return;
+            rebuild(offset);
+            if(flutterBodySurface!=null)flutterBodySurface.refresh();
+        }
+        @Override public Map<String,Object> snapshot(String route){
+            if(!live())throw new IllegalStateException("stale shelf");
+            Map<String,String> labels=FlutterOperationSnapshot.labels();
+            labels.put("removeRole",L10n.t("폴더 용도 지정 해제"));
+            Map<String,Object> data=FlutterOperationSnapshot.base(MainActivity.this,route,labels);
+            Map<String,Object> panel=model.snapshot();
+            panel.put("showClassic",false);panel.put("loading",loading);data.put("panel",panel);
+            return data;
+        }
+        @Override public void action(String route,String action,String id){}
+        @Override public void reorderFavorites(Object order){throw new IllegalStateException("shelf");}
+        @Override public void flutterShown(){screenHandoffReady(generation);}
+        @Override public void fallbackShown(){screenHandoffReady(generation);}
+        @Override public void explorerCall(io.flutter.plugin.common.MethodCall call,
+                                          io.flutter.plugin.common.MethodChannel.Result result){
+            if(!live()||drawerShown||!"panelCommand".equals(call.method)||!(call.arguments instanceof Map)){
+                result.error("STALE_SHELF",null,null);return;
+            }
+            NativePanelModel current=model;
+            Runnable action=current.command(call.argument("revision"),call.argument("id"),call.argument("value"));
+            if(action==null){result.error("INVALID_SHELF_COMMAND",null,null);return;}
+            result.success(null);
+            runOnUiThread(()->container.post(()->{
+                if(live()&&!drawerShown&&model==current&&flutterBodySurface!=null&&flutterBodySurface.isShown())
+                    action.run();
+            }));
         }
     }
 
@@ -1901,13 +2894,10 @@ public class MainActivity extends LocalizedActivity {
     }
     private void confirmRemoveAssignedRole(String mode,
                                            AssignedFolderCatalog.Folder folder){
-        String label=AssignedFolderCatalog.VIDEO.equals(mode)?"동영상":
-                AssignedFolderCatalog.COMIC.equals(mode)?"만화책":"소설책";
+        String label=L10n.t(AssignedFolderCatalog.VIDEO.equals(mode)?"동영상":
+                AssignedFolderCatalog.COMIC.equals(mode)?"만화책":"소설책");
         new AlertDialog.Builder(this).setTitle(L10n.t("폴더 용도 지정 해제"))
-                .setMessage(folder.name()+"\n\n"+label+
-                        " 폴더 용도 지정을 해제할까요?\n"+
-                        "상위 폴더에서 상속된 지정도 이 폴더부터 적용되지 않습니다."+
-                        "\n파일이나 폴더 자체는 삭제되지 않습니다.")
+                .setMessage(folder.name()+"\n\n"+L10n.f("%1$s 폴더 용도 지정을 해제할까요?\n상위 폴더에서 상속된 지정도 이 폴더부터 적용되지 않습니다.\n파일이나 폴더 자체는 삭제되지 않습니다.",label))
                 .setNegativeButton(L10n.t("취소"),null)
                 .setPositiveButton(L10n.t("제외하기"),(dialog,which)->{
                     try{
@@ -2436,17 +3426,49 @@ public class MainActivity extends LocalizedActivity {
         col.setOnClickListener(v -> click.run());
     }
     private void menu() {
-        new AlertDialog.Builder(this).setItems(L10n.labels(OverflowMenuItems.labelsForEdition(BuildConfig.DIRECT_EDITION)), (d, i) -> {
-            switch (i) {
-                case OverflowMenuItems.FAVORITES: showFavorites(); break;
-                case OverflowMenuItems.REMOTES: showRemoteList(); break;
-                case OverflowMenuItems.STORAGE_PERMISSION: requestAllFiles(); break;
-                case OverflowMenuItems.UPDATE:
-                    if (otaUpdater != null) otaUpdater.manualCheck();
-                    break;
-                default: break;
-            }
-        }).show();
+        if(normalFileToolbar!=null&&normalFileToolbar.getChildCount()>0)
+            menu(normalFileToolbar.getChildAt(normalFileToolbar.getChildCount()-1));
+    }
+    private void menu(View anchor) {
+        String[] labels=L10n.labels(OverflowMenuItems.labelsForEdition(BuildConfig.DIRECT_EDITION));
+        String[] icons={"settings","star","remote","drive","refresh"};
+        LinearLayout items=Ui.vertical(this);
+        items.setPadding(dp(6),dp(6),dp(6),dp(6));
+        items.setBackground(Ui.bg(this,Ui.DARK,8,0));
+        android.widget.PopupWindow popup=new android.widget.PopupWindow(items,dp(220),-2,true);
+        popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+        popup.setElevation(dp(8));
+        popup.setOutsideTouchable(true);
+        for(int i=0;i<labels.length;i++){
+            final int index=i;
+            LinearLayout row=Ui.horizontal(this);
+            row.setPadding(dp(12),0,dp(8),0);
+            View menuIcon;
+            if(index==OverflowMenuItems.UPDATE){
+                menuIcon=new ToolbarIconView(this,ToolbarIconView.REFRESH);
+                menuIcon.setClickable(false);menuIcon.setFocusable(false);
+            }else menuIcon=new Ui.Icon(this,icons[i],Color.WHITE);
+            row.addView(menuIcon,Ui.lp(this,24,24));
+            TextView label=Ui.text(this,labels[i],14,Color.WHITE,false);
+            label.setSingleLine(true);label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-1,1);lp.leftMargin=dp(12);
+            row.addView(label,lp);items.addView(row,Ui.lp(this,-1,48));
+            row.setOnClickListener(v->{popup.dismiss();switch(index){
+                case OverflowMenuItems.SETTINGS: openSettings();break;
+                case OverflowMenuItems.FAVORITES: showFavorites();break;
+                case OverflowMenuItems.REMOTES: openFlutterConnections();break;
+                case OverflowMenuItems.STORAGE_PERMISSION: requestAllFiles();break;
+                case OverflowMenuItems.UPDATE: if(otaUpdater!=null)otaUpdater.manualCheck();break;
+                default:break;
+            }});
+        }
+        items.setAlpha(0f);items.setScaleX(.80f);items.setScaleY(.80f);
+        popup.showAsDropDown(anchor,0,-anchor.getHeight(),Gravity.END);
+        items.post(()->{
+            items.setPivotX(items.getWidth());items.setPivotY(0);
+            items.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(190)
+                .setInterpolator(new DecelerateInterpolator()).start();
+        });
     }
     private TvPairingUi pairingUi() {
         if (pairingUi == null) pairingUi = new TvPairingUi(this,store);
@@ -2473,6 +3495,11 @@ public class MainActivity extends LocalizedActivity {
     private void showDrawer() {
         if (drawerShown) return;
         drawerShown = true;
+        refreshMiniPlayer();
+        // Use the same attached Flutter viewport; never create a second
+        // renderer for the drawer. Native menu remains the fallback.
+        if(FlutterUiMode.enabled(this)&&!nativeDrawerOnly&&flutterBodySurface!=null&&
+                flutterBodySurface.showDrawerOverlay(flutterNavigationHost()))return;
         FrameLayout layer = new FrameLayout(this);
         drawerLayer = layer;
         container.addView(layer, new FrameLayout.LayoutParams(-1, -1));
@@ -2484,7 +3511,9 @@ public class MainActivity extends LocalizedActivity {
         shade.setOnClickListener(v -> closeDrawer());
         ScrollView scroller = new ScrollView(this);
         scroller.setFillViewport(true);
-        drawerPanel = scroller;
+        FrameLayout drawerHost = new FrameLayout(this);
+        drawerPanel = drawerHost;
+        drawerHost.addView(scroller,new FrameLayout.LayoutParams(-1,-1));
         scroller.setBackgroundColor(Ui.SURFACE);
         FrameLayout.LayoutParams drawerParams = new FrameLayout.LayoutParams(
                 dp(FoldPlayerLayoutPolicy.drawerWidthDp(
@@ -2495,58 +3524,24 @@ public class MainActivity extends LocalizedActivity {
         drawerParams.topMargin = FileHubBrandLayout.drawerTopPx(statusBarInsetPx);
         drawerParams.bottomMargin = FileHubBrandLayout.drawerBottomPx(
                 navigationBarInsetPx,navigationBarInsetPx);
-        layer.addView(scroller, drawerParams);
-        ViewCompat.setOnApplyWindowInsetsListener(scroller, (view, insets) -> {
+        layer.addView(drawerHost, drawerParams);
+        ViewCompat.setOnApplyWindowInsetsListener(drawerHost, (view, insets) -> {
             int safeBottom = insets.getInsets(
                     WindowInsetsCompat.Type.navigationBars()).bottom;
             FrameLayout.LayoutParams params =
-                    (FrameLayout.LayoutParams) scroller.getLayoutParams();
+                    (FrameLayout.LayoutParams) drawerHost.getLayoutParams();
             int requestedMargin = FileHubBrandLayout.drawerBottomPx(
                     navigationBarInsetPx,safeBottom);
             if (params.bottomMargin != requestedMargin) {
                 params.bottomMargin = requestedMargin;
-                scroller.setLayoutParams(params);
+                drawerHost.setLayoutParams(params);
             }
             return insets;
         });
-        ViewCompat.requestApplyInsets(scroller);
-        scroller.setTranslationX(-drawerParams.width);
+        ViewCompat.requestApplyInsets(drawerHost);
+        drawerHost.setTranslationX(-drawerParams.width);
         LinearLayout inside = Ui.vertical(this);
         scroller.addView(inside);
-        // The drawer's old 106dp header started behind the status clock.
-        // Make its 65dp row sit at the EXACT same Y as the home toolbar
-        // (both have the same status-bar inset and toolbar height).
-        LinearLayout branding = Ui.horizontal(this);
-        branding.setGravity(Gravity.CENTER_VERTICAL);
-        branding.setPadding(dp(8), 0, dp(8), 0);
-        branding.setBackgroundColor(Ui.DARK);
-        inside.addView(branding, Ui.lp(this, -1,
-                FileHubBrandLayout.HEADER_HEIGHT_DP));
-        // Same 40dp leading slot as the main screen's hamburger.
-        // Its image is centered in the full-height slot instead of being
-        // positioned by a separate 30x33dp row with its own baseline.
-        FrameLayout drawerLeadingSlot = new FrameLayout(this);
-        branding.addView(drawerLeadingSlot, Ui.lp(this,
-                FileHubBrandLayout.LEADING_SLOT_WIDTH_DP, -1));
-        ImageView logoIcon = new ImageView(this);
-        logoIcon.setImageResource(R.drawable.filehub_aio_icon);
-        logoIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        logoIcon.setContentDescription(L10n.t("FileHub AIO 아이콘"));
-        drawerLeadingSlot.addView(logoIcon, new FrameLayout.LayoutParams(
-                dp(30), dp(33), Gravity.CENTER));
-        ImageView logoText = new ImageView(this);
-        logoText.setImageResource(R.drawable.filehub_aio_wordmark);
-        // The PNG has transparent top/bottom padding; FIT_START made its
-        // visible letters sit above the neighboring icon. Center the actual
-        // bitmap inside this view to align both alpha-content centers.
-        logoText.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        logoText.setContentDescription("FileHub AIO");
-        LinearLayout.LayoutParams brandTitleBounds=Ui.lp(this,
-                FileHubBrandLayout.drawerWordmarkWidthDp(
-                        FoldPlayerLayoutPolicy.drawerWidthDp(
-                                expandedLayout(), currentScreenWidthDp())), 22);
-        brandTitleBounds.leftMargin=0;
-        branding.addView(logoText, brandTitleBounds);
         drawerLink(inside, L10n.t("홈"), "drive", () -> showHome());
 
         LinearLayout favoriteEntries = drawerSection(inside,
@@ -2575,24 +3570,47 @@ public class MainActivity extends LocalizedActivity {
         // Network connections can still be managed without a redundant
         // top-level '원격 저장소' drawer item.
         drawerNestedLink(networkEntries, "연결 추가 · 관리", "settings",
-                this::showRemoteList);
+                this::openFlutterConnections);
 
-        inside.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
-        drawerLink(inside, L10n.t("설정"), "settings", this::openSettings);
-        Ui.gap(inside, this, 12);
+        if(!BuildConfig.DIRECT_EDITION&&!EditionMonetization.full(this)){
+            inside.addView(new View(this), new LinearLayout.LayoutParams(-1,0,1));
+            LinearLayout premium=Ui.horizontal(this);
+            premium.setPadding(dp(18),0,dp(12),0);
+            inside.addView(premium,Ui.lp(this,-1,48));
+            ToolbarIconView crown=new ToolbarIconView(this,ToolbarIconView.CROWN);
+            crown.setTint(0xFFD8A34E);crown.setClickable(false);crown.setFocusable(false);
+            premium.addView(crown,Ui.lp(this,32,32));
+            TextView label=Ui.text(this,L10n.t("프리미엄 업그레이드"),13,Ui.TEXT,true);
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-1,1);lp.leftMargin=dp(12);
+            premium.addView(label,lp);
+            premium.setOnClickListener(v->{closeDrawer();EditionMonetization.showUpgrade(this);});
+        }
         shade.animate().alpha(1f).setDuration(220).start();
-        scroller.animate().translationX(0).setDuration(250)
+        drawerHost.animate().translationX(0).setDuration(250)
                 .setInterpolator(new DecelerateInterpolator()).start();
     }
     private void closeDrawer() {
-        if (!drawerShown || drawerLayer == null) return;
+        if(!drawerShown)return;
+        if(drawerLayer==null){
+            drawerShown=false;
+            if(flutterBodySurface!=null)flutterBodySurface.closeDrawerOverlay();
+            refreshMiniPlayer();
+            return;
+        }
         final FrameLayout layer = drawerLayer;
         final View panel = drawerPanel;
         final View shade = drawerShade;
+        final FlutterNavigationSurface closingSurface=flutterDrawerSurface;
+        flutterDrawerSurface=null;
         drawerShown = false;
         drawerLayer = null;
         drawerPanel = null;
         drawerShade = null;
+        refreshMiniPlayer();
+        if (closingSurface!=null) {
+            closingSurface.pause();
+            new Handler(Looper.getMainLooper()).postDelayed(closingSurface::close,250);
+        }
         if (shade != null) shade.animate().alpha(0f).setDuration(180).start();
         if (panel != null) {
             panel.animate().translationX(-panel.getWidth()).setDuration(210)
@@ -2748,11 +3766,72 @@ public class MainActivity extends LocalizedActivity {
         return FolderSortPreferences.get(this,folderSortScope(),sortMode);
     }
     private void openSettings() {
+        if("settings".equals(currentScreen))return;
+        if(FlutterUiMode.enabled(this)){
+            settingsReturnScreen=currentScreen;
+            settingsScope=folderScope();
+            showSettingsContent(0);
+            return;
+        }
         Intent intent = new Intent(this, SettingsActivity.class);
         String scope = folderScope();
         if (scope != null)
             intent.putExtra(SettingsActivity.EXTRA_CURRENT_SCOPE, scope);
         startActivityForResult(intent, REQ_SETTINGS);
+    }
+    private void showSettingsContent(int tab){
+        currentScreen="settings";
+        render(L10n.t("설정"),true,null,null);
+        final int generation=renderGeneration;
+        settingsContent=new SettingsContent(this,page,currentScroll,settingsScope,tab,
+                ()->{
+                    if(generation!=renderGeneration||settingsContent==null)return;
+                    int selected=settingsContent.selectedTab();
+                    Ui.applyAppearance(this);
+                    setTheme(Ui.darkMode?R.style.AppThemeDark:R.style.AppTheme);
+                    container.setBackgroundColor(Ui.BG);
+                    getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Ui.BG));
+                    getWindow().getDecorView().setSystemUiVisibility(Ui.darkMode?0:View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+                    renderedLanguage=L10n.language();
+                    showSettingsContent(selected);
+                },()->{
+                    if(generation==renderGeneration&&flutterBodySurface!=null)
+                        flutterBodySurface.refresh();
+                });
+        final SettingsContent controller=settingsContent;
+        if(!FlutterUiMode.enabled(this)){finishScreenHandoff();return;}
+        bindBody(FlutterUiContract.PANEL,new FlutterNavigationSurface.Host(){
+            boolean live(){return generation==renderGeneration&&settingsContent==controller&&
+                    "settings".equals(currentScreen)&&!isDestroyed()&&!isFinishing();}
+            @Override public Map<String,Object> snapshot(String route){
+                if(!live())throw new IllegalStateException("stale settings");
+                Map<String,String> labels=FlutterOperationSnapshot.labels();
+                labels.put("apply",L10n.t("적용"));
+                Map<String,Object> data=FlutterOperationSnapshot.base(MainActivity.this,route,labels);
+                Map<String,Object> panel=controller.model().snapshot();
+                panel.put("showClassic",false);data.put("panel",panel);
+                return data;
+            }
+            @Override public void action(String route,String action,String id){}
+            @Override public void reorderFavorites(Object order){throw new IllegalStateException("settings");}
+            @Override public void flutterShown(){screenHandoffReady(generation);}
+            @Override public void fallbackShown(){screenHandoffReady(generation);}
+            @Override public void explorerCall(io.flutter.plugin.common.MethodCall call,
+                    io.flutter.plugin.common.MethodChannel.Result result){
+                if(!live()||drawerShown||!"panelCommand".equals(call.method)||!(call.arguments instanceof Map)){
+                    result.error("STALE_SETTINGS",null,null);return;
+                }
+                NativePanelModel model=controller.model();
+                Runnable command=model.command(call.argument("revision"),call.argument("id"),call.argument("value"));
+                if(command==null){result.error("INVALID_SETTINGS_COMMAND",null,null);return;}
+                result.success(null);
+                container.post(()->{
+                    if(live()&&!drawerShown&&controller.model()==model&&flutterBodySurface!=null&&flutterBodySurface.isShown()){
+                        try{command.run();}catch(RuntimeException failure){MainActivity.this.failure(failure);}
+                    }
+                });
+            }
+        });
     }
     private void showFavorites() {
         currentScreen = "favorites";
@@ -2762,27 +3841,34 @@ public class MainActivity extends LocalizedActivity {
             if (items.isEmpty()) muted(L10n.t("즐겨찾기한 폴더가 없습니다."));
             for (Models.Favorite favorite : items) favoriteRow(page, favorite);
         } catch (Exception e) { failure(e); }
+        if(FlutterUiMode.enabled(this))bindBody(FlutterUiContract.FAVORITES,flutterNavigationHost());
+        else finishScreenHandoff();
     }
     private void favoriteRow(LinearLayout target, Models.Favorite f) {
         LinearLayout box = Ui.horizontal(this);
         box.setGravity(Gravity.CENTER_VERTICAL);
-        box.setPadding(dp(12), dp(6), dp(7), dp(6));
-        box.setBackground(Ui.bg(this, Ui.SURFACE, 13, Ui.BORDER));
-        LinearLayout.LayoutParams rowParams = Ui.lp(this, -1, 70);
-        rowParams.bottomMargin = dp(7);
+        box.setPadding(dp(8), dp(6), dp(6), dp(6));
+        box.setBackgroundColor(Ui.SURFACE);
+        LinearLayout.LayoutParams rowParams = Ui.lp(this, -1, 54);
+        if(target.getChildCount()>0){
+            View divider=new View(this);
+            divider.setBackgroundColor((Ui.TEXT&0x00ffffff)|0x20000000);
+            target.addView(divider,Ui.lp(this,-1,1));
+        }
         target.addView(box, rowParams);
-        box.addView(new Ui.Icon(this, "star", 0xFFE5A542),
-                Ui.lp(this, 42, 42));
+        Ui.Icon favoriteIcon=new Ui.Icon(this,"star",0xFFD8A34E);
+        favoriteIcon.setBackground(Ui.bg(this,0x1FD8A34E,8,0));
+        box.addView(favoriteIcon,Ui.lp(this,38,38));
         LinearLayout labels = Ui.vertical(this);
         labels.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams textParams =
                 new LinearLayout.LayoutParams(0, -1, 1);
-        textParams.leftMargin = dp(13);
+        textParams.leftMargin = dp(12);
         box.addView(labels, textParams);
-        TextView name = Ui.text(this, f.displayTitle(), 15.5f, Ui.TEXT, true);
+        TextView name = Ui.text(this, f.displayTitle(), 14, Ui.TEXT, true);
         name.setSingleLine(true);
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        labels.addView(name, Ui.lp(this, -1, 27));
+        labels.addView(name, Ui.lp(this, -1, 23));
         String description = f.hasCustomTitle() ? f.title :
                 f.kind.equals("remote") ? "네트워크 폴더" :
                         f.kind.equals("saf") ? "SD 저장소" : "메인 저장소";
@@ -2815,8 +3901,7 @@ public class MainActivity extends LocalizedActivity {
     private void confirmRemoveFavorite(Models.Favorite favorite) {
         new AlertDialog.Builder(this)
                 .setTitle(L10n.t("즐겨찾기 삭제"))
-                .setMessage(favorite.displayTitle() +
-                        " 즐겨찾기를 삭제할까요?\n원본 폴더는 삭제되지 않습니다.")
+                .setMessage(L10n.f("%1$s 즐겨찾기를 삭제할까요?\n원본 폴더는 삭제되지 않습니다.",favorite.displayTitle()))
                 .setNegativeButton(L10n.t("취소"), null)
                 .setPositiveButton(L10n.t("삭제"), (dialog, which) -> {
                     try {
@@ -2943,6 +4028,7 @@ public class MainActivity extends LocalizedActivity {
         }
     }
     private void requestVisibleJobs() {
+        if(flutterExplorerSurface!=null&&flutterExplorerSurface.isActive())return;
         if (currentScroll == null) return;
         for (LazyUiJob job : lazyJobs) {
             if (!job.started && job.anchor.isAttachedToWindow() &&
@@ -2966,32 +4052,48 @@ public class MainActivity extends LocalizedActivity {
         return scope + "|count|hidden:" + showHidden + "|subtitles:" +
                 PlayerSettings.prefs(this).getBoolean(PlayerSettings.HIDE_SUBTITLES, false);
     }
+    private String countLabel(int count){
+        return count<0?L10n.t("항목 수 미확인"):L10n.f("%d개 항목",count);
+    }
+    // Bookkeeping on the UI thread. Every count resolves, even on timeout.
+    private void submitFolderCount(boolean network,Callable<Integer> load,Consumer<Integer> complete){
+        java.util.concurrent.ThreadPoolExecutor pool=network?remoteCountWorker:localCountWorker;
+        java.util.concurrent.FutureTask<Integer> task=new java.util.concurrent.FutureTask<Integer>(load){
+            @Override protected void done(){
+                folderCountHandler.post(()->{
+                    Runnable timeout=folderCountTasks.remove(this);
+                    if(timeout==null)return;
+                    folderCountHandler.removeCallbacks(timeout);
+                    int value=-1;
+                    try{value=get();}catch(Exception ignored){}
+                    complete.accept(value);
+                });
+            }
+        };
+        Runnable timeout=()->{task.cancel(true);pool.remove(task);};
+        folderCountTasks.put(task,timeout);
+        folderCountHandler.postDelayed(timeout,network?20000:8000);
+        try{pool.execute(task);}
+        catch(java.util.concurrent.RejectedExecutionException closed){task.cancel(true);}
+    }
+    private void cancelFolderCountJobs(){
+        for(java.util.concurrent.FutureTask<Integer> task:new ArrayList<>(folderCountTasks.keySet()))
+            task.cancel(true);
+        localCountWorker.purge();remoteCountWorker.purge();
+    }
     private void scheduleCount(View anchor, TextView target,
                                Models.Entry entry, Callable<Integer> count) {
-        String key = countKey(entry);
-        Integer remembered = folderCache.count(key);
-        if (remembered != null) {
-            target.setText(remembered + "개 항목");
-            return;
-        }
-        int screen = renderGeneration;
-        addLazyJob(anchor, () -> previewWorker.execute(() -> {
-            String result;
-            int computed = -1;
-            try {
-                computed = count.call();
-                result = computed < 0 ? "항목 수 미확인" : computed + "개 항목";
-            } catch (Exception ignored) {
-                result = "항목 수 미확인";
-            }
-            String label = result;
-            int finalCount = computed;
-            runOnUiThread(() -> {
-                if (screen == renderGeneration && anchor.isAttachedToWindow()) {
-                    if (finalCount >= 0) folderCache.rememberCount(key, finalCount);
-                    target.setText(label);
-                }
-            });
+        String key=countKey(entry);
+        Integer remembered=folderCache.count(key);
+        if(remembered!=null){target.setText(countLabel(remembered));return;}
+        int screen=renderGeneration;
+        Models.RemoteProfile provider=remote;
+        boolean hidden=showHidden;
+        addLazyJob(anchor,()->submitFolderCount(provider!=null,
+                ()->explorerCount(entry,provider,hidden),value->{
+            if(screen!=renderGeneration||!anchor.isAttachedToWindow())return;
+            if(value>=0)folderCache.rememberCount(key,value);
+            target.setText(countLabel(value));
         }));
     }
     private void scheduleThumbnail(View anchor, FrameLayout iconBox,
@@ -3003,56 +4105,7 @@ public class MainActivity extends LocalizedActivity {
         int screen = renderGeneration;
         Models.RemoteProfile provider = remote;
         addLazyJob(anchor, () -> previewWorker.execute(() -> {
-            Bitmap image = null;
-            try {
-                if (video) {
-                    image = VideoThumbnailLoader.load(getApplicationContext(), item,
-                            provider);
-                } else if (item.file != null) {
-                    BitmapFactory.Options bounds = new BitmapFactory.Options();
-                    bounds.inJustDecodeBounds = true;
-                    BitmapFactory.decodeFile(item.file.getAbsolutePath(), bounds);
-                    BitmapFactory.Options options = new BitmapFactory.Options();
-                    int size = Math.max(bounds.outWidth, bounds.outHeight);
-                    options.inSampleSize = 1;
-                    while (size / options.inSampleSize > 200)
-                        options.inSampleSize *= 2;
-                    image = BitmapFactory.decodeFile(item.file.getAbsolutePath(), options);
-                } else if (item.document != null) {
-                    try (InputStream stream = getContentResolver().openInputStream(
-                            item.document.getUri())) {
-                        BitmapFactory.Options options = new BitmapFactory.Options();
-                        options.inSampleSize = 4;
-                        image = BitmapFactory.decodeStream(stream, null, options);
-                    }
-                } else if (item.uri != null) {
-                    try (InputStream stream = getContentResolver().openInputStream(item.uri)) {
-                        BitmapFactory.Options options = new BitmapFactory.Options();
-                        options.inSampleSize = 4;
-                        image = BitmapFactory.decodeStream(stream, null, options);
-                    }
-                } else if (item.size >= 0 && item.size <= 1024 * 1024 &&
-                        provider != null && "remote".equals(currentScreen)) {
-                    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-                    OutputStream bounded = new java.io.FilterOutputStream(bytes) {
-                        int used;
-                        @Override public void write(int b) throws IOException {
-                            if (++used > 1024 * 1024) throw new IOException("Preview limit");
-                            out.write(b);
-                        }
-                        @Override public void write(byte[] b, int o, int l) throws IOException {
-                            if (used + l > 1024 * 1024)
-                                throw new IOException("Preview limit");
-                            out.write(b, o, l); used += l;
-                        }
-                    };
-                    RemoteProvider.download(provider, item.path, bounded);
-                    byte[] raw = bytes.toByteArray();
-                    BitmapFactory.Options options = new BitmapFactory.Options();
-                    options.inSampleSize = 2;
-                    image = BitmapFactory.decodeByteArray(raw, 0, raw.length, options);
-                }
-            } catch (Exception ignored) {}
+            Bitmap image = loadExplorerThumbnail(item,provider,video);
             Bitmap ready = image;
             runOnUiThread(() -> {
                 if (ready == null || screen != renderGeneration ||
@@ -3076,12 +4129,70 @@ public class MainActivity extends LocalizedActivity {
             });
         }));
     }
+    private Bitmap loadExplorerThumbnail(Models.Entry item,Models.RemoteProfile provider,boolean video) {
+    Bitmap image = null;
+    try {
+        if (video) {
+            image = VideoThumbnailLoader.load(getApplicationContext(), item,
+                    provider);
+        } else if (item.file != null) {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(item.file.getAbsolutePath(), bounds);
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            int size = Math.max(bounds.outWidth, bounds.outHeight);
+            options.inSampleSize = 1;
+            while (size / options.inSampleSize > 200)
+                options.inSampleSize *= 2;
+            image = BitmapFactory.decodeFile(item.file.getAbsolutePath(), options);
+        } else if (item.document != null) {
+            try (InputStream stream = getContentResolver().openInputStream(
+                    item.document.getUri())) {
+                BitmapFactory.Options options = new BitmapFactory.Options();
+                options.inSampleSize = 4;
+                image = BitmapFactory.decodeStream(stream, null, options);
+            }
+        } else if (item.uri != null) {
+            try (InputStream stream = getContentResolver().openInputStream(item.uri)) {
+                BitmapFactory.Options options = new BitmapFactory.Options();
+                options.inSampleSize = 4;
+                image = BitmapFactory.decodeStream(stream, null, options);
+            }
+         } else if (provider != null && item.size <= 24L * 1024 * 1024) {
+            final int limit = 24 * 1024 * 1024;
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            OutputStream bounded = new java.io.FilterOutputStream(bytes) {
+                int used;
+                @Override public void write(int b) throws IOException {
+                    if (++used > limit) throw new IOException("Preview limit");
+                    out.write(b);
+                }
+                @Override public void write(byte[] b, int o, int l) throws IOException {
+                    if (l > limit - used) throw new IOException("Preview limit");
+                    out.write(b, o, l); used += l;
+                }
+            };
+            RemoteProvider.download(provider, item.path, bounded);
+            byte[] raw = bytes.toByteArray();
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(raw, 0, raw.length, options);
+            options.inJustDecodeBounds = false;
+            options.inSampleSize = 1;
+            while (Math.max(options.outWidth, options.outHeight) / options.inSampleSize > 384)
+                options.inSampleSize *= 2;
+            image = BitmapFactory.decodeByteArray(raw, 0, raw.length, options);
+        }
+    } catch (Exception ignored) {}
+        return image;
+    }
+
     private FrameLayout fileIcon(Models.Entry entry, int dimension) {
         FrameLayout frame = new FrameLayout(this);
         int side = dp(dimension);
         frame.addView(new Ui.Icon(this,
                 entry.directory ? "folder" : iconFor(entry.name),
-                entry.directory ? 0xFFE5AD5B : Ui.TEAL),
+                entry.directory ? 0xFFE5AD5B : FileIconType.color(iconFor(entry.name))),
                 new FrameLayout.LayoutParams(side, side));
         return frame;
     }
@@ -3099,7 +4210,7 @@ public class MainActivity extends LocalizedActivity {
             if (entry.linkTargetUnavailable) return "심볼릭 링크 · 대상 접근 불가";
             return entry.directory ? "심볼릭 링크 → 폴더" : "심볼릭 링크 → 파일";
         }
-        return entry.directory ? ("remote".equals(currentScreen) && remote != null && "SFTP".equals(remote.protocol) ? "폴더" : "항목 수 확인 중") : pretty(entry.size);
+        return entry.directory ? ("media".equals(currentScreen)?L10n.t("폴더"):L10n.t("항목 수 확인 중")) : pretty(entry.size);
     }
     private int readingProgressFor(Models.Entry entry) {
         if(entry.directory)return -1;
@@ -3228,7 +4339,10 @@ public class MainActivity extends LocalizedActivity {
     }
     private int folderPurposeFlags(Models.Entry entry) {
         if (!entry.directory) return 0;
-        FileTransferEngine.Item item = fileItem(entry);
+        return folderPurposeFlags(entry,fileItem(entry));
+    }
+    private int folderPurposeFlags(Models.Entry entry,FileTransferEngine.Item item) {
+        if (!entry.directory) return 0;
         if (item == null || !item.directory || "media".equals(item.kind)) return 0;
         String owner = "remote".equals(item.kind) && item.remote != null ?
                 item.remote.id : "saf".equals(item.kind) ? item.tree : "";
@@ -3267,7 +4381,7 @@ public class MainActivity extends LocalizedActivity {
         if (!FileViewOptions.visible(entry.name,
                 entry.file != null && entry.file.isHidden(), showHidden)) return;
         if (PlayerSettings.hideThisFile(this, folderScope(), entry.name)) return;
-        if (!entry.directory && ComicArchive.supports(entry.name) &&
+        if (explorerSession==null && !entry.directory && ComicArchive.supports(entry.name) &&
                 visibleComicVolumes.size()<BookSeriesQueue.MAX_VOLUMES) {
             if ("local".equals(currentScreen)&&entry.file!=null)
                 visibleComicVolumes.add(new BookSeriesQueue.Volume(
@@ -4462,6 +5576,7 @@ public class MainActivity extends LocalizedActivity {
                 appendMediaPage(items, type, end);
             });
         }
+        if(offset==0)attachFlutterExplorer(displayed,renderGeneration);
     }
     private String when(long time) {
         return time <= 0 ? "" : DateFormat.getDateTimeInstance(
@@ -4473,12 +5588,7 @@ public class MainActivity extends LocalizedActivity {
                 .format(new Date(millis));
     }
     private String iconFor(String name) {
-        String n = name.toLowerCase(Locale.ROOT);
-        if (n.matches(".*\\.(jpg|jpeg|png|gif|webp|bmp|heic)$")) return "image";
-        if (MediaFileTypes.isAudio(n)) return "audio";
-        if (n.matches(".*\\.(mp4|m4v|mov|mkv|avi|webm|3gp|ts|m2ts)$"))
-            return "video";
-        return "file";
+        return FileIconType.kind(name);
     }
     private boolean isVideo(String filename) {
         return filename != null && filename.toLowerCase(Locale.ROOT)
@@ -4789,14 +5899,12 @@ public class MainActivity extends LocalizedActivity {
         }
         new AlertDialog.Builder(this)
                 .setTitle(directlySelected ?
-                        "동영상 폴더 설정 해제" : "동영상 폴더로 설정")
+                        L10n.t("동영상 폴더 설정 해제") : L10n.t("동영상 폴더로 설정"))
                 .setMessage(title + "\n\n" + (directlySelected ?
-                        "이 폴더 및 하위 폴더의 자막 숨기기 규칙을 해제할까요?" :
-                        "이 폴더와 모든 하위 폴더의 SRT·SMI·ASS·VTT·SUB·SUP·IDX·TXT·NFO " +
-                                "파일을 탐색기 목록에서 숨깁니다. 실제 파일은 삭제하지 않으며 " +
-                                "동영상 목록의 외부 자막 표시는 계속 유지됩니다."))
+                        L10n.t("이 폴더 및 하위 폴더의 자막 숨기기 규칙을 해제할까요?") :
+                        L10n.t("이 폴더와 모든 하위 폴더의 SRT·SMI·ASS·VTT·SUB·SUP·IDX·TXT·NFO 파일을 탐색기 목록에서 숨깁니다. 실제 파일은 삭제하지 않으며 동영상 목록의 외부 자막 표시는 계속 유지됩니다.")))
                 .setNegativeButton(L10n.t("취소"), null)
-                .setPositiveButton(directlySelected ? "해제" : "설정", (d, w) -> {
+                .setPositiveButton(directlySelected ? L10n.t("해제") : L10n.t("설정"), (d, w) -> {
                     if (directlySelected) {
                         PlayerSettings.removeHiddenFolder(this, normalized);
                     } else {
@@ -4811,6 +5919,26 @@ public class MainActivity extends LocalizedActivity {
                 }).show();
     }
     private void renameLocal(File local, DocumentFile saf, String oldName) {
+        if(useFlutterFileChrome()){
+            final DocumentFile parent=safFolder;
+            showFilePrompt(L10n.t("이름 변경"),"",oldName,L10n.t("변경"),value->{
+                String next=value.trim();
+                if(next.equals(oldName))return;
+                try{
+                    RemoteProvider.child("/",next);
+                    runJob(L10n.t("이름 변경 중..."),()->{
+                        boolean ok;
+                        if(local!=null){
+                            File target=new File(local.getParentFile(),next);
+                            ok=!target.exists()&&local.renameTo(target);
+                        }else ok=parent!=null&&parent.findFile(next)==null&&saf.renameTo(next);
+                        if(!ok)throw new IOException(L10n.t("파일 이름을 변경할 수 없습니다."));
+                        return true;
+                    },ignored->refreshCurrent());
+                }catch(Exception error){failure(error);}
+            });
+            return;
+        }
         EditText input = new EditText(this);
         input.setSingleLine();
         input.setText(oldName);
@@ -4833,7 +5961,8 @@ public class MainActivity extends LocalizedActivity {
                 }).show();
     }
     private void refreshCurrent() {
-        if ("local".equals(currentScreen)) browseLocal(localFolder);
+        if("settings".equals(currentScreen))showSettingsContent(settingsContent==null?0:settingsContent.selectedTab());
+        else if ("local".equals(currentScreen)) browseLocal(localFolder);
         else if ("saf".equals(currentScreen)) browseSaf(safFolder, safRelative);
         else if ("remote".equals(currentScreen)) openRemote(remote, remoteFolder);
         else if ("remotes".equals(currentScreen)) showRemoteList();
@@ -4844,7 +5973,40 @@ public class MainActivity extends LocalizedActivity {
             openMedia(mediaKind);
         else showHome();
     }
+    private void handleFlutterConnectionAction(Intent data) {
+        String action = data.getStringExtra(FlutterUiContract.ACTION);
+        String id = data.getStringExtra(FlutterUiContract.PROFILE_ID);
+        if (!FlutterUiContract.validAction(FlutterUiContract.CONNECTIONS, action, id)) return;
+        if ("upgrade".equals(action)) { EditionMonetization.showUpgrade(this); return; }
+        if ("nativeList".equals(action)) { showRemoteList(true); return; }
+        if ("add".equals(action)) { openFlutterEditor(null,true); return; }
+        if ("backup".equals(action)) { settingsBackupUi().show(); return; }
+        try {
+            // Resolve again from the live secure store; Dart is not authoritative.
+            for (Models.RemoteProfile p : store.supportedRemotes()) {
+                if (!p.id.equals(id)) continue;
+                if (!store.remoteAllowed(id)) {
+                    if("manage".equals(action))showRemoteList(true);
+                    else EditionMonetization.showUpgrade(this);
+                    return;
+                }
+                if ("open".equals(action)) {
+                    flutterRemoteOrigin=true;
+                    openRemoteStart(p);
+                }
+                else if ("edit".equals(action)) { openFlutterEditor(p.id,true); }
+                else { remoteMenu(p); }
+                return;
+            }
+            showRemoteList();
+        } catch (Exception error) { showError(safeError(error)); }
+    }
+
     private void showRemoteList() {
+        showRemoteList(false);
+    }
+    private void showRemoteList(boolean classic) {
+        flutterRemoteOrigin=false;
         currentScreen = "remotes";
         remote = null;
         render(L10n.t("원격 저장소"), true, "+", () -> remoteForm(null));
@@ -4889,6 +6051,9 @@ public class MainActivity extends LocalizedActivity {
         TextView backup=Ui.action(this,L10n.t("설정 파일 내보내기 · 가져오기"));
         page.addView(backup,Ui.lp(this,-1,52));
         backup.setOnClickListener(v -> settingsBackupUi().show());
+        if(!classic&&FlutterUiMode.enabled(this))
+            bindBody(FlutterUiContract.CONNECTIONS,flutterNavigationHost());
+        else finishScreenHandoff();
     }
 
     private void showNasShareCreate(FileTransferEngine.Item item) {
@@ -5058,7 +6223,7 @@ public class MainActivity extends LocalizedActivity {
                         return;
                     }
                     new AlertDialog.Builder(this)
-                            .setTitle(selected.size() + "개 공유 링크를 해제할까요?")
+                            .setTitle(L10n.f("%1$d개 공유 링크를 해제할까요?",selected.size()))
                             .setMessage(L10n.t("선택한 다운로드 공유 주소만 무효화합니다. ") +
                                     L10n.t("NAS에 저장된 원본 파일과 폴더는 삭제되지 않습니다."))
                             .setNegativeButton(L10n.t("취소"), null)
@@ -5485,123 +6650,100 @@ public class MainActivity extends LocalizedActivity {
     }
 
     private void teraboxWebLogin(java.util.function.Consumer<String> onCookie) {
-        WebView web = new WebView(this);
-        // AlertDialog's embedded WebView is not a native EditText, so make
-        // sure its dynamic HTML editors receive focus and keyboard access.
-        web.setFocusable(true);
-        web.setFocusableInTouchMode(true);
-        web.setOnTouchListener((view, event) -> {
-            if (event.getAction() == MotionEvent.ACTION_DOWN)
-                view.requestFocus();
-            if (event.getAction() == MotionEvent.ACTION_UP) {
-                view.postDelayed(() -> {
-                    if (!view.hasFocus() || !view.onCheckIsTextEditor()) return;
-                    InputMethodManager ime = (InputMethodManager)
-                            getSystemService(INPUT_METHOD_SERVICE);
-                    if (ime != null)
-                        ime.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT);
-                }, 120);
-            }
-            return false; // Preserve the original WebView HTML tap.
-        });
-        WebSettings settings = web.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setAllowFileAccess(false);
-        settings.setAllowContentAccess(false);
-        settings.setAllowFileAccessFromFileURLs(false);
-        settings.setAllowUniversalAccessFromFileURLs(false);
-        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-        settings.setUserAgentString(TeraBoxWebPolicy.DESKTOP_USER_AGENT);
-        settings.setUseWideViewPort(true);
-        settings.setLoadWithOverviewMode(true);
-        settings.setSupportZoom(true);
-        settings.setBuiltInZoomControls(true);
-        settings.setDisplayZoomControls(false);
-        settings.setSupportMultipleWindows(false);
-        settings.setJavaScriptCanOpenWindowsAutomatically(false);
-        web.setWebChromeClient(new WebChromeClient());
-        CookieManager.getInstance().setAcceptCookie(true);
-        CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
-        web.setWebViewClient(new WebViewClient() {
-            @Override public boolean shouldOverrideUrlLoading(WebView view,
-                    android.webkit.WebResourceRequest request) {
-                if (!request.isForMainFrame()) return false;
-                if (TeraBoxWebPolicy.isGoogleAuthNavigation(
-                        request.getUrl().toString())) {
-                    // Android Chrome cannot return its session cookies to FileHub.
-                    // Never offer a login button that cannot complete linking.
-                    showTeraBoxPcHelp();
-                    return true;
-                }
-                if (!TeraBoxWebPolicy.isAllowedWebNavigation(
-                        request.getUrl().toString())) {
-                    toast(L10n.t("외부 앱/허용되지 않은 주소로 이동하지 않습니다."));
-                    return true;
-                }
-                // Return false to keep the official HTTPS page inside this
-                // WebView, rather than launching an installed Android app.
-                return false;
-            }
-        });
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle(L10n.t("TeraBox 웹 로그인 · 세션 가져오기"))
-                .setMessage(L10n.t("TeraBox 자체 계정으로 로그인한 후 세션 가져오기를 누르세요. ") +
-                        L10n.t("Google 계정 인증은 세션을 가져올 수 없어 지원하지 않습니다. ") +
-                        L10n.t("그 경우 PC에서 ndus 값을 확인해 입력하세요."))
-                .setView(web)
-                .setNegativeButton(L10n.t("닫기"), null)
-                .setNeutralButton(L10n.t("PC 웹 새로고침"), null)
-                .setPositiveButton(L10n.t("세션 가져오기"), null).create();
-        dialog.setOnShowListener(ignored -> {
-            if (dialog.getWindow() != null) {
-                // Clear after show: AlertController may set this flag when
-                // it sees a WebView rather than a native EditText.
-                dialog.getWindow().clearFlags(
-                        WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM |
-                                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
-                dialog.getWindow().setSoftInputMode(
-                        WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
-                                WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
-                dialog.getWindow().setLayout(
-                        (int)(getResources().getDisplayMetrics().widthPixels * .96f),
-                        (int)(getResources().getDisplayMetrics().heightPixels * .75f));
-            }
-            web.requestFocus();
-            web.loadUrl(TeraBoxWebPolicy.LOGIN_URL);
-            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(
-                    v -> web.loadUrl(TeraBoxWebPolicy.LOGIN_URL));
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-                try {
-                    CookieManager.getInstance().flush();
-                    String session = null;
-                    for (String site : new String[]{
-                            "https://www.terabox.com",
-                            "https://www.terabox.app",
-                            "https://www.teraboxapp.com"}) {
-                        String cookies = CookieManager.getInstance().getCookie(site);
-                        if (cookies == null) continue;
-                        try { session = CloudProvider.ndusCookie(cookies); break; }
-                        catch (IOException missingSession) { /* check next domain */ }
-                    }
-                    if (session == null) throw new IOException("ndus 쿠키가 없습니다.");
-                    onCookie.accept(session);
-                    dialog.dismiss();
-                } catch (Exception e) {
-                    showError(L10n.t("로그인 세션(ndus)을 아직 찾지 못했습니다. ") +
-                            L10n.t("PC 웹에서 로그인을 완료했는지 확인해 주세요. ") +
-                            L10n.t("웹사이트가 로그인을 차단하면 수동 ndus 입력을 사용할 수 있습니다."));
-                }
-            });
-        });
-        dialog.setOnDismissListener(d -> {
-            web.stopLoading();
-            web.destroy();
-        });
-        dialog.show();
+        new RemoteCloudUi(this).login(onCookie, () -> {});
     }
 
+    private void openFlutterEditor(String id,boolean returnToFlutter) {
+        // Keep the list and its attached Flutter texture visible. On phones
+        // all add/edit operations are overlays, not a second Flutter Activity.
+        if("remotes".equals(currentScreen)&&flutterBodySurface!=null&&
+                flutterBodySurface.isShown()&&!drawerShown){
+            if(embeddedRemoteEditor!=null)return;
+            final String token=java.util.UUID.randomUUID().toString();
+            embeddedEditorToken=token;embeddedEditorSaved=false;
+            editorAddedSecureFlag=(getWindow().getAttributes().flags&
+                    android.view.WindowManager.LayoutParams.FLAG_SECURE)==0;
+            if(editorAddedSecureFlag)getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+            // Shade and intercept the native toolbar, which sits outside the
+            // persistent Flutter viewport; the dialog shades its own body.
+            if(normalFileToolbar!=null){
+                editorToolbarShade=new View(this);
+                editorToolbarShade.setBackgroundColor(0x8A000000);
+                editorToolbarShade.setClickable(true);
+                FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(-1,
+                        dp(FileHubBrandLayout.HEADER_HEIGHT_DP));
+                lp.topMargin=statusBarInsetPx;
+                container.addView(editorToolbarShade,lp);
+            }
+            embeddedRemoteEditor=new FlutterRemoteEditor(this,worker,id,action->{
+                if(token.equals(embeddedEditorToken)&&"saved".equals(action))embeddedEditorSaved=true;
+            });
+            Map<String,Object> payload=new LinkedHashMap<>();
+            Map<String,String> labels=new LinkedHashMap<>();
+            FlutterRemoteEditor.labels(labels);
+            payload.put("labels",labels);payload.put("token",token);
+            embeddedRemoteEditor.snapshot(payload,new io.flutter.plugin.common.MethodChannel.Result(){
+                @Override public void success(Object value){
+                    if(token.equals(embeddedEditorToken)&&flutterBodySurface!=null)
+                        flutterBodySurface.push("editorOpen",value);
+                }
+                @Override public void error(String code,String message,Object details){
+                    if(token.equals(embeddedEditorToken)){
+                        closeEmbeddedEditor(false);showError(L10n.t("연결 설정이 변경되었습니다. 화면을 닫고 다시 열어 주세요."));
+                    }
+                }
+                @Override public void notImplemented(){error("stale",null,null);}
+            });
+            return;
+        }
+        // Native-only/TV/failed surface fallback stays available.
+        Intent intent=FlutterInterfaceActivity.intent(this,FlutterUiContract.EDITOR);
+        if(id!=null)intent.putExtra(FlutterUiContract.PROFILE_ID,id);
+        intent.putExtra(FlutterRemoteEditor.RETURN_FLUTTER,returnToFlutter);
+        startActivityForResult(intent,FlutterUiContract.REQUEST_EDITOR);
+    }
+    private void embeddedEditorCall(io.flutter.plugin.common.MethodCall call,
+            io.flutter.plugin.common.MethodChannel.Result result){
+        if(!"editorCommand".equals(call.method)||embeddedRemoteEditor==null||
+                !(call.arguments instanceof Map)||
+                !java.util.Objects.equals(embeddedEditorToken,call.argument("token"))){
+            result.error("stale",null,null);return;
+        }
+        Object raw=call.argument("method");
+        if("editorCancel".equals(raw)){
+            if(embeddedRemoteEditor.isBusy()){result.error("busy",null,null);return;}
+            result.success(null);closeEmbeddedEditor(false);return;
+        }
+        if(!"editorSave".equals(raw)&&!"editorLogin".equals(raw)&&!"editorHelp".equals(raw)){
+            result.error("invalid",null,null);return;
+        }
+        if(embeddedEditorSaved){result.error("stale",null,null);return;}
+        embeddedRemoteEditor.handle(new io.flutter.plugin.common.MethodCall((String)raw,call.argument("args")),result);
+    }
+    private void closeEmbeddedEditor(boolean force){
+        if(embeddedRemoteEditor==null)return;
+        String token=embeddedEditorToken;
+        boolean saved=embeddedEditorSaved;
+        embeddedRemoteEditor.close();embeddedRemoteEditor=null;
+        embeddedEditorToken=null;embeddedEditorSaved=false;
+        if(force&&flutterBodySurface!=null)flutterBodySurface.push("editorDismiss",token);
+        if(editorToolbarShade!=null){container.removeView(editorToolbarShade);editorToolbarShade=null;}
+        if(editorAddedSecureFlag){
+            editorAddedSecureFlag=false;
+            getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+        }
+        if(saved&&!force){
+            folderCache.clearCounts();
+            if(flutterBodySurface!=null)flutterBodySurface.refresh();
+            toast(L10n.t("연결 설정을 저장했습니다."));
+        }
+    }
     private void remoteForm(Models.RemoteProfile original) {
+        if(embeddedRemoteEditor!=null)return;
+        if(!FlutterUiMode.enabled(this))nativeRemoteForm(original);
+        else openFlutterEditor(original==null?null:original.id,false);
+    }
+    private void nativeRemoteForm(Models.RemoteProfile original) {
         String[] types = {"SMB", "FTP", "SFTP", "WebDAV",
                 "TeraBox", "MYBOX"};
         final int[] defaultPorts = {445, 21, 22, 443, 0, 0};
@@ -5858,38 +7000,8 @@ public class MainActivity extends LocalizedActivity {
         dialog.show();
     }
 
-    private void showTeraBoxPcHelp() {
-        new AlertDialog.Builder(this)
-                .setTitle(L10n.t("PC에서 TeraBox 세션 가져오는 방법"))
-                .setMessage(L10n.t("① PC Chrome에서 TeraBox 공식 웹사이트에 로그인합니다. ") +
-                        "Google 계정으로 로그인해도 됩니다.\n\n" +
-                        "② 키보드 F12를 눌러 개발자 도구를 열고 " +
-                        "Application(애플리케이션) → Cookies(쿠키)를 선택합니다.\n\n" +
-                        "③ 로그인한 TeraBox 주소를 선택한 뒤 'ndus' 항목의 " +
-                        "Value(값)를 확인합니다. 계정마다 값이 다릅니다.\n\n" +
-                        "④ 세션값을 본인 휴대폰으로 안전하게 옮겨 " +
-                        "NAS Mount의 'TeraBox 로그인 세션(ndus)' 칸에 붙여넣습니다. " +
-                        "표시할 이름을 적고 저장한 뒤 연결하세요.\n\n" +
-                        "※ ndus는 계정에 접근 가능한 민감한 세션 키입니다. " +
-                        "스크린샷이나 채팅에 올리지 말고, 타인과 공유하지 마세요. " +
-                        "세션이 만료되면 다시 가져와야 할 수 있습니다.")
-                .setPositiveButton(L10n.t("확인"), null).show();
-    }
-
-    private void showMyBoxPatHelp() {
-        // Mirrors the Windows ModernProfileDialog MYBOX PAT instructions.
-        new AlertDialog.Builder(this)
-                .setTitle(L10n.t("네이버 MYBOX PAT 발급 방법"))
-                .setMessage(L10n.t("① 네이버 MYBOX에 로그인합니다.\n\n") +
-                        "② 화면 하단의 [설정]을 누릅니다.\n\n" +
-                        "③ [계정 및 개인 액세스 토큰 관리]로 이동합니다.\n\n" +
-                        "④ [토큰 생성]을 눌러 개인 액세스 토큰(PAT)을 발급합니다.\n\n" +
-                        "⑤ 생성된 토큰을 복사해 FileHub AIO의 [PAT] 입력칸에 붙여넣고 저장하세요.\n\n" +
-                        "※ PAT는 비밀번호처럼 중요한 로그인 정보입니다. " +
-                        "스크린샷이나 채팅으로 다른 사람에게 공유하지 마세요.")
-                .setPositiveButton(L10n.t("확인"), null)
-                .show();
-    }
+    private void showTeraBoxPcHelp() { new RemoteCloudUi(this).showTeraBoxPcHelp(); }
+    private void showMyBoxPatHelp() { new RemoteCloudUi(this).showMyBoxPatHelp(); }
 
     /** Entry from a storage connection: SFTP opens the login home, not '/'.
      * Navigation to '/' via the breadcrumb remains explicit and unchanged. */
@@ -5919,7 +7031,7 @@ public class MainActivity extends LocalizedActivity {
         render(profile.label(), true, "⋮", this::remoteFolderActions);
         muted(L10n.t("SFTP 로그인 계정의 홈 폴더를 확인하는 중..."));
         final int screen = renderGeneration;
-        runJob(L10n.t("SFTP 홈 디렉터리 확인 중..."), () ->
+        runFolderJob(screen,L10n.t("SFTP 홈 디렉터리 확인 중..."), () ->
                 RemoteProvider.sftpLoginHome(profile), path -> {
             if (renderGeneration != screen || remote != profile ||
                     !profile.id.equals(sftpHomeDiscoveryPendingId)) return;
@@ -5957,7 +7069,11 @@ public class MainActivity extends LocalizedActivity {
                     if (renderGeneration != screen || quotaLabel.getParent() == null)
                         return;
                     if (result == null) page.removeView(quotaLabel);
-                    else quotaLabel.setText(WebDavQuota.summary(result));
+                    else {
+                        explorerQuota=WebDavQuota.summary(result);
+                        quotaLabel.setText(explorerQuota);
+                        if(flutterExplorerSurface!=null)flutterExplorerSurface.refresh();
+                    }
                 });
             });
         }
@@ -5969,7 +7085,7 @@ public class MainActivity extends LocalizedActivity {
             return;
         }
         TextView loading = muted(L10n.t("서버 폴더를 불러오는 중..."));
-        runJob(L10n.t("네트워크 폴더 연결 중..."), () ->
+        runFolderJob(screen,L10n.t("네트워크 폴더 연결 중..."), () ->
                 cachedRemoteFiles(profile, requestedFolder), list -> {
             if (screen != renderGeneration ||
                     remote != profile || !currentScreen.equals("remote") ||
@@ -6039,6 +7155,8 @@ public class MainActivity extends LocalizedActivity {
     private void showFolderBreadcrumb(List<RemoteBreadcrumbs.Step> steps,
                                       String currentPath,
                                       java.util.function.Consumer<String> navigate) {
+        explorerCrumbs=new ArrayList<>(steps);
+        explorerCrumbAction=navigate;
         android.widget.HorizontalScrollView scroll =
                 new android.widget.HorizontalScrollView(this);
         scroll.setHorizontalScrollBarEnabled(false);
@@ -6124,7 +7242,7 @@ public class MainActivity extends LocalizedActivity {
                             if(file.directory)openRemote(p,file.path);
                             else if(isVideo(file.name))openRemoteVideo(p,file);
                             else openRemoteFile(p,file);
-                        },file.directory && !"SFTP".equals(p.protocol)?()->{
+                        },file.directory?()->{
                             List<Models.Entry> children=cachedRemoteFiles(p,file.path);
                             int count=0;
                             for(Models.Entry child:children)
@@ -6304,6 +7422,21 @@ public class MainActivity extends LocalizedActivity {
         }, folder -> toast(folder + " 폴더에 저장했습니다."));
     }
     private void renameRemote(Models.RemoteProfile p, Models.Entry entry) {
+        if(useFlutterFileChrome()){
+            final String folder=remoteFolder;
+            showFilePrompt(L10n.t("이름 변경"),"",entry.name,L10n.t("변경"),value->{
+                String next=value.trim();
+                if(next.equals(entry.name))return;
+                if(!validateOperationProfiles(Collections.singletonList(FileTransferEngine.remote(p,entry)),null,true))return;
+                try{
+                    String newPath=RemoteProvider.child(RemoteProvider.parent(entry.path),next);
+                    runJob(L10n.t("이름 변경 중..."),()->{
+                        RemoteProvider.rename(p,entry.path,newPath,entry.directory);return true;
+                    },ignored->refreshRemote(p,folder));
+                }catch(Exception error){failure(error);}
+            });
+            return;
+        }
         EditText name = new EditText(this);
         name.setSingleLine();
         name.setText(entry.name);
@@ -6324,8 +7457,7 @@ public class MainActivity extends LocalizedActivity {
     }
     private void deleteRemote(Models.RemoteProfile p, Models.Entry entry) {
         new AlertDialog.Builder(this).setTitle(L10n.t("삭제 확인"))
-                .setMessage(L10n.t("서버의 ‘") + entry.name + "’을(를) 삭제할까요?\\n" +
-                        "이 작업은 되돌릴 수 없을 수 있습니다.")
+                .setMessage(L10n.f("서버의 ‘%1$s’을(를) 삭제할까요?\n이 작업은 되돌릴 수 없을 수 있습니다.",entry.name))
                 .setNegativeButton(L10n.t("취소"), null)
                 .setPositiveButton(L10n.t("삭제"), (d, i) ->
                         runJob(L10n.t("네트워크 파일 삭제 중..."), () -> {
@@ -6344,6 +7476,32 @@ public class MainActivity extends LocalizedActivity {
     @android.annotation.SuppressLint("WrongConstant")
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if(SettingsContent.handlesResult(requestCode)){
+            if(settingsContent!=null)settingsContent.onActivityResult(requestCode,resultCode,data);
+            return;
+        }
+        if(requestCode==FlutterUiContract.REQUEST_EDITOR) {
+            if(resultCode==RESULT_OK && data!=null) {
+                String action=data.getStringExtra(FlutterUiContract.ACTION);
+                if("saved".equals(action)) {
+                    folderCache.clearCounts();
+                    showRemoteList();
+                    toast(L10n.t("연결 설정을 저장했습니다."));
+                } else if("classic".equals(action)) {
+                    String id=data.getStringExtra(FlutterUiContract.PROFILE_ID);
+                    try {
+                        if(id==null)nativeRemoteForm(null);
+                        else for(Models.RemoteProfile p:store.activeRemotes())
+                            if(id.equals(p.id)){nativeRemoteForm(p);break;}
+                    } catch(Exception error){failure(error);}
+                }
+            }
+            return;
+        }
+        if (requestCode == FlutterUiContract.REQUEST_CONNECTIONS) {
+            if (resultCode == RESULT_OK && data != null) handleFlutterConnectionAction(data);
+            return;
+        }
         if(requestCode==REQ_LAN_QR_SCAN) {
             if(resultCode==RESULT_OK && data!=null){
                 String scanned=data.getStringExtra(QrScanActivity.EXTRA_QR);
@@ -6451,9 +7609,7 @@ public class MainActivity extends LocalizedActivity {
                 }
                 new AlertDialog.Builder(this)
                         .setTitle(L10n.t("기존 파일 덮어쓰기"))
-                        .setMessage(L10n.t("대상 폴더에 '") + display + "' 파일이 이미 있습니다.\n\n" +
-                                "기존 파일을 새 파일로 덮어쓸까요? " +
-                                "취소하면 기존 파일을 그대로 유지합니다.")
+                        .setMessage(L10n.f("대상 폴더에 '%1$s' 파일이 이미 있습니다.\n\n기존 파일을 새 파일로 덮어쓸까요? 취소하면 기존 파일을 그대로 유지합니다.",display))
                         .setNegativeButton(L10n.t("취소"), null)
                         .setPositiveButton(L10n.t("덮어쓰기"), (dialog, which) ->
                                 uploadSelectedDocument(chosen, target, destination,
@@ -6527,6 +7683,11 @@ public class MainActivity extends LocalizedActivity {
 
     @Override protected void onResume() {
         super.onResume();
+        activityResumed=true;
+        if (flutterBodySurface!=null) flutterBodySurface.resume();
+        if (flutterDrawerSurface!=null) flutterDrawerSurface.resume();
+        if (flutterTransferSurface!=null) flutterTransferSurface.resume();
+        if (flutterFilePrompt!=null)flutterFilePrompt.resume();
         String language=L10n.language();
         if(!language.equals(renderedLanguage)){
             renderedLanguage=language;
@@ -6582,12 +7743,24 @@ public class MainActivity extends LocalizedActivity {
         if(isFinishing()||isDestroyed()||store==null)return;
         try{
             if(remote!=null&&!store.remoteAllowed(remote.id)){showRemoteList();return;}
-            if("home".equals(currentScreen)||"remotes".equals(currentScreen))
+            if("settings".equals(currentScreen)&&settingsContent!=null)settingsContent.render();
+            else if("home".equals(currentScreen)||"remotes".equals(currentScreen))
                 refreshCurrent();
         }catch(Exception ignored){}
     }
 
     @Override protected void onPause(){
+        activityResumed=false;
+        if(bodyWaiting){
+            screenHandoffHandler.removeCallbacks(screenHandoffTimeout);
+            bodyDisplayed=false;
+            if(flutterBodySurface==null||!flutterBodySurface.isActive())bodyWaiting=false;
+            presentBodyLayer();
+        }
+        if (flutterBodySurface!=null) flutterBodySurface.pause();
+        if (flutterDrawerSurface!=null) flutterDrawerSurface.pause();
+        if (flutterTransferSurface!=null) flutterTransferSurface.pause();
+        if (flutterFilePrompt!=null)flutterFilePrompt.pause();
         transferHandler.removeCallbacks(transferTicker);
         musicHandler.removeCallbacks(musicTicker);
         super.onPause();
@@ -6604,9 +7777,19 @@ public class MainActivity extends LocalizedActivity {
     }
 
     @Override public void onBackPressed() {
+        if(embeddedRemoteEditor!=null){
+            if(!embeddedRemoteEditor.isBusy()&&flutterBodySurface!=null)
+                flutterBodySurface.push("editorBack",embeddedEditorToken);
+            return;
+        }
         if (drawerShown) {
             closeDrawer();
             return;
+        }
+        if("settings".equals(currentScreen)){
+            currentScreen=settingsReturnScreen;
+            settingsReturnScreen="home";settingsScope=null;
+            refreshCurrent();return;
         }
         if (!selection.isEmpty()) {
             selection.clear();
@@ -6616,7 +7799,9 @@ public class MainActivity extends LocalizedActivity {
         if (backFromAssignedEntry()) return;
         switch (currentScreen) {
             case "remote":
-                if (remoteFolder.equals("/")) showRemoteList();
+                if (remoteFolder.equals("/")) {
+                    showRemoteList();
+                }
                 else openRemote(remote, RemoteProvider.parent(remoteFolder));
                 break;
             case "local":

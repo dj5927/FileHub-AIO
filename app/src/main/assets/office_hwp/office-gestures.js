@@ -30,7 +30,7 @@ export function installPinch(target, getScale, setScale, min=0.6, max=3) {
  * touch targets during touchmove makes Android WebView cancel the gesture,
  * which previously stopped scaling after only 1-2%.
  */
-export function installSpreadsheetPinch(target, grid, min=0.55, max=3) {
+export function installSpreadsheetPinch(target, grid, min=0.30, max=3) {
   let active=false, awaitingRelease=false;
   let baseline=0, initialZoom=1;
   const distance=touches=>Math.hypot(

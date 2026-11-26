@@ -49,6 +49,9 @@ public final class OfficeBridgeActivity extends LocalizedActivity {
     private byte[] baseline;
     private boolean loading = true, saving, launched;
     private TextView status, editButton, saveButton;
+    private FlutterNativePanel flutterPanel;
+    private NativePanelModel panelModel;
+    private String workflowNote="";
 
     @Override public void onCreate(Bundle state) {
         Ui.applyAppearance(this);
@@ -73,16 +76,17 @@ public final class OfficeBridgeActivity extends LocalizedActivity {
         root.setBackgroundColor(Ui.BG);
         LinearLayout vertical = Ui.vertical(this);
         vertical.setPadding(dp(16), dp(22), dp(16), dp(18));
-        ViewCompat.setOnApplyWindowInsetsListener(vertical, (v, insets) -> {
+        ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
             Insets safe = insets.getInsets(WindowInsetsCompat.Type.statusBars() |
                     WindowInsetsCompat.Type.navigationBars() |
                     WindowInsetsCompat.Type.displayCutout());
-            vertical.setPadding(dp(16), safe.top + dp(18), dp(16), safe.bottom + dp(18));
+            root.setPadding(0,safe.top,0,safe.bottom);
+            vertical.setPadding(dp(16),dp(18),dp(16),dp(18));
             return insets;
         });
         root.addView(vertical, new FrameLayout.LayoutParams(-1, -1));
         setContentView(root);
-        ViewCompat.requestApplyInsets(vertical);
+        ViewCompat.requestApplyInsets(root);
 
         TextView title = Ui.text(this, filename, 19, Ui.TEXT, true);
         title.setMaxLines(2);
@@ -103,8 +107,30 @@ public final class OfficeBridgeActivity extends LocalizedActivity {
                 13, Ui.MUTED, false);
         note.setPadding(dp(4), dp(24), dp(4), 0);
         vertical.addView(note, Ui.lp(this, -1, -2));
+        workflowNote=note.getText().toString();
         updateButtons();
+        if(FlutterUiMode.enabled(this)){
+            rebuildPanel();
+            flutterPanel=new FlutterNativePanel(this,root,vertical,()->panelModel);
+            status.addTextChangedListener(new android.text.TextWatcher(){
+                @Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}
+                @Override public void onTextChanged(CharSequence s,int start,int before,int count){rebuildPanel();}
+                @Override public void afterTextChanged(android.text.Editable e){}
+            });
+        }
         stageSource();
+    }
+    private void rebuildPanel(){
+        panelModel=new NativePanelModel(filename,new String[0],0,null);
+        panelModel.note(status.getText().toString());
+        boolean ready=!loading&&!saving&&staged!=null&&baseline!=null&&staged.isFile();
+        panelModel.action(editButton.getText().toString(),"",ready,this::launchEditor);
+        panelModel.action(saveButton.getText().toString(),"",ready&&saveButton.isEnabled()&&
+                (remote==null||(!remote.readOnly&&!CloudProvider.isReadOnly(remote))),this::commitChanges);
+        panelModel.action(L10n.t("호환 편집기 설치 안내"),"",true,this::showEditorInstructions);
+        panelModel.action(L10n.t("닫기"),"",true,this::confirmClose);
+        panelModel.note(workflowNote);
+        if(flutterPanel!=null)flutterPanel.refresh();
     }
 
     private int dp(int p) { return Ui.dp(this, p); }
@@ -128,6 +154,7 @@ public final class OfficeBridgeActivity extends LocalizedActivity {
                 (excelLease == null || !excelLease.readOnly()));
         editButton.setAlpha(editButton.isEnabled() ? 1f : 0.45f);
         saveButton.setAlpha(saveButton.isEnabled() ? 1f : 0.45f);
+        if(flutterPanel!=null)rebuildPanel();
     }
 
     private void showError(String reason) {
@@ -170,6 +197,7 @@ public final class OfficeBridgeActivity extends LocalizedActivity {
                         out.write(bytes, 0, read);
                     }
                 }
+                OfficeSaveIntegrity.requirePayload(staged, MAX_OFFICE_BYTES);
                 baseline = digest(staged);
                 if (excelLease != null && !excelLease.readOnly())
                     excelLease.verifyBeforeSave();
@@ -251,48 +279,28 @@ public final class OfficeBridgeActivity extends LocalizedActivity {
         worker.execute(() -> {
             String error = null;
             boolean changed = false;
+            File payload = null;
             try {
-                byte[] latest = digest(staged);
+                payload = OfficeSaveIntegrity.snapshot(staged, staged.getParentFile(), MAX_OFFICE_BYTES);
+                byte[] latest = OfficeSaveIntegrity.digest(payload);
                 changed = !MessageDigest.isEqual(baseline, latest);
                 if (changed) {
                     if ("remote".equals(kind)) {
                         String relative = RemoteProvider.relativePath(path);
                         String parent = RemoteProvider.parent(relative);
                         if (excelLease != null) excelLease.verifyBeforeSave();
-                        try (InputStream input = new FileInputStream(staged)) {
-                            RemoteProvider.upload(remote, parent, filename, input,
-                                    staged.length(), true,
-                                    excelLease == null ? null : excelLease.originalEtag());
-                        }
+                        RemoteProvider.uploadOffice(remote, parent, filename, payload,
+                                excelLease == null ? null : excelLease.originalEtag());
                         if (excelLease != null) excelLease.saved();
                     } else if ("saf".equals(kind)) {
-                        try (InputStream input = new FileInputStream(staged);
-                             OutputStream output = getContentResolver().openOutputStream(
-                                     Uri.parse(uri), "rwt")) {
-                            if (output == null) throw new IOException("문서 저장 권한이 없습니다.");
-                            copy(input, output);
-                        }
+                        OfficeSafSave.write(getContentResolver(), Uri.parse(uri), payload,
+                                new File(getFilesDir(), "office-recovery"), MAX_OFFICE_BYTES);
                     } else {
-                        File original = new File(path);
-                        File pending = new File(original.getParentFile(),
-                                ".nasmount-office-" + UUID.randomUUID() + ".tmp");
-                        try {
-                            try (InputStream input = new FileInputStream(staged);
-                                 OutputStream output = new FileOutputStream(pending)) {
-                                copy(input, output);
-                            }
-                            try {
-                                Files.move(pending.toPath(), original.toPath(),
-                                        StandardCopyOption.ATOMIC_MOVE,
-                                        StandardCopyOption.REPLACE_EXISTING);
-                            } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
-                                Files.move(pending.toPath(), original.toPath(),
-                                        StandardCopyOption.REPLACE_EXISTING);
-                            }
-                        } finally { if (pending.exists()) pending.delete(); }
+                        OfficeSaveIntegrity.writeLocal(payload, new File(path), MAX_OFFICE_BYTES);
                     }
-                    baseline = digest(staged);
+                    baseline = latest;
                 }
+                if (payload != null) payload.delete();
             } catch (Exception failure) {
                 error = failure.getMessage() == null ? "저장에 실패했습니다." :
                         failure.getMessage();
@@ -356,7 +364,14 @@ public final class OfficeBridgeActivity extends LocalizedActivity {
     }
 
     @Override public void onBackPressed() { confirmClose(); }
+    @Override protected void onResume(){
+        super.onResume();if(flutterPanel!=null)flutterPanel.resume();
+    }
+    @Override protected void onPause(){
+        if(flutterPanel!=null)flutterPanel.pause();super.onPause();
+    }
     @Override protected void onDestroy() {
+        if(flutterPanel!=null){flutterPanel.close();flutterPanel=null;}
         WebDavExcelLease lease = excelLease;
         if (lease != null) worker.execute(lease::release);
         // Complete any pending commit before releasing the remote owner.
