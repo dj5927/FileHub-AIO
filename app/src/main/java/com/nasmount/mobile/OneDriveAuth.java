@@ -3,6 +3,8 @@ package com.nasmount.mobile;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import net.openid.appauth.*;
 import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
@@ -59,19 +61,73 @@ final class OneDriveAuth {
         if(value.optBoolean("refresh"))state.setNeedsTokenRefresh(true);
         return state;
     }
-    static synchronized String token(Models.RemoteProfile p)throws Exception{
-        AuthState state=load(p);
+    // Save encrypted credentials first, verify they can be read, then
+    // publish the profile. Restore the old credential if profile saving fails.
+    static synchronized void commitLink(SecureStore store,Models.RemoteProfile p,AuthState state)throws Exception{
+        String previous=prefs().getString(key(p),null);
+        try{
+            remember(p,state);
+            AuthState verified=load(p);
+            if(!verified.isAuthorized()||verified.getRefreshToken()==null)throw required();
+            store.putRemote(p);
+        }catch(Exception|LinkageError e){
+            SharedPreferences.Editor edit=prefs().edit();
+            if(previous==null)edit.remove(key(p));else edit.putString(key(p),previous);
+            edit.commit();
+            throw e;
+        }
+    }
+    private static final java.util.concurrent.ConcurrentHashMap<String,Object> refreshLocks=new java.util.concurrent.ConcurrentHashMap<>();
+    static String token(Models.RemoteProfile p)throws Exception{
+        // Never block the UI waiting for a file worker's refresh lock.
+        if(Looper.myLooper()==Looper.getMainLooper())throw required();
+        synchronized(refreshLocks.computeIfAbsent(p.id,k->new Object())){
+            return workerToken(p);
+        }
+    }
+    private static String workerToken(Models.RemoteProfile p)throws Exception{
+        final AuthState state;
+        final String snapshot;
+        synchronized(OneDriveAuth.class){
+            state=load(p);snapshot=prefs().getString(key(p),"");
+        }
         if(!state.getNeedsTokenRefresh()&&state.getAccessToken()!=null&&!state.getAccessToken().isEmpty())
             return state.getAccessToken();
+        // AppAuth uses Android browser/custom-tab and AsyncTask APIs.
+        // Create, execute and dispose the service on the main looper; wait
+        // only on the file worker, never on Android's UI thread.
+        if(Looper.myLooper()==Looper.getMainLooper())throw required();
         CountDownLatch latch=new CountDownLatch(1);String[] value={null};
-        AuthorizationService service=new AuthorizationService(app);
+        Handler main=new Handler(Looper.getMainLooper());
+        java.util.concurrent.atomic.AtomicBoolean expired=new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicReference<AuthorizationService> current=new java.util.concurrent.atomic.AtomicReference<>();
+        Runnable dispose=()->{
+            AuthorizationService service=current.getAndSet(null);
+            if(service!=null)try{service.dispose();}catch(RuntimeException ignored){}
+        };
+        main.post(()->{
+            if(expired.get()){latch.countDown();return;}
+            try{
+                AuthorizationService service=new AuthorizationService(app);
+                current.set(service);
+                state.performActionWithFreshTokens(service,(access,id,error)->{
+                    if(!expired.get()&&error==null)value[0]=access;
+                    if(error!=null)OneDriveDiagnostics.mark(app,"OD27_TOKEN_REFRESH",error);
+                    main.post(dispose);latch.countDown();
+                });
+            }catch(RuntimeException|LinkageError e){
+                OneDriveDiagnostics.mark(app,"OD27_TOKEN_REFRESH",e);
+                dispose.run();latch.countDown();
+            }
+        });
         try{
-            state.performActionWithFreshTokens(service,(access,id,error)->{
-                if(error==null)value[0]=access;latch.countDown();
-            });
             if(!latch.await(35,TimeUnit.SECONDS)||value[0]==null||value[0].isEmpty())throw required();
-            remember(p,state);return value[0];
-        }finally{service.dispose();}
+            synchronized(OneDriveAuth.class){
+                if(!snapshot.equals(prefs().getString(key(p),"")))throw required();
+                remember(p,state);
+            }
+            return value[0];
+        }finally{expired.set(true);main.post(dispose);}
     }
     static synchronized void invalidate(Models.RemoteProfile p,String rejected){
         try{

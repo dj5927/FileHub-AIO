@@ -36,10 +36,15 @@ final class OneDriveApi {
     Identity identity()throws Exception{
         JSONObject user=json(new Request.Builder().url(base.newBuilder().addPathSegment("me").addQueryParameter("$select","id,mail,userPrincipalName").build()).get());
         JSONObject drive=json(new Request.Builder().url(drive().addQueryParameter("$select","id").build()).get());
-        String email=user.optString("mail","");if(email.isEmpty()||"null".equals(email))email=user.optString("userPrincipalName","");
-        String uid=user.optString("id",""),did=drive.optString("id","");
-        if(email.isEmpty()||uid.isEmpty()||did.isEmpty())throw new IOException("OneDrive account identity unavailable");
+        String email=nonNullString(user,"mail");
+        if(email.isEmpty())email=nonNullString(user,"userPrincipalName");
+        String uid=nonNullString(user,"id"),did=nonNullString(drive,"id");
+        if(uid.isEmpty()||did.isEmpty())throw new IOException("OneDrive account identity unavailable");
+        if(email.isEmpty())email="OneDrive";
         return new Identity(email,uid,did);
+    }
+    private static String nonNullString(JSONObject o,String key){
+        return o.isNull(key)?"":o.optString(key,"").trim();
     }
     private HttpUrl.Builder drive(){return base.newBuilder().addPathSegment("me").addPathSegment("drive");}
     private HttpUrl.Builder item(String id){return drive().addPathSegment("items").addPathSegment(id);}
@@ -61,10 +66,10 @@ final class OneDriveApi {
         boolean read=req.method().equals("GET");
         for(int i=0;i<(read?2:1);i++){
             String t=tokens.token();Response r=http.newCall(req.newBuilder().header("Authorization","Bearer "+t).build()).execute();
-            if(r.code()==401){r.close();tokens.rejected(t);if(read&&i==0)continue;throw failure(401);}
-            if(!r.isSuccessful()){int c=r.code();r.close();throw failure(c);}return r;
+            if(r.code()==401){r.close();tokens.rejected(t);if(read&&i==0)continue;throw new CloudProvider.CloudFailure("OneDrive",L10n.t("API 요청"),401);}
+            if(!r.isSuccessful()){int c=r.code();r.close();throw new CloudProvider.CloudFailure("OneDrive",L10n.t("API 요청"),c);}return r;
         }
-        throw failure(401);
+        throw new CloudProvider.CloudFailure("OneDrive",L10n.t("API 요청"),401);
     }
     private static JSONObject parse(Response r)throws Exception{
         if(r.body()==null)throw new IOException("OneDrive response missing");

@@ -91,6 +91,8 @@ final class StartupCrashNote {
                 if(count==0)report.append("No crash/ANR/initialization exit in recent history.\n");
             }catch(Exception|LinkageError ignored){report.append("Android exit history unavailable.\n");}
         }else report.append("Android exit history requires API 30+.\n");
+        String drive=OneDriveDiagnostics.report(context);
+        if(!drive.isEmpty())report.append("\nOneDrive connection stages:\n").append(drive);
         return report.toString();
     }
 }

@@ -15,3 +15,16 @@ Both editions use the system browser and Microsoft identity platform OAuth autho
 ## Implemented / limitations
 My Files root browsing, paginated folder lists, ordinary files, ranged download, folders, rename/move within the drive, recycle-bin deletion, upload with verified response and upload-session chunks, and overwrite revision checks. Signed download and upload URLs receive no Graph bearer token. OAuth state is encrypted with Android Keystore, outside portable backups. Shortcuts, OneNote packages, shared drive browsing and persistent interrupted-upload resume are not implemented. Work/school accounts depend on tenant policy. Real Microsoft sign-in and cloud operations require the publisher registration and physical device validation. The Graph tests use synthetic loopback responses only.
 Official cloud artwork: flutter_ui/assets/cloud/NOTICE.md. The trademarks remain owned by the respective providers; brand-use requirements should be checked before public release.
+
+
+## v0.1.151 / Play v1.0.34 connection reliability
+After browser authorization the app explicitly validates the token, stable Graph
+user/drive identity, encrypted credential readback and persisted profile visibility.
+Retrying the same identity reuses the original profile. A failed save restores
+prior encrypted state. An external-browser success refreshes the remote list
+independently of the old Flutter editor. Token refresh runs on the main looper
+with bounded worker wait; no global authentication monitor is held during the wait.
+The settings page now shows sanitized recent runtime errors in both editions.
+OneDrive stage codes OD01–OD30 contain only stage, exception class and numeric status,
+not OAuth tokens, emails, response bodies or URLs. Actual device crash trace and
+live Microsoft login have not been reproduced on the build host.

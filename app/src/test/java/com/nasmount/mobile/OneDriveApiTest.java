@@ -97,6 +97,36 @@ public class OneDriveApiTest {
         assertTrue(OneDriveAuth.SCOPES.contains("https://graph.microsoft.com/User.Read"));
         assertTrue(OneDriveAuth.SCOPES.contains("offline_access"));
     }
+    @Test public void identityAcceptsConsumerWithoutMailButRequiresStableIds()throws Exception{
+        try(MockWebServer server=new MockWebServer()){
+            server.start();reply(server,new JSONObject().put("id","user").put("mail",JSONObject.NULL).put("userPrincipalName",JSONObject.NULL));
+            reply(server,new JSONObject().put("id","drive"));
+            OneDriveApi.Identity result=api(server).identity();
+            assertEquals("OneDrive",result.email);
+            assertEquals("user",result.userId);assertEquals("drive",result.driveId);
+            req(server,true);req(server,true);
+            reply(server,new JSONObject().put("id",JSONObject.NULL));reply(server,new JSONObject().put("id","drive"));
+            assertThrows(IOException.class,()->api(server).identity());
+        }
+    }
+    @Test public void retryUsesExistingConnectionIdentity()throws Exception{
+        Models.RemoteProfile existing=new Models.RemoteProfile();existing.protocol="OneDrive";existing.host="graph.microsoft.com";
+        existing.username="test";existing.fingerprint=OneDriveAuth.marker("user","drive");
+        String marker=existing.fingerprint;
+        java.util.List<Models.RemoteProfile> profiles=java.util.Collections.singletonList(existing);
+        assertSame(existing,OneDriveLinkPolicy.choose(profiles,null,marker));
+        assertSame(existing,OneDriveLinkPolicy.choose(profiles,existing.id,marker));
+        assertTrue(OneDriveLinkPolicy.visible(profiles,existing.id,marker));
+        assertNotEquals(existing.id,OneDriveLinkPolicy.choose(profiles,null,OneDriveAuth.marker("other","drive")).id);
+        assertThrows(IOException.class,()->OneDriveLinkPolicy.choose(profiles,existing.id,"onedrive:other:drive"));
+        assertFalse(OneDriveLinkPolicy.visible(profiles,existing.id,"onedrive:other:drive"));
+    }
+    @Test public void diagnosticsNeverIncludeExceptionMessages(){
+        String code=OneDriveDiagnostics.code("OD22_SAVE",new IOException("private@email.test token=secret"));
+        assertEquals("OD22_SAVE IOException",code);
+        assertEquals("OD99_UNKNOWN",OneDriveDiagnostics.code("private@email.test",null));
+        assertFalse(code.contains("secret"));
+    }
     @Test public void linkedProfilesRejectLegacyPasswords(){
         Models.RemoteProfile p=new Models.RemoteProfile();p.protocol="OneDrive";p.host="graph.microsoft.com";p.username="test@example.test";
         assertFalse(OneDriveAuth.linked(p));p.fingerprint=OneDriveAuth.marker("user","drive");assertTrue(OneDriveAuth.linked(p));

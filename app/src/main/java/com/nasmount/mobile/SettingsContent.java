@@ -200,7 +200,7 @@ final class SettingsContent extends android.content.ContextWrapper {
         if(selectedTab==3){renderTextDefaults();return;}
         if(selectedTab==0){
         EditionMonetization.settings(this);
-        if(!BuildConfig.DIRECT_EDITION){
+        {
             action(L10n.t("최근 실행 오류 기록"),L10n.t("Android 종료 기록 및 앱 오류 정보"),()->{
                 String crash=StartupCrashNote.report(this);
                 new AlertDialog.Builder(activity).setTitle(L10n.t("최근 실행 오류 기록"))

@@ -7524,7 +7524,27 @@ public class MainActivity extends LocalizedActivity {
     @android.annotation.SuppressLint("WrongConstant")
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if(requestCode==GoogleDriveConnectActivity.REQUEST||requestCode==OneDriveConnectActivity.REQUEST){
+        if(requestCode==OneDriveConnectActivity.REQUEST){
+            if(embeddedRemoteEditor!=null){
+                try{embeddedRemoteEditor.googleActivityResult(requestCode,resultCode);}
+                catch(RuntimeException e){OneDriveDiagnostics.mark(this,"OD28_EDITOR_RESULT",e);}
+            }
+            if(resultCode==RESULT_OK){
+                // The original overlay may have been detached while the browser
+                // was in the foreground. Never depend on its close callback.
+                try{
+                    if(embeddedRemoteEditor!=null)closeEmbeddedEditor(true);
+                    folderCache.clearCounts();showRemoteList();
+                    OneDriveDiagnostics.mark(this,"OD29_LIST_REFRESH",null);
+                    toast(L10n.t("연결 설정을 저장했습니다."));
+                }catch(RuntimeException e){
+                    OneDriveDiagnostics.mark(this,"OD30_LIST_REFRESH_FAILED",e);
+                    toast(L10n.t("OneDrive 연결을 다시 확인해 주세요."));
+                }
+            }
+            return;
+        }
+        if(requestCode==GoogleDriveConnectActivity.REQUEST){
             if(embeddedRemoteEditor!=null&&embeddedRemoteEditor.googleActivityResult(requestCode,resultCode))return;
             if(resultCode==RESULT_OK){folderCache.clearCounts();showRemoteList();}
             return;

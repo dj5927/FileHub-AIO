@@ -153,7 +153,10 @@ final class FlutterRemoteEditor {
         if(request!=(microsoftPending?OneDriveConnectActivity.REQUEST:GoogleDriveConnectActivity.REQUEST)||googleResult==null)return false;
         MethodChannel.Result result=googleResult;googleResult=null;busy=false;
         if(alive()){
-            if(code==Activity.RESULT_OK){result.success(null);finish("saved");}
+            if(code==Activity.RESULT_OK){
+                if(microsoftPending&&completion!=null){finish("saved");result.success(null);}
+                else{result.success(null);finish("saved");}
+            }
             else result.error(microsoftPending?"oneDriveCanceled":"googleCanceled",null,null);
         }
         return true;
