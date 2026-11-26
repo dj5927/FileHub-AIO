@@ -205,8 +205,8 @@ android {
             dimension 'distribution'
             applicationId 'com.nasmount.mobile'
             targetSdk 35
-            versionCode 144
-            versionName '0.1.143'
+            versionCode 145
+            versionName '0.1.144'
             buildConfigField 'boolean', 'DIRECT_EDITION', 'true'
             buildConfigField 'String', 'DIRECT_OTA_KEY', groovy.json.JsonOutput.toJson(directOtaKey)
             buildConfigField 'boolean', 'R8_TRIAL', 'false'

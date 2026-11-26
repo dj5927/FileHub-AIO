@@ -114,50 +114,58 @@ class DrawerNavigation extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Column(children:[
-    Expanded(child:ListView(padding:EdgeInsets.zero,children:[
-      ListTile(key:const ValueKey('drawer-home'),dense:true,minTileHeight:40,
-        visualDensity:VisualDensity.compact,leading:const Icon(Icons.home_outlined,size:20),
-        title:Text(data.t('home'),style:const TextStyle(fontSize:13)),
-        trailing:IconButton(key:const ValueKey('drawer-close'),
-          tooltip:data.t('close'),icon:const Icon(Icons.close),
-          onPressed:busy?null:()=>action('close')),
+    Expanded(child:CustomScrollView(key:const ValueKey("drawer-scroll"),slivers:[
+      SliverList.list(children:[
+      ListTile(key:const ValueKey('drawer-home'),minTileHeight:50,
+        contentPadding:const EdgeInsets.symmetric(horizontal:18),
+        leading:const Icon(Icons.home_outlined,size:24),
+        title:Text(data.t('home'),style:const TextStyle(fontSize:15,fontWeight:FontWeight.w600)),
         onTap:busy?null:()=>action('home')),
       const Divider(height:1),
       _section('favorites',Icons.star_border,'toggleFavorites',data.favoritesExpanded),
+      ]),
       if (data.favoritesExpanded) ...[
         if (data.favoriteError)
-          Padding(padding:const EdgeInsets.all(16),child:Text(data.t('favoriteError')))
+          SliverToBoxAdapter(child:Padding(padding:const EdgeInsets.all(16),child:Text(data.t('favoriteError'))))
         else if (data.favorites.isEmpty)
-          Padding(padding:const EdgeInsets.all(16),child:Text(data.t('favoriteEmpty')))
+          SliverToBoxAdapter(child:Padding(padding:const EdgeInsets.all(16),child:Text(data.t('favoriteEmpty'))))
         else
-          ReorderableListView.builder(
+          SliverReorderableList(
             key:const ValueKey('drawer-favorite-order'),
-            shrinkWrap:true,physics:const NeverScrollableScrollPhysics(),
-            buildDefaultDragHandles:false,itemCount:data.favorites.length,
+            itemCount:data.favorites.length,
             onReorderItem:(oldIndex,newIndex) {
-              if (busy) return;
+              if (busy||oldIndex==newIndex) return;
               final ids=data.favorites.map((f)=>f.id).toList();
               ids.insert(newIndex,ids.removeAt(oldIndex));
               reorder(ids);
             },
             itemBuilder:(context,index) {
               final f=data.favorites[index];
-              return ListTile(
-                key:ValueKey('drawer-favorite-${f.id}'),
-                dense:true,minTileHeight:44,visualDensity:VisualDensity.compact,
-                contentPadding:const EdgeInsets.only(left:20,right:4),
-                leading:ReorderableDelayedDragStartListener(index:index,enabled:!busy,
-                  child:Tooltip(message:data.t('reorder'),child:const Icon(Icons.drag_handle))),
-                title:Text(f.label,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:13)),
-                subtitle:f.original.isEmpty?null:Text(f.original,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:11)),
-                trailing:IconButton(icon:const Icon(Icons.more_vert),tooltip:data.t('manage'),
-                  onPressed:busy?null:()=>action('favoriteManage',f.id)),
-                onTap:busy?null:()=>action('favorite',f.id),
-              );
+              return Material(key:ValueKey('drawer-favorite-${f.id}'),
+                color:Theme.of(context).colorScheme.surface,
+                child:Row(children:[
+                  ReorderableDragStartListener(index:index,enabled:!busy,
+                    child:Tooltip(message:data.t('reorder'),child:SizedBox(
+                      key:ValueKey('drawer-drag-${f.id}'),width:54,height:48,
+                      child:const Icon(Icons.drag_handle,size:22)))),
+                  Expanded(child:ReorderableDelayedDragStartListener(index:index,enabled:!busy,
+                    child:InkWell(onTap:busy?null:()=>action('favorite',f.id),
+                      child:ConstrainedBox(constraints:const BoxConstraints(minHeight:48),
+                        child:Padding(padding:const EdgeInsets.symmetric(vertical:8),
+                          child:Column(mainAxisAlignment:MainAxisAlignment.center,
+                            crossAxisAlignment:CrossAxisAlignment.start,children:[
+                              Text(f.label,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:14)),
+                              if(f.original.isNotEmpty)Text(f.original,maxLines:1,overflow:TextOverflow.ellipsis,
+                                style:TextStyle(fontSize:11,color:Theme.of(context).colorScheme.onSurfaceVariant)),
+                            ])))))),
+                  IconButton(icon:const Icon(Icons.more_vert),tooltip:data.t('manage'),
+                    onPressed:busy?null:()=>action('favoriteManage',f.id)),
+                ]));
             }),
-        Padding(padding:const EdgeInsets.only(left:20),
-          child:_link('favorites',Icons.list_alt_outlined,label:data.t('favorites'))),
+        SliverToBoxAdapter(child:Padding(padding:const EdgeInsets.only(left:20),
+          child:_link('favorites',Icons.list_alt_outlined,label:data.t('favorites')))),
       ],
+      SliverList.list(children:[
       const Divider(height:1),
       _section('network',Icons.dns_outlined,'toggleNetwork',data.networkExpanded),
       if (data.networkExpanded) ...[
@@ -174,6 +182,7 @@ class DrawerNavigation extends StatelessWidget {
         Padding(padding:const EdgeInsets.only(left:20),
           child:_link('connections',Icons.add_circle_outline,label:data.t('networkManage'))),
       ],
+      ]),
     ])),
     if(!data.direct&&!data.full)
       ListTile(key:const ValueKey('drawer-upgrade'),dense:true,minTileHeight:48,

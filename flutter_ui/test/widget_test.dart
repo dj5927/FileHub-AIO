@@ -119,10 +119,16 @@ void main() {
     final drawerSnapshot=await drawer.snapshot();
     final messenger=TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     final actions=<String>[];
+    final orders=<List<String>>[];
     messenger.setMockMethodCallHandler(AndroidHost.channel,(call)async{
       if(call.method=='snapshot')return snapshot;
       if(call.method=='drawerAction'){
         actions.add(call.arguments['name'] as String);
+      }
+      if(call.method=='drawerReorder'){
+        expect(call.arguments['epoch'],7);
+        final ids=List<String>.from(call.arguments['order']);
+        orders.add(ids);drawer.favoriteIds=ids;
       }
       return null;
     });
@@ -136,14 +142,32 @@ void main() {
     }
     await send('drawerOpen',drawerSnapshot);
     expect(find.byKey(const ValueKey('drawer-native')),findsNothing);
-    expect(find.byKey(const ValueKey('drawer-close')),findsOneWidget);
+    expect(find.byKey(const ValueKey('drawer-close')),findsNothing);
+    expect(find.byKey(const ValueKey('drawer-scroll')),findsOneWidget);
     expect(find.byKey(const ValueKey('home-storage')),findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('drawer-close')));
+    final homeRow=find.byKey(const ValueKey('drawer-home'));
+    expect(tester.getSize(homeRow).height,greaterThanOrEqualTo(50));
+    final start=tester.getCenter(find.text('f1'));
+    final end=tester.getCenter(find.text('f2'));
+    final g=await tester.startGesture(start);
+    await tester.pump(const Duration(milliseconds:650));
+    for(var i=0;i<8;i++){
+      await g.moveBy(Offset(0,(end.dy-start.dy+25)/8));
+      await tester.pump(const Duration(milliseconds:40));
+    }
+    await g.up();await tester.pumpAndSettle();
+    expect(orders,[['f2','f1']]);
+    await send('drawerOpen',await drawer.snapshot());
+    expect(tester.getTopLeft(find.text('f2')).dy,lessThan(tester.getTopLeft(find.text('f1')).dy));
+    await tester.tapAt(Offset(tester.view.physicalSize.width/tester.view.devicePixelRatio-5,200));
     await tester.pumpAndSettle();
     expect(actions,['close']);
     await send('drawerClose',null);
-    expect(find.byKey(const ValueKey('drawer-close')),findsNothing);
+    expect(find.byKey(const ValueKey('drawer-scroll')),findsNothing);
     expect(find.byKey(const ValueKey('home-storage')),findsOneWidget);
+    await send('drawerOpen',await drawer.snapshot());
+    expect(tester.getTopLeft(find.text('f2')).dy,lessThan(tester.getTopLeft(find.text('f1')).dy));
+    await send('drawerClose',null);
     await send('drawerOpen',Map<Object?,Object?>.from(drawerSnapshot)..['surfaceEpoch']=6);
     expect(find.byKey(const ValueKey('drawer-close')),findsNothing);
   });
@@ -187,10 +211,31 @@ void main() {
     await tester.pumpAndSettle();
     expect(host.lastAction,'favorite');
     expect(host.lastId,'f1');
-    final order=tester.widget<ReorderableListView>(find.byKey(const ValueKey('drawer-favorite-order')));
-    order.onReorderItem!(0,1);
+    final first=find.text('f1');
+    final second=find.text('f2');
+    final distance=tester.getCenter(second).dy-tester.getCenter(first).dy;
+    final gesture=await tester.startGesture(tester.getCenter(first));
+    await tester.pump(const Duration(milliseconds:650));
+    for(var step=0;step<8;step++){
+      await gesture.moveBy(Offset(0,(distance+25)/8));
+      await tester.pump(const Duration(milliseconds:40));
+    }
+    await tester.pump(const Duration(milliseconds:400));
+    await gesture.up();
     await tester.pumpAndSettle();
     expect(host.favoriteIds,['f2','f1']);
+    expect(tester.getTopLeft(find.text('f2')).dy,lessThan(tester.getTopLeft(find.text('f1')).dy));
+    final handle=find.byKey(const ValueKey('drawer-drag-f1'));
+    final travel=tester.getCenter(handle).dy-tester.getCenter(find.byKey(const ValueKey('drawer-drag-f2'))).dy;
+    final drag=await tester.startGesture(tester.getCenter(handle));
+    await tester.pump(const Duration(milliseconds:100));
+    for(var step=0;step<8;step++){
+      await drag.moveBy(Offset(0,-(travel+25)/8));
+      await tester.pump(const Duration(milliseconds:40));
+    }
+    await tester.pump(const Duration(milliseconds:400));
+    await drag.up();await tester.pumpAndSettle();
+    expect(host.favoriteIds,['f1','f2']);
     final network=find.byKey(const ValueKey('drawer-toggleNetwork'));
     await tester.ensureVisible(network);
     await tester.tap(network);
