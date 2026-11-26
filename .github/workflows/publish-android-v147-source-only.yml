@@ -1,0 +1,41 @@
+name: Publish Android v0.1.147 source only
+on:
+  push:
+    branches: [maintenance/android-ota-retire-public]
+    paths: ['.github/workflows/publish-android-v147-source-only.yml']
+permissions:
+  contents: write
+jobs:
+  source:
+    if: github.repository == 'dj5927/FileHub-AIO'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: android/flutter-migration
+          fetch-depth: 1
+      - name: Verify and fast-forward exact source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "FileHub source publisher"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config core.autocrlf false
+          test "$(git rev-parse HEAD)" = '90a49c4bf27ffac4db70846b02df0ded9bb58b88'
+          archive="$RUNNER_TEMP/filehub-source.zip"
+          staging="$RUNNER_TEMP/filehub-source"
+          curl --fail --location --retry 3 --connect-timeout 15 --user-agent 'FileHub-AIO-Android-OTA' 'https://bangtanrun.com/filehub/FileHub-AIO-Direct-v0.1.147-source.zip' --output "$archive"
+          echo '95ecdf5f855c5040b5650b2bc4541ea14e136d390413433e1fdce70936739daa  '"$archive" | sha256sum -c -
+          mkdir "$staging"
+          unzip -q "$archive" -d "$staging"
+          test -z "$(find "$staging" -type f \( -iname '*.apk' -o -iname '*.aab' -o -iname '*.jks' -o -iname '*.p12' -o -iname '*.keystore' -o -name 'access.key' \) -print)"
+          test ! -d "$staging/.github/release-handoffs"
+          test ! -d "$staging/release-assets"
+          rsync -a --delete --exclude='/.git/' "$staging/" ./
+          git add -A
+          git diff --cached --exit-code -- .github/workflows
+          tree="$(git write-tree)"
+          test "$tree" = '54fe1329fd21d5fefaf65b946ce09c042dd71803'
+          git commit -m 'Add Google Drive account authorization and provider; Direct 0.1.147 / Play 1.0.30'
+          git push origin HEAD:refs/heads/android/flutter-migration
+          echo "Source tree $tree published; no APK, AAB or tags created."
