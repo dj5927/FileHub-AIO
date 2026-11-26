@@ -465,7 +465,7 @@ class _FileHubUiState extends State<FileHubUi> with WidgetsBindingObserver {
               child:GestureDetector(key:const ValueKey('drawer-dismiss'),onTap:()=>_drawerAction('close'),behavior:HitTestBehavior.opaque,
                 child:const ColoredBox(color:Color(0x88000000)))))),
           Positioned(left:0,top:0,bottom:0,child:IgnorePointer(ignoring:drawer==null,
-            child:SizedBox(width:(MediaQuery.sizeOf(context).width*.92).clamp(0.0,360.0),
+            child:SizedBox(key:const ValueKey("drawer-panel"),width:(MediaQuery.sizeOf(context).width*.736).clamp(0.0,288.0),
               child:AnimatedSwitcher(duration:const Duration(milliseconds:260),
                 reverseDuration:const Duration(milliseconds:220),
                 switchInCurve:Curves.easeOutCubic,switchOutCurve:Curves.easeInCubic,

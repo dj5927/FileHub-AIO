@@ -46,8 +46,8 @@ class HomeNavigation extends StatelessWidget {
                 textAlign:TextAlign.center,style:const TextStyle(fontSize:13,fontWeight:FontWeight.w600)),
               if (subtitle.isNotEmpty) ...[
                 const SizedBox(height:4),
-                Text(subtitle,maxLines:2,overflow:TextOverflow.ellipsis,textAlign:TextAlign.center,
-                  style:const TextStyle(fontSize:10)),
+                Flexible(child:Text(subtitle,maxLines:2,overflow:TextOverflow.ellipsis,textAlign:TextAlign.center,
+                  style:const TextStyle(fontSize:10))),
               ],
             ]),
           ),

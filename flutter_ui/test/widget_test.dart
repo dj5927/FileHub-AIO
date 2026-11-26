@@ -113,6 +113,10 @@ void main() {
     expect(favorites.lastId,'f2');
   });
   testWidgets('drawer overlay keeps the underlying home on the same host',(tester)async{
+    tester.view.physicalSize=const Size(360,760);
+    tester.view.devicePixelRatio=1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final home=FakeHost('home',full:true)..embedded=true;
     final drawer=FakeHost('drawer',full:true)..embedded=true;
     final snapshot=await home.snapshot();
@@ -144,6 +148,7 @@ void main() {
     expect(find.byKey(const ValueKey('drawer-native')),findsNothing);
     expect(find.byKey(const ValueKey('drawer-close')),findsNothing);
     expect(find.byKey(const ValueKey('drawer-scroll')),findsOneWidget);
+    expect(tester.getSize(find.byKey(const ValueKey('drawer-panel'))).width,closeTo(360*.92*.8,0.1));
     expect(find.byKey(const ValueKey('home-storage')),findsOneWidget);
     final homeRow=find.byKey(const ValueKey('drawer-home'));
     expect(tester.getSize(homeRow).height,greaterThanOrEqualTo(50));

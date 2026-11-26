@@ -25,8 +25,7 @@ final class FoldPlayerLayoutPolicy {
     }
 
     static int drawerWidthDp(boolean expanded, int widthDp) {
-        return expanded ? Math.min(360, widthDp - 40) :
-                Math.round(widthDp * 0.82f);
+        return Math.min(288, Math.round(widthDp * 0.736f));
     }
 
     static int homeTileDp(boolean expanded) {

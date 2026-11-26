@@ -22,8 +22,9 @@ public final class FoldPlayerLayoutPolicyTest {
     @Test public void contentAndDrawerNeverGrowAcrossWholeTablet() {
         assertEquals(1080, FoldPlayerLayoutPolicy.contentWidthDp(true, 1440));
         assertEquals(712, FoldPlayerLayoutPolicy.contentWidthDp(true, 760));
-        assertEquals(360, FoldPlayerLayoutPolicy.drawerWidthDp(true, 760));
-        assertEquals(312, FoldPlayerLayoutPolicy.drawerWidthDp(false, 380));
+        assertEquals(288, FoldPlayerLayoutPolicy.drawerWidthDp(true, 760));
+        assertEquals(280, FoldPlayerLayoutPolicy.drawerWidthDp(false, 380));
+        assertEquals(265, FoldPlayerLayoutPolicy.drawerWidthDp(false, 360));
     }
 
     @Test public void expandedModeUsesBiggerButBoundedControls() {
