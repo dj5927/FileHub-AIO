@@ -129,10 +129,12 @@ public final class TextEditorActivity extends LocalizedActivity {
         editor.setTypeface(Typeface.MONOSPACE);
         editor.setGravity(Gravity.TOP | Gravity.START);
         editor.setPadding(dp(14), dp(14), dp(14), dp(20));
+        // Keep IME composition/candidate support for multilingual text.
+        // Do not request automatic corrections or personalized learning.
         editor.setInputType(android.text.InputType.TYPE_CLASS_TEXT |
-                android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE |
-                android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        editor.setImeOptions(EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+                android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        editor.setImeOptions(EditorInfo.IME_FLAG_NO_EXTRACT_UI |
+                EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
         editor.setHorizontallyScrolling(false);
         editor.setEnabled(false);
         column.addView(editor, new LinearLayout.LayoutParams(-1, 0, 1));

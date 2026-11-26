@@ -160,7 +160,12 @@ class _FilePromptPanelState extends State<FilePromptPanel>{
         if(editing)...[
           const SizedBox(height:16),
           TextField(key:const ValueKey('file-prompt-input'),controller:value,enabled:!busy,
-            maxLines:1,autocorrect:false,enableSuggestions:false,onChanged:(_)=>setState((){}),
+            // Android IMEs may disable Korean/Chinese when suggestions are forbidden.
+             // Keep composition and language switching while preventing auto-correction.
+             maxLines:1,keyboardType:TextInputType.text,
+             autocorrect:false,enableSuggestions:true,enableIMEPersonalizedLearning:false,
+             smartDashesType:SmartDashesType.disabled,smartQuotesType:SmartQuotesType.disabled,
+             onChanged:(_)=>setState((){}),
             onSubmitted:(_)=>submit(),decoration:InputDecoration(labelText:t('rename'),border:const OutlineInputBorder())),
         ],
         if(failed)Padding(padding:const EdgeInsets.only(top:8),child:Text(t('error'),

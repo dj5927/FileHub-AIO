@@ -123,7 +123,12 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   Widget field(String key,TextEditingController controller,{String? hint,String? label,
       bool password=false,bool numeric=false,bool endpoint=false}){
     final input=TextField(key:ValueKey('editor-$key'),controller:controller,
-      enabled:!busy&&!(anonymous&&(key=='username'||key=='secret')),obscureText:password,autocorrect:false,enableSuggestions:false,
+      enabled:!busy&&!(anonymous&&(key=='username'||key=='secret')),
+       obscureText:password,autocorrect:false,
+       // Ordinary text must not request the password/no-suggestions IME layout.
+       // Password/PAT/session fields stay masked and suggestion-free.
+       enableSuggestions:!password&&!numeric,enableIMEPersonalizedLearning:false,
+       smartDashesType:SmartDashesType.disabled,smartQuotesType:SmartQuotesType.disabled,
       style:TextStyle(fontSize:widget.compact?14:16),
       keyboardType:password?TextInputType.visiblePassword:numeric?TextInputType.number:TextInputType.text,
       inputFormatters:numeric?[FilteringTextInputFormatter.digitsOnly]:null,

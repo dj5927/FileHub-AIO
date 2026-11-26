@@ -84,4 +84,39 @@ void main(){
     expect(host.values,['$revision:new.xlsx']);
     expect(tester.widget<FilledButton>(confirm).onPressed,isNull);
   });
+  testWidgets('rename permits Korean IME composition and preserves mixed-language filename',(tester)async{
+    final host=PromptHost();
+    await tester.pumpWidget(wrap(FilePromptPanel(data:{'nonce':revision,'title':'Rename',
+      'message':'','initial':'old.xlsx','positive':'Apply','cancel':true},
+      labels:labels,host:host,action:(_,[_])async{})));
+    final input=find.byKey(const ValueKey('file-prompt-input'));
+    final field=tester.widget<TextField>(input);
+    expect(field.keyboardType,TextInputType.text);
+    expect(field.enableSuggestions,isTrue);
+    expect(field.autocorrect,isFalse);
+    expect(field.enableIMEPersonalizedLearning,isFalse);
+    expect(field.smartDashesType,SmartDashesType.disabled);
+    expect(field.smartQuotesType,SmartQuotesType.disabled);
+    await tester.showKeyboard(input);
+    final config=tester.testTextInput.setClientArgs!;
+    expect(config['enableSuggestions'],isTrue);
+    expect(config['autocorrect'],isFalse);
+    expect((config['inputType'] as Map)['name'],'TextInputType.text');
+    for(final syllable in ['ㅎ','하','한']){
+      tester.testTextInput.updateEditingValue(TextEditingValue(text:syllable,
+        selection:TextSelection.collapsed(offset:syllable.length),
+        composing:TextRange(start:0,end:syllable.length)));
+      await tester.pump();
+      expect(field.controller!.value.composing,TextRange(start:0,end:syllable.length));
+      expect(field.controller!.text,syllable);
+    }
+    const filename='한글-File_2026.xlsx';
+    tester.testTextInput.updateEditingValue(TextEditingValue(text:filename,
+      selection:TextSelection.collapsed(offset:filename.length)));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('file-prompt-confirm')));
+    await tester.pump();
+    expect(host.values,['$revision:$filename']);
+  });
+
 }

@@ -163,4 +163,53 @@ void main(){
     expect(find.text('Invalid host'),findsOneWidget);expect(host.saved,isNull);
     expect(tester.widget<TextField>(key('host')).controller!.text,'bad');
   });
+  testWidgets('server text fields permit multilingual IME and preserve credentials policy',(tester)async{
+    final host=FakeEditor();await mount(tester,host,data(editing:true));
+    final name=find.byKey(const ValueKey('editor-name'));
+    final input=tester.widget<TextField>(name);
+    expect(input.enableSuggestions,isTrue);
+    expect(input.keyboardType,TextInputType.text);
+    expect(input.autocorrect,isFalse);
+    expect(input.enableIMEPersonalizedLearning,isFalse);
+    await tester.showKeyboard(name);
+    expect(tester.testTextInput.setClientArgs!['enableSuggestions'],isTrue);
+    for(final text in ['ㅅ','서','서ㅂ','서버']){
+      tester.testTextInput.updateEditingValue(TextEditingValue(text:text,
+        selection:TextSelection.collapsed(offset:text.length),
+        composing:TextRange(start:0,end:text.length)));
+      await tester.pump();
+      expect(input.controller!.value.composing,TextRange(start:0,end:text.length));
+      expect(input.controller!.text,text);
+    }
+    const label='서버 NAS-01';
+    tester.testTextInput.updateEditingValue(TextEditingValue(text:label,
+      selection:TextSelection.collapsed(offset:label.length)));
+    await tester.pump();
+    for(final k in ['host','username','root']){
+      final f=key(k);
+      await see(tester,f);
+      final field=tester.widget<TextField>(f);
+      expect(field.enableSuggestions,isTrue,reason:k);
+      expect(field.autocorrect,isFalse,reason:k);
+      expect(field.keyboardType,TextInputType.text,reason:k);
+    }
+    await see(tester,key('port'));
+    final port=tester.widget<TextField>(key('port'));
+    expect(port.enableSuggestions,isFalse);
+    expect(port.keyboardType,TextInputType.number);
+    await see(tester,key('host'));
+    await tester.enterText(key('host'),'other.example.test');
+    await tester.pumpAndSettle();
+    await see(tester,key('secret'));
+    final secret=tester.widget<TextField>(key('secret'));
+    expect(secret.obscureText,isTrue);
+    expect(secret.enableSuggestions,isFalse);
+    expect(secret.enableIMEPersonalizedLearning,isFalse);
+    await tester.enterText(key('secret'),'test-only-password');
+    await see(tester,key('save'));
+    await tester.tap(key('save'));await tester.pumpAndSettle();
+    expect(host.saved!['name'],label);
+    expect(host.saved!['secret'],'test-only-password');
+  });
+
 }
