@@ -11,8 +11,22 @@ public class OneDriveCallbackPolicyTest {
         assertEquals("a+b/c",r.code);assertEquals("state",r.state);assertFalse(r.denied);
         assertEquals("code",OneDriveCallbackPolicy.parse(PLAY+"?state=s&code=code",PLAY).code);
     }
+    @Test public void microsoftHostOnlyRedirectMayGainTrailingSlashAndEmptyFragment()throws Exception{
+        for(String base:new String[]{DIRECT,PLAY}){
+            for(String suffix:new String[]{"","/"}){
+                for(String fragment:new String[]{"","#"}){
+                    OneDriveCallbackPolicy.Result r=OneDriveCallbackPolicy.parse(base+suffix+"?state=state&code=a%2Bb"+fragment,base);
+                    assertEquals("a+b",r.code);assertEquals("state",r.state);
+                    assertTrue(OneDriveCallbackPolicy.parse(base+suffix+"?error=access_denied&state=state"+fragment,base).denied);
+                }
+            }
+            assertFalse(OneDriveCallbackPolicy.matchesEndpoint(new java.net.URI(base+"/other?state=s"),new java.net.URI(base)));
+            assertFalse(OneDriveCallbackPolicy.matchesEndpoint(new java.net.URI(base+":123/?state=s"),new java.net.URI(base)));
+            assertFalse(OneDriveCallbackPolicy.matchesEndpoint(new java.net.URI(base.replace("://","://user@")+"/?state=s"),new java.net.URI(base)));
+        }
+    }
     @Test public void rejectsForeignSchemePathFragmentAndDuplicateParameters(){
-        String[] invalid={PLAY+"?state=s&code=c",DIRECT+"/?state=s&code=c",
+        String[] invalid={PLAY+"?state=s&code=c",DIRECT+"/other?state=s&code=c",DIRECT+"//?state=s&code=c",
             DIRECT+"?state=s&code=c#fragment",DIRECT+"?state=s&state=t&code=c",
             DIRECT+"?state=s&code=c&code=d",DIRECT+"?code=c",DIRECT+"?state=s",
             DIRECT+"?state=s&code=c&error=access_denied",DIRECT+"?state=s&code="};

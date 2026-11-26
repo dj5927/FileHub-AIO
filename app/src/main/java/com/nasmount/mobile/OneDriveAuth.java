@@ -26,8 +26,12 @@ final class OneDriveAuth {
     static Uri redirect(Context c){return Uri.parse(redirectForPackage(c.getPackageName()));}
     static AuthorizationRequest request(Context c,String hint){
         AuthorizationRequest.Builder b=new AuthorizationRequest.Builder(config(),BuildConfig.ONEDRIVE_CLIENT_ID,
-            ResponseTypeValues.CODE,redirect(c)).setScope(SCOPES);
-        if(hint==null||hint.isEmpty())b.setPrompt("select_account");else b.setLoginHint(hint);
+            ResponseTypeValues.CODE,redirect(c)).setScope(SCOPES).setResponseMode("query");
+        // This method is called only for explicit add/reconnect, not routine
+        // token refresh. Request the official consent screen even if a prior
+        // attempt granted access but never created a FileHub profile.
+        b.setPrompt("consent");
+        if(hint!=null&&!hint.isEmpty())b.setLoginHint(hint);
         return b.build(); // AppAuth generates cryptographically random state and S256 PKCE.
     }
     private static final okhttp3.OkHttpClient TOKEN_HTTP=new okhttp3.OkHttpClient.Builder()

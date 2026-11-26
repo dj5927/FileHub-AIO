@@ -1187,3 +1187,5 @@ OneDrive 인증을 확인하는 중...	Verifying OneDrive authorization...	OneDr
 OneDrive 저장소를 확인하는 중...	Checking OneDrive storage...	OneDriveストレージを確認中...	正在检查 OneDrive 存储...
 OneDrive 연결을 다시 확인해 주세요.	Check the OneDrive connection again.	OneDrive接続を再確認してください。	请重新检查 OneDrive 连接。
 브라우저에서 OneDrive 인증을 완료해 주세요.	Complete OneDrive authorization in your browser.	ブラウザーでOneDrive認証を完了してください。	请在浏览器中完成 OneDrive 授权。
+OneDrive 인증 결과를 받지 못했습니다. 브라우저 인증을 다시 시도해 주세요.	OneDrive authorization did not return. Try signing in again in your browser.	OneDrive認証結果を受信できませんでした。ブラウザーで再認証してください。	未收到 OneDrive 授权结果。请在浏览器中重新授权。
+브라우저에서 다시 인증	Sign in again in browser	ブラウザーで再認証	在浏览器中重新授权

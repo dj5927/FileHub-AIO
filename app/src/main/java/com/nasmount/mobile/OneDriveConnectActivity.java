@@ -22,6 +22,16 @@ public final class OneDriveConnectActivity extends LocalizedActivity {
     private String pendingState;
     private volatile boolean terminal;
     private TextView status;
+    private Button retry,cancel;
+    private ProgressBar progress;
+    private final android.os.Handler ui=new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable callbackMissing=()->{
+        if(!alive()||!waiting||exchanging)return;
+        OneDriveDiagnostics.mark(this,"OD37_RETURN_WITHOUT_CALLBACK",null);
+        status.setText(L10n.t("OneDrive 인증 결과를 받지 못했습니다. 브라우저 인증을 다시 시도해 주세요."));
+        progress.setVisibility(android.view.View.GONE);
+        retry.setVisibility(android.view.View.VISIBLE);
+    };
     private AlertDialog errorDialog;
     static Intent intent(Activity a,String id,String name,boolean readOnly){
         return new Intent(a,OneDriveConnectActivity.class).putExtra("id",id).putExtra("name",name).putExtra("readOnly",readOnly);
@@ -33,9 +43,15 @@ public final class OneDriveConnectActivity extends LocalizedActivity {
         LinearLayout l=Ui.vertical(this);l.setGravity(Gravity.CENTER);l.setBackgroundColor(Ui.BG);
         l.setPadding(Ui.dp(this,24),Ui.dp(this,24),Ui.dp(this,24),Ui.dp(this,24));
         TextView title=Ui.text(this,"OneDrive",21,Ui.TEXT,true);title.setGravity(Gravity.CENTER);
-        l.addView(title,Ui.lp(this,-1,52));l.addView(new ProgressBar(this),Ui.lp(this,40,40));
+        l.addView(title,Ui.lp(this,-1,52));progress=new ProgressBar(this);l.addView(progress,Ui.lp(this,40,40));
         status=Ui.text(this,L10n.t("Microsoft 계정 연결 중..."),14,Ui.MUTED,false);status.setGravity(Gravity.CENTER);
-        l.addView(status,Ui.lp(this,-1,48));setContentView(l);
+        l.addView(status,Ui.lp(this,-1,-2));
+        status.setPadding(0,Ui.dp(this,12),0,Ui.dp(this,12));
+        retry=new Button(this);retry.setText(L10n.t("브라우저에서 다시 인증"));
+        retry.setVisibility(android.view.View.GONE);retry.setOnClickListener(v->retryBrowser());
+        l.addView(retry,Ui.lp(this,-1,-2));
+        cancel=new Button(this);cancel.setText(L10n.t("취소"));cancel.setOnClickListener(v->onBackPressed());
+        l.addView(cancel,Ui.lp(this,-1,-2));setContentView(l);
         // Browser return can create this activity in a new process.
         if(CALLBACK.equals(getIntent().getAction())){
             acceptCallback(getIntent());return;
@@ -53,6 +69,24 @@ public final class OneDriveConnectActivity extends LocalizedActivity {
     @Override protected void onSaveInstanceState(Bundle b){
         b.putBoolean("waiting",waiting);b.putBoolean("exchanging",exchanging);
         b.putString("pendingState",pendingState);super.onSaveInstanceState(b);
+    }
+    @Override protected void onResume(){
+        super.onResume();
+        ui.removeCallbacks(callbackMissing);
+        if(waiting&&!exchanging&&!terminal)ui.postDelayed(callbackMissing,4000);
+    }
+    @Override protected void onPause(){
+        ui.removeCallbacks(callbackMissing);
+        super.onPause();
+    }
+    private void retryBrowser(){
+        if(!alive()||!waiting||exchanging)return;
+        ui.removeCallbacks(callbackMissing);
+        waiting=false;retry.setVisibility(android.view.View.GONE);
+        progress.setVisibility(android.view.View.VISIBLE);
+        status.setText(L10n.t("Microsoft 계정 연결 중..."));
+        OneDriveDiagnostics.mark(this,"OD38_RETRY",null);
+        submit(()->prepare());
     }
     private boolean alive(){return !terminal&&!isFinishing()&&!isDestroyed();}
     private void prepare(){
@@ -81,6 +115,8 @@ public final class OneDriveConnectActivity extends LocalizedActivity {
                     // No synchronous Custom Tabs service/session calls.
                     startActivity(browser);
                     OneDriveDiagnostics.mark(this,"OD33_BROWSER_OPENED",null);
+                    ui.removeCallbacks(callbackMissing);
+                    ui.postDelayed(callbackMissing,4000);
                 }catch(RuntimeException|LinkageError e){
                     workerCleanup(request.state);waiting=false;fail("OD08_BROWSER_LAUNCH",e);
                 }
@@ -96,6 +132,9 @@ public final class OneDriveConnectActivity extends LocalizedActivity {
         String raw=intent.getData()==null?null:intent.getData().toString();
         intent.setData(null);
         waiting=false;exchanging=true;
+        ui.removeCallbacks(callbackMissing);
+        retry.setVisibility(android.view.View.GONE);
+        progress.setVisibility(android.view.View.VISIBLE);
         status.setText(L10n.t("OneDrive 인증을 확인하는 중..."));
         OneDriveDiagnostics.mark(this,"OD36_CALLBACK_DISPATCH",null);
         submit(()->{
@@ -178,6 +217,8 @@ public final class OneDriveConnectActivity extends LocalizedActivity {
     private void fail(String stage,Throwable error){
         if(!alive())return;
         terminal=true;
+        ui.removeCallbacks(callbackMissing);
+        progress.setVisibility(android.view.View.GONE);
         OneDriveDiagnostics.mark(this,stage,error);
         String message=L10n.t(stage.equals("OD03_NOT_CONFIGURED")?"OneDrive 앱 인증 등록이 필요합니다.":
             stage.equals("OD25_LIMIT")?"무료 버전에서는 연결 종류별로 1개만 사용할 수 있습니다.":"OneDrive 연결에 실패했습니다.");
@@ -194,7 +235,7 @@ public final class OneDriveConnectActivity extends LocalizedActivity {
         setResult(RESULT_CANCELED);finish();
     }
     @Override protected void onDestroy(){
-        terminal=true;worker.shutdownNow();
+        terminal=true;ui.removeCallbacksAndMessages(null);worker.shutdownNow();
         if(errorDialog!=null)try{errorDialog.dismiss();}catch(RuntimeException ignored){}
         super.onDestroy();
     }

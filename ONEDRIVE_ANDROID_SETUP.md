@@ -45,3 +45,22 @@ use bounded HTTPS worker requests with no redirect and no UI wait.
 Registered Microsoft redirect URIs, client ID and permissions are unchanged.
 Both editions collect only sanitized ANR main-thread Java frames, when Android
 provides them. Real SDK 37 Microsoft login still requires device testing.
+
+
+## v0.1.153 / Play v1.0.36 consent and callback compatibility
+User reported the browser returned to FileHub but the authorization waiting
+screen stayed open; a previous Microsoft grant might already exist.
+Explicit add/reconnect now requests prompt=consent and response_mode=query.
+Routine token refresh is unchanged, and no Microsoft grant is revoked.
+The callback accepts a host-only URI with or without its trailing slash and
+an empty fragment, consistent with Microsoft documented redirect normalization
+and the Graph query response example. Other paths, ports, schemes, nonempty
+fragments and duplicate state/code remain rejected. The original registered
+redirect URI remains unchanged for the token exchange.
+If the browser returns without a callback, a retry/cancel UI replaces the
+spinner; a retry generates fresh PKCE and state. Valid endpoint callbacks are
+forwarded to the connection activity before parsing the query, so malformed
+payloads produce a visible failure instead of being silently discarded.
+Refs: https://learn.microsoft.com/en-us/entra/identity-platform/reply-url
+https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
+https://learn.microsoft.com/en-us/graph/auth-v2-user

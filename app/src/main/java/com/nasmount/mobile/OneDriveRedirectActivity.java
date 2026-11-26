@@ -12,8 +12,14 @@ public final class OneDriveRedirectActivity extends Activity {
         try{
             if(incoming!=null&&Intent.ACTION_VIEW.equals(incoming.getAction())&&incoming.getData()!=null){
                 String raw=incoming.getData().toString();
-                OneDriveCallbackPolicy.parse(raw,OneDriveAuth.redirectForPackage(getPackageName()));
                 OneDriveDiagnostics.mark(this,"OD34_REDIRECT_RECEIVED",null);
+                if(!OneDriveCallbackPolicy.matchesEndpoint(new java.net.URI(raw),
+                        new java.net.URI(OneDriveAuth.redirectForPackage(getPackageName())))){
+                    OneDriveDiagnostics.mark(this,"OD35_REDIRECT_INVALID",null);return;
+                }
+                // Let the connection screen report malformed callback data;
+                // never silently discard a callback to our exact endpoint.
+
                 Intent resume=new Intent(this,OneDriveConnectActivity.class)
                     .setAction(OneDriveConnectActivity.CALLBACK)
                     .setData(incoming.getData())

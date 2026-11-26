@@ -210,8 +210,8 @@ android {
             dimension 'distribution'
             applicationId 'com.nasmount.mobile'
             targetSdk 35
-            versionCode 153
-            versionName '0.1.152'
+            versionCode 154
+            versionName '0.1.153'
             buildConfigField 'boolean', 'DIRECT_EDITION', 'true'
             buildConfigField 'String', 'DIRECT_OTA_KEY', groovy.json.JsonOutput.toJson(directOtaKey)
             buildConfigField 'boolean', 'R8_TRIAL', 'false'
@@ -223,8 +223,8 @@ android {
             dimension 'distribution'
             applicationId 'com.filehubaio.mobile'
             targetSdk 36
-            versionCode 36
-            versionName '1.0.35'
+            versionCode 37
+            versionName '1.0.36'
             buildConfigField 'boolean', 'DIRECT_EDITION', 'false'
             buildConfigField 'boolean', 'R8_TRIAL', 'false'
             buildConfigField 'String', 'PAIR_SCHEME', '"filehubaio-play"'

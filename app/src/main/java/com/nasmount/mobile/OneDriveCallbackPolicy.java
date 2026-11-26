@@ -19,10 +19,9 @@ final class OneDriveCallbackPolicy {
     static Result parse(String raw,String redirect)throws Exception{
         if(raw==null||raw.length()>32768)throw new IOException("Invalid OneDrive callback");
         URI u=new URI(raw),expected=new URI(redirect);
-        if(!expected.getScheme().equals(u.getScheme())||
-           !expected.getRawAuthority().equals(u.getRawAuthority())||
-           !java.util.Objects.equals(expected.getRawPath(),u.getRawPath())||
-           u.getRawFragment()!=null||u.getRawQuery()==null)throw new IOException("Invalid OneDrive callback URI");
+        if(!matchesEndpoint(u,expected)||
+            (u.getRawFragment()!=null&&!u.getRawFragment().isEmpty())||u.getRawQuery()==null)
+            throw new IOException("Invalid OneDrive callback URI");
         Map<String,String> params=new HashMap<>();
         for(String part:u.getRawQuery().split("&",-1)){
             int n=part.indexOf('=');
@@ -37,6 +36,17 @@ final class OneDriveCallbackPolicy {
             (denied?code!=null:code==null||code.isEmpty()||code.length()>16384))
             throw new IOException("Invalid OneDrive callback payload");
         return new Result(state,code,denied);
+    }
+    // A host-only redirect may gain a trailing slash. Microsoft Graph's
+    // documented query response may also end with an empty fragment (#).
+    // Only accept these equivalent forms, not other paths/ports/authorities.
+    static boolean matchesEndpoint(URI incoming,URI expected){
+        if(!java.util.Objects.equals(expected.getScheme(),incoming.getScheme())||
+           !java.util.Objects.equals(expected.getRawAuthority(),incoming.getRawAuthority()))return false;
+        String path=expected.getRawPath(),actual=incoming.getRawPath();
+        if(path==null||path.isEmpty()||"/".equals(path))
+            return actual==null||actual.isEmpty()||"/".equals(actual);
+        return path.equals(actual);
     }
     static boolean matches(String expected,String actual,long created,long now){
         return expected!=null&&actual!=null&&created>0&&now>=created&&now-created<=MAX_AGE&&
