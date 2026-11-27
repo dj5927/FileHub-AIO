@@ -785,6 +785,7 @@ internal static class DirectGoogleWinFspHost
         _ = api.ListChildrenAsync("root").GetAwaiter().GetResult();
         string recovery = Path.Combine(AppStore.DirectoryPath,
             "google-direct-stages", profile.Id.ToString("N"));
+        if (writeFolders) AppStore.EnsurePrivateAppDirectory(recovery);
         using var provider = new DirectGoogleWinFsp(api, Path.GetTempPath(),
             writeFolders, recovery);
         provider.QuotaUpdated += (total, free) =>
@@ -821,7 +822,7 @@ internal static class DirectGoogleWinFspHost
         {
             using var pipe = new NamedPipeServerStream(pipeName,
                 PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
-                PipeOptions.None);
+                PipeOptions.CurrentUserOnly);
             pipe.WaitForConnection();
             using var reader = new StreamReader(pipe, leaveOpen: true);
             using var writer = new StreamWriter(pipe, leaveOpen: true)

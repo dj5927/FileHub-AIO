@@ -39,6 +39,7 @@ internal static class ManagedDirectWebDavHost
         string journalRoot = labProfile is null
             ? Path.Combine(AppStore.DirectoryPath, "direct-journals", id.ToString("N"))
             : Path.Combine(Path.GetTempPath(), "FileHubDirectManagedLab_" + id.ToString("N"));
+        if (writable && labProfile is null) AppStore.EnsurePrivateAppDirectory(journalRoot);
         using var store = writable ? new DirectWebDavWriteStore(profile,
             password, backend, journalRoot) : null;
         LeaseCoordinator? leases = null;

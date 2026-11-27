@@ -1252,8 +1252,6 @@ internal static partial class RemoteMount
             UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardError = true, RedirectStandardOutput = true
         };
-        if (p.Protocol == "WebDAV" && !p.WebDavUseHttp)
-            psi.ArgumentList.Add("--no-check-certificate");
         string envPrefix = "RCLONE_CONFIG_" + RemoteName(p).ToUpperInvariant() + "_";
         psi.Environment[envPrefix + "TYPE"] = p.Protocol == "GoogleDrive" ? "drive" :
             p.Protocol == "MyBox" || CharsetSupport.RequiresGateway(p) ?
@@ -1361,7 +1359,7 @@ internal static partial class RemoteMount
             .GetAwaiter().GetResult();
         if (https.Environment[prefix + "URL"] !=
                 "https://custom.storage.example:5006/" ||
-            !https.ArgumentList.Contains("--no-check-certificate"))
+            https.ArgumentList.Contains("--no-check-certificate"))
             throw new InvalidOperationException(
                 "Custom WebDAV HTTPS address/port must not be rewritten or blocked");
         Console.WriteLine("USER_CONFIGURED_WEBDAV_ENDPOINT_NO_BRAND_GUESS_PASS");

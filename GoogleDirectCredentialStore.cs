@@ -30,6 +30,44 @@ internal static class GoogleDirectCredentialStore
     internal static bool HasBackup(NasProfile profile) =>
         profile.Protocol == "GoogleDrive" && File.Exists(BackupFor(profile));
 
+    // Called only after the selected mount and its worker are safely stopped.
+    // Never touch staged user documents or another profile's credentials.
+    internal static void ForgetLocal(NasProfile profile)
+    {
+        if (profile.Protocol != "GoogleDrive") return;
+        if (!Directory.Exists(StoreDirectory)) return;
+        AppStore.EnsurePrivateAppDirectory(StoreDirectory);
+        string target = PathFor(profile);
+        foreach (string suffix in new[] { "", ".previous", ".before-restore" })
+            File.Delete(target + suffix);
+        if (Directory.Exists(StoreDirectory))
+            foreach (string path in Directory.EnumerateFiles(StoreDirectory,
+                Path.GetFileName(target) + ".*"))
+            {
+                string name = Path.GetFileName(target);
+                string candidate = Path.GetFileName(path);
+                if (!candidate.StartsWith(name + ".", StringComparison.OrdinalIgnoreCase)) continue;
+                string[] parts = candidate[(name.Length + 1)..].Split('.');
+                if (parts.Length == 2 && Guid.TryParseExact(parts[0], "N", out _) &&
+                    parts[1] is "next" or "swap") File.Delete(path);
+            }
+    }
+
+    internal static async Task RevokePublisherGrantAsync(NasProfile profile)
+    {
+        if (!TryLoadPublisher(profile, out var grant))
+            throw new IOException("Google authorization is unavailable; revoke access in Google Account settings.");
+        using var handler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false };
+        using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(20) };
+        using var form = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["token"] = grant.RefreshToken
+        });
+        using var response = await http.PostAsync("https://oauth2.googleapis.com/revoke", form);
+        if (!response.IsSuccessStatusCode)
+            throw new IOException("Google access revocation was not confirmed.");
+    }
+
     // A copied, damaged or no-longer-decryptable token is not a usable
     // authorization. Leave every byte in place so a verified browser grant
     // can replace it with the normal encrypted backup transaction.
@@ -113,7 +151,7 @@ internal static class GoogleDirectCredentialStore
             string.IsNullOrWhiteSpace(token.ClientId) ||
             string.IsNullOrWhiteSpace(token.RefreshToken))
             throw new ArgumentException("Invalid direct Google OAuth session");
-        Directory.CreateDirectory(StoreDirectory);
+        AppStore.EnsurePrivateAppDirectory(StoreDirectory);
         byte[] json = JsonSerializer.SerializeToUtf8Bytes(token);
         byte[] encrypted;
         try
@@ -236,6 +274,11 @@ internal static class GoogleDirectCredentialStore
             if (Load(profile).Provider != "OpenList" ||
                 Load(profile).RefreshToken != "OFFLINE_REFRESH")
                 throw new InvalidOperationException("OpenList grant DPAPI protection failed");
+            ForgetLocal(profile);
+            if (HasNative(profile) || HasBackup(profile) ||
+                File.Exists(PathFor(profile) + ".before-restore"))
+                throw new InvalidOperationException("Google local authorization cleanup failed");
+            Console.WriteLine("GOOGLE_DIRECT_LOCAL_FORGET_PASS");
             Console.WriteLine("GOOGLE_DIRECT_DPAPI_OAUTH_ROUNDTRIP_AND_BACKUP_PASS");
         }
         finally

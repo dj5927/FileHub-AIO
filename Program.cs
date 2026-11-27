@@ -421,6 +421,7 @@ internal static class Program
             {
                 WinFspUpgradePolicy.PolicyTest();
                 PcUpdateService.FeedPolicyTest();
+                AppStore.LogRedactionPolicyTest();
                 PcUpdateApply.LocalPolicyTest();
                 PcUpdateCleanup.PolicyTest();
                 LocalCachePolicy.PolicyTest();

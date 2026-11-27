@@ -365,6 +365,28 @@ internal sealed partial class MainForm : Form
                 // irrelevant to removal of this never-connected OneDrive.
                 // Never disconnect or modify that other connection.
             }
+            if (p.Protocol == "GoogleDrive")
+            {
+                if (GoogleDirectCredentialStore.HasNative(p))
+                {
+                    var choice = MessageBox.Show(this,
+                        "Google 계정의 FileHub 접근 권한도 철회할까요?\n" +
+                        "예: Google 권한 철회 및 이 PC의 인증 삭제\n" +
+                        "아니요: 이 PC의 인증만 삭제\n" +
+                        "권한 철회는 같은 Google 프로젝트를 사용하는 다른 기기에도 영향을 줄 수 있습니다.",
+                        "Google 계정 연동 해제", MessageBoxButtons.YesNoCancel,
+                        MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+                    if (choice == DialogResult.Cancel) return;
+                    if (choice == DialogResult.Yes)
+                        await GoogleDirectCredentialStore.RevokePublisherGrantAsync(p);
+                }
+                GoogleDirectCredentialStore.ForgetLocal(p);
+                AppStore.ForgetLegacyOAuthConfig(GoogleDriveAuth.ConfigPath(p));
+            }
+            if (p.Protocol == "OneDrive")
+            {
+                AppStore.ForgetLegacyOAuthConfig(OneDriveAuth.ConfigPath(p));
+            }
             WindowsCredentials.Delete(p.Id);
             int index = cfg.Profiles.FindIndex(x => x.Id == p.Id);
             if (index < 0) return;
@@ -459,6 +481,37 @@ internal sealed partial class MainForm : Form
         try
         {
         if (!explicitRequest && manualReconnectPause.IsSuspended(p.Id)) return;
+        if (explicitRequest && p.Protocol == "WebDAV" && !p.WebDavUseHttp)
+        {
+            try
+            {
+                var observed = await WebDavTlsPolicy.ObserveAliasAsync(p);
+                if (observed is not null)
+                {
+                    string pin = WebDavTlsPolicy.AliasPin(p, observed);
+                    if (!string.Equals(p.WebDavAliasPin, pin, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (MessageBox.Show(this,
+                            "WebDAV 서버 인증서 이름이 입력한 주소와 일치하지 않습니다.\n\n" +
+                            "NAS 관리자에게 별도로 확인한 SHA-256 인증서 지문과 아래 값이 일치할 때만 승인하세요.\n" + observed +
+                            "\n\n이 주소의 이 인증서만 허용합니다.",
+                            "WebDAV 인증서 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+                            MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+                        string previous = p.WebDavAliasPin;
+                        p.WebDavAliasPin = pin;
+                        try { AppStore.Save(cfg); }
+                        catch { p.WebDavAliasPin = previous; throw; }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AppStore.Log("WEBDAV_TLS_PREFLIGHT_FAILED " + ex.GetType().Name);
+                MessageBox.Show(this, "WebDAV 서버의 TLS 인증서를 확인하지 못했습니다. 서버 주소와 인증서를 확인하세요.",
+                    "WebDAV 보안 연결 실패", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+        }
         if (p.Protocol == "SFTP" && SftpHostKeyTrust.RepairPreviousRsaPin(p))
         {
             // v1.3.43/44 could save a valid RSA key with the SSH signature

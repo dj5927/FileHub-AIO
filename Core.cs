@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Net;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
@@ -24,6 +26,9 @@ public sealed class NasProfile
     // HTTPS remains the default. Plain HTTP WebDAV can only be enabled by an
     // explicit user choice after a credential transport warning.
     public bool WebDavUseHttp { get; set; }
+    // A CA-validated DDNS alias may be used only with an explicitly approved
+    // endpoint-bound SHA256 certificate fingerprint; empty means strict TLS.
+    public string WebDavAliasPin { get; set; } = "";
     public string SftpHostFingerprint { get; set; } = "";
     // Explicitly approved public SSH host key for rclone SFTP. Unlike the
     // global ~/.ssh/known_hosts file, this is per-profile and survives restart.
@@ -74,6 +79,63 @@ internal static class AppStore
     private static readonly object LogSync = new();
     private static DateTime nextLogPruneUtc = DateTime.MinValue;
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
+
+    // Harden only app-owned private folders, never a user's arbitrary cache
+    // root or NAS. Preserve all existing recovery files. New files inherit
+    // the current-user/SYSTEM DACL; no blanket deletion or disk encryption.
+    internal static void EnsurePrivateAppDirectory(string path)
+    {
+        string root = Path.GetFullPath(DirectoryPath);
+        string target = Path.GetFullPath(path);
+        string relative = Path.GetRelativePath(root, target);
+        if (relative == "." || Path.IsPathRooted(relative) || relative == ".." ||
+            relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            throw new ArgumentException("Private directory must be below the application data root");
+        Directory.CreateDirectory(root);
+        if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("Private application data root cannot be a reparse point");
+        using var identity = WindowsIdentity.GetCurrent();
+        var user = identity.User ?? throw new UnauthorizedAccessException("Windows user identity unavailable");
+        var acl = new DirectorySecurity();
+        acl.SetAccessRuleProtection(true, false);
+        foreach (var sid in new[] { user, new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null) })
+            acl.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl,
+                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+                PropagationFlags.None, AccessControlType.Allow));
+        string current = root;
+        foreach (string part in relative.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, part);
+            var directory = new DirectoryInfo(current);
+            if (!directory.Exists) directory.Create(acl);
+            if ((directory.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Private application data cannot follow reparse points");
+            directory.SetAccessControl(acl);
+        }
+    }
+
+    internal static void ForgetLegacyOAuthConfig(string path)
+    {
+        string directory = Path.GetDirectoryName(path) ?? throw new ArgumentException("Missing authorization directory");
+        string name = Path.GetFileName(path);
+        if (!name.EndsWith(".conf", StringComparison.Ordinal) ||
+            !Guid.TryParseExact(name[..^5], "N", out _) ||
+            !(string.Equals(directory, Path.Combine(DirectoryPath, "google-auth"), StringComparison.OrdinalIgnoreCase) ||
+              string.Equals(directory, Path.Combine(DirectoryPath, "onedrive-auth"), StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException("Invalid profile authorization path");
+        if (!Directory.Exists(directory)) return;
+        EnsurePrivateAppDirectory(directory);
+        File.Delete(path);
+        File.Delete(path + ".previous-auth.bak");
+        foreach (string file in Directory.EnumerateFiles(directory, name + ".*"))
+        {
+            string candidate = Path.GetFileName(file);
+            if (!candidate.StartsWith(name + ".", StringComparison.OrdinalIgnoreCase)) continue;
+            var parts = candidate[(name.Length + 1)..].Split('.');
+            if (parts.Length == 2 && Guid.TryParseExact(parts[0], "N", out _) &&
+                parts[1] is "tmp" or "verify") File.Delete(file);
+        }
+    }
 
     public static AppConfig Load()
     {
@@ -140,6 +202,39 @@ internal static class AppStore
         File.Move(temporary, path, true);
     }
 
+    internal static string RedactLog(string entry)
+    {
+        // Defense in depth for provider error text; never rely on this as
+        // permission to log raw authentication responses or user secrets.
+        try
+        {
+            var flags = System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant;
+            string Clean(string value, string pattern, string replacement) =>
+                System.Text.RegularExpressions.Regex.Replace(value, pattern, replacement,
+                    flags, TimeSpan.FromMilliseconds(100));
+            entry = Clean(entry, @"\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", "$1 [redacted]");
+            entry = Clean(entry, """\b(access_token|refresh_token|id_token|client_secret|password|passwd|ndus|cookie|set-cookie)\b["']?\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'[^']*'|[^\s&,;]+)""", "$1=[redacted]");
+            entry = Clean(entry, @"\b(?:mbx_pat_|ya29\.|GOCSPX-)[^\s&,;]+", "[redacted]");
+            entry = Clean(entry, @"(https?://|ftps?://|sftp://)[^/\s@]+@", "$1[redacted]@");
+            entry = Clean(entry, @"[\x00-\x1f\x7f]", " ");
+            return entry.Length <= 8192 ? entry : entry[..8192] + " [truncated]";
+        }
+        catch (System.Text.RegularExpressions.RegexMatchTimeoutException)
+        {
+            return "[redacted: log sanitization limit]";
+        }
+    }
+
+    internal static void LogRedactionPolicyTest()
+    {
+        string redacted = RedactLog("Authorization: Bearer SYNTHETIC_BEARER password=\"SYNTHETIC_PASSWORD\" refresh_token=SYNTHETIC_REFRESH https://u:SYNTHETIC_URI@example.invalid mbx_pat_SYNTHETIC_PAT ndus=SYNTHETIC_COOKIE\r\nnext");
+        if (redacted.Contains("SYNTHETIC_", StringComparison.Ordinal) || redacted.Contains('\n') ||
+            !redacted.Contains("example.invalid", StringComparison.Ordinal))
+            throw new IOException("Log credential redaction policy regression");
+        Console.WriteLine("LOCAL_LOG_CREDENTIAL_REDACTION_AND_CONTROL_CHAR_PASS");
+    }
+
     public static void Log(string entry)
     {
         try
@@ -161,7 +256,7 @@ internal static class AppStore
                     "-" + Environment.ProcessId + ".log");
                 if (!File.Exists(path) || new FileInfo(path).Length < 2 * 1024 * 1024)
                     File.AppendAllText(path, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") +
-                        " " + entry + Environment.NewLine);
+                        " " + RedactLog(entry) + Environment.NewLine);
             }
         }
         catch { /* Do not crash due to an unwritable log folder. */ }

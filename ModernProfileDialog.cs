@@ -1082,6 +1082,9 @@ internal sealed class ModernProfileDialog : Form
         if (next.Protocol is "GoogleDrive" or "TeraBox" or "OneDrive" or "MyBox")
             next.UseFixedDriveMode = !cloudNetworkBox.Checked;
         next.WebDavUseHttp = webDavHttpBox.Checked;
+        if (next.Protocol != "WebDAV" || next.WebDavUseHttp ||
+            !next.Host.Equals(Profile.Host, StringComparison.OrdinalIgnoreCase) ||
+            next.Port != Profile.Port) next.WebDavAliasPin = "";
         next.SftpHostFingerprint = fingerprintBox.Text.Trim();
         bool sftpEndpointChanged = next.Protocol == "SFTP" &&
             (!next.Host.Equals(Profile.Host, StringComparison.OrdinalIgnoreCase) ||
@@ -1169,6 +1172,7 @@ internal sealed class ModernProfileDialog : Form
         Profile.RememberPassword = next.RememberPassword;
         Profile.AutoConnect = next.AutoConnect;
         Profile.WebDavUseHttp = next.WebDavUseHttp;
+        Profile.WebDavAliasPin = next.WebDavAliasPin;
         Profile.SftpHostFingerprint = next.SftpHostFingerprint;
         Profile.SftpPinnedHostKey = next.SftpPinnedHostKey;
         Profile.SftpTrustedHost = next.SftpTrustedHost;

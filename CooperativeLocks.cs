@@ -428,7 +428,10 @@ internal static class CooperativeLocks
             profile.IsAnonymous ? "anonymous" : profile.Username,
             profile.IsAnonymous ? "anonymous@" : password,
             profile.Port == 0 ? 21 : profile.Port);
-        client.Config.EncryptionMode = profile.ExplicitTls ? FtpEncryptionMode.Explicit : FtpEncryptionMode.None;
+        client.Config.EncryptionMode = profile.FtpImplicitTls ? FtpEncryptionMode.Implicit :
+            profile.ExplicitTls ? FtpEncryptionMode.Explicit : FtpEncryptionMode.None;
+        if (profile.FtpTls12Only)
+            client.Config.SslProtocols = System.Security.Authentication.SslProtocols.Tls12;
         client.Connect();
         return client;
     }

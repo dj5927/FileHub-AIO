@@ -16,7 +16,7 @@ internal static class MountControlPipe
             try
             {
                 using var pipe = new NamedPipeServerStream(name, PipeDirection.InOut,
-                    1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                    1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
                 pipe.WaitForConnection();
                 using var deadline = new CancellationTokenSource(timeout);
                 using var reader = new StreamReader(pipe, leaveOpen: true);

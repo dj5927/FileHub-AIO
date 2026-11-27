@@ -127,11 +127,16 @@ internal static class PcUpdateService
         CancellationToken cancellation)
     {
         string parent = Path.Combine(UpdateRoot, release.Tag);
-        Directory.CreateDirectory(parent);
+        AppStore.EnsurePrivateAppDirectory(parent);
         string zipPath = Path.Combine(parent, "update.zip");
         string partial = zipPath + ".download";
         string stage = Path.Combine(parent, "package");
-        if (Directory.Exists(stage)) Directory.Delete(stage, recursive: true);
+        if (Directory.Exists(stage))
+        {
+            if ((File.GetAttributes(stage) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Update staging directory is a reparse point");
+            Directory.Delete(stage, recursive: true);
+        }
         try
         {
             using var client = NewClient(TimeSpan.FromMinutes(20));
@@ -180,6 +185,22 @@ internal static class PcUpdateService
         }
     }
 
+    internal static bool SafeWindowsZipMember(string name)
+    {
+        string normalized = name.EndsWith('/') ? name[..^1] : name;
+        if (normalized.Length == 0 || name.Length > 350 || name.StartsWith('/') ||
+            name.Contains('\\') || name.Contains(':')) return false;
+        foreach (string segment in normalized.Split('/'))
+        {
+            if (segment is "" or "." or ".." || segment.EndsWith('.') || segment.EndsWith(' ') ||
+                segment.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+                Regex.IsMatch(segment.Split('.')[0].TrimEnd(' '),
+                    @"^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[0-9¹²³]|LPT[0-9¹²³])$",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)) return false;
+        }
+        return true;
+    }
+
     internal static void ExtractVerified(string zipPath, string destination)
     {
         using var archive = ZipFile.OpenRead(zipPath);
@@ -191,10 +212,7 @@ internal static class PcUpdateService
             if (++entries > 3000)
                 throw new InvalidDataException("Too many entries in update ZIP");
             string name = entry.FullName;
-            string normalized = name.EndsWith('/') ? name[..^1] : name;
-            if (normalized.Length == 0 || name.Length > 350 ||
-                name.StartsWith('/') || name.Contains('\\') || name.Contains(':') ||
-                normalized.Split('/').Any(x => x is "" or "." or ".."))
+            if (!SafeWindowsZipMember(name))
                 throw new InvalidDataException("Unsafe ZIP path");
             int unixMode = (entry.ExternalAttributes >> 16) & 0xF000;
             if (unixMode == 0xA000)
@@ -203,9 +221,9 @@ internal static class PcUpdateService
             {
                 if (!paths.Add(name))
                     throw new InvalidDataException("Duplicate Windows filename in ZIP");
-                total += entry.Length;
-                if (total > MaxUncompressedBytes)
+                if (entry.Length < 0 || entry.Length > MaxUncompressedBytes - total)
                     throw new InvalidDataException("Update ZIP extraction size exceeded");
+                total += entry.Length;
             }
         }
         if (!paths.Contains("FileHubAIO.exe") ||
@@ -264,6 +282,11 @@ internal static class PcUpdateService
         if (candidate?.Tag != "pc-v1.3.84" ||
             ParseReleaseFeed(list, new Version(1, 3, 84)) is not null)
             throw new IOException("Windows updater mixed Android releases or accepted wrong digest");
+        if (!SafeWindowsZipMember("tools/runtime.dll") || !SafeWindowsZipMember("tools/") ||
+            new[] { "../x", "tools/../x", "tools/CON.txt", "tools/aux", "tools/LPT1.dll",
+                "tools/x.dll ", "tools/x.dll.", "tools/x:y", "tools/x\\y" }.Any(SafeWindowsZipMember))
+            throw new IOException("Windows updater unsafe filename policy regression");
+        Console.WriteLine("PC_UPDATE_WINDOWS_DEVICE_AND_ALIAS_NAMES_REJECTED_PASS");
         Console.WriteLine("PC_UPDATE_FEED_ANDROID_ISOLATION_AND_SHA256_PASS");
     }
 }
