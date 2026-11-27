@@ -19,6 +19,14 @@ internal class DirectWebDavReadOnlyFileSystem : FileSystemBase, IDisposable
     private const int NotFound = unchecked((int)0xC0000034);
     private const int AccessDenied = unchecked((int)0xC0000022);
     private const int EndOfFile = unchecked((int)0xC0000011);
+    private const int IoError = unchecked((int)0xC0000185);
+    public override int ExceptionHandler(Exception ex)
+    {
+        if (!DirectWebDavTransport.IsIoFailure(ex)) return base.ExceptionHandler(ex);
+        Console.Error.WriteLine("DIRECT_WEBDAV_CALLBACK_IO_ERROR type=" +
+            ex.GetType().Name + " mountRetained=true");
+        return ex is FileNotFoundException ? NotFound : IoError;
+    }
     protected readonly DirectWebDavReadOnlyBackend _backend;
     protected readonly byte[] _security;
     private readonly ConcurrentDictionary<string, DirectWebDavReadOnlyBackend.Entry[]>

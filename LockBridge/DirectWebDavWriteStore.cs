@@ -50,6 +50,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         // Reusing it avoids another slow network PROPFIND from WinFsp Flush.
         internal DirectWebDavReadOnlyBackend.Entry? CommittedEntry;
         internal bool Created;
+        internal readonly bool CreatedByThisMount;
         internal bool Dirty;
         // A previous PUT may already have reached the NAS even when the
         // follow-up verification failed. Do not retry with a stale ETag.
@@ -79,7 +80,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             string remote, string? etag, bool created, FileStream stream)
         {
             Owner = owner; Id = id; LocalPath = path; RemotePath = remote;
-            ExpectedEtag = etag; Created = created; Dirty = created;
+            ExpectedEtag = etag; Created = created; CreatedByThisMount = created; Dirty = created;
             ConfirmedSize = created ? 0 : stream.Length;
             // The initial "new-uncommitted" manifest covers zero bytes.
             // The first actual Write must checkpoint its updated length so
@@ -106,9 +107,20 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         new(StringComparer.OrdinalIgnoreCase);
     internal Func<string, bool>? OwnsExcelWorkbook { get; set; }
     internal Func<string, bool>? HasLegacyExcelSession { get; set; }
+    internal Func<string, bool>? HasLocalExcelSession { get; set; }
+    // Excel can reserve the final destination before publishing its ~$ file.
+    // Only a zero-byte reservation created and verified by this mount may
+    // use the local-session exception. A foreign empty file is not ours.
+    private readonly ConcurrentDictionary<string, byte> _ownEmptyWorkbookReservations =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly byte[] EmptyPayloadHash = SHA256.HashData(Array.Empty<byte>());
 
     private bool OwnsOfficeWriteSession(string path) =>
         OwnsExcelWorkbook?.Invoke(path) == true ||
+        (_ownEmptyWorkbookReservations.ContainsKey(path) &&
+            _publishedOfficeTemps.TryGetValue(path, out var reservedHash) &&
+            CryptographicOperations.FixedTimeEquals(reservedHash, EmptyPayloadHash) &&
+            HasLocalExcelSession?.Invoke(path) == true) ||
         (Path.GetExtension(path).Equals(".xls", StringComparison.OrdinalIgnoreCase) &&
             HasLegacyExcelSession?.Invoke(path) == true);
     private readonly object _capabilityGate = new();
@@ -140,7 +152,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 using var put = new HttpRequestMessage(HttpMethod.Put, Remote(path));
                 put.Headers.TryAddWithoutValidation("If-None-Match", "*");
                 put.Content = new ByteArrayContent(data);
-                using var reply = _http.Send(put);
+                using var reply = DirectWebDavTransport.Send(_http, put);
                 if (!reply.IsSuccessStatusCode)
                     throw new IOException("Progressive MOVE capability create HTTP " +
                         (int)reply.StatusCode);
@@ -151,7 +163,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     Remote(from));
                 move.Headers.TryAddWithoutValidation("Destination", Remote(to).AbsoluteUri);
                 move.Headers.TryAddWithoutValidation("Overwrite", "F");
-                using var reply = _http.Send(move);
+                using var reply = DirectWebDavTransport.Send(_http, move);
                 return reply.StatusCode;
             }
             try
@@ -271,7 +283,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 {
                     create.Headers.TryAddWithoutValidation("If-None-Match", "*");
                     create.Content = new ByteArrayContent(original);
-                    using var result = _http.Send(create);
+                    using var result = DirectWebDavTransport.Send(_http, create);
                     if (!result.IsSuccessStatusCode)
                         throw new IOException("Conditional probe create HTTP " +
                             (int)result.StatusCode);
@@ -282,7 +294,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 {
                     duplicate.Headers.TryAddWithoutValidation("If-None-Match", "*");
                     duplicate.Content = new ByteArrayContent(forbidden);
-                    using var result = _http.Send(duplicate);
+                    using var result = DirectWebDavTransport.Send(_http, duplicate);
                     if (result.StatusCode != HttpStatusCode.PreconditionFailed)
                         throw new IOException("Server ignores If-None-Match; unsafe for new files");
                 }
@@ -290,7 +302,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 {
                     stale.Headers.TryAddWithoutValidation("If-Match", "\"filehub-impossible-etag\"");
                     stale.Content = new ByteArrayContent(forbidden);
-                    using var result = _http.Send(stale);
+                    using var result = DirectWebDavTransport.Send(_http, stale);
                     if (result.StatusCode != HttpStatusCode.PreconditionFailed)
                         throw new IOException("Server ignores If-Match; unsafe for concurrent edits");
                 }
@@ -323,12 +335,12 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             try
             {
                 using (var first = new HttpRequestMessage(new HttpMethod("MKCOL"), url))
-                using (var response = _http.Send(first))
+                using (var response = DirectWebDavTransport.Send(_http, first))
                     if (response.StatusCode != HttpStatusCode.Created)
                         throw new IOException("Exclusive lock probe MKCOL HTTP " +
                             (int)response.StatusCode);
                 using (var second = new HttpRequestMessage(new HttpMethod("MKCOL"), url))
-                using (var response = _http.Send(second))
+                using (var response = DirectWebDavTransport.Send(_http, second))
                     if (response.StatusCode is not (
                             HttpStatusCode.MethodNotAllowed or HttpStatusCode.Conflict or
                             HttpStatusCode.Locked))
@@ -373,7 +385,8 @@ internal sealed class DirectWebDavWriteStore : IDisposable
     {
         RequireVerifiedConditionalWrites();
         string name = DirectWebDavReadOnlyBackend.Normalize(path);
-        var current = create ? _read.KnownEntry(name) : _read.Stat(name);
+        var current = create ? _read.KnownEntry(name) :
+            OfficePayload(name) ? _read.StatFresh(name) : _read.Stat(name);
         if (create && current is not null)
             throw new IOException("File already exists: " + name);
         if (!create && current is null)
@@ -422,7 +435,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 using var request = new HttpRequestMessage(HttpMethod.Get, Remote(name));
                 if (!missingValidator)
                     request.Headers.TryAddWithoutValidation("If-Match", current!.ETag);
-                using var response = _http.Send(request,
+                using var response = DirectWebDavTransport.Send(_http, request,
                     HttpCompletionOption.ResponseHeadersRead);
                 if (!response.IsSuccessStatusCode)
                     throw new IOException("WebDAV initial download HTTP " +
@@ -446,6 +459,16 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             {
                 handle.UnversionedBaseHash = SHA256.HashData(stream);
                 stream.Seek(0, SeekOrigin.Begin);
+                if (_ownEmptyWorkbookReservations.ContainsKey(name) &&
+                    !CryptographicOperations.FixedTimeEquals(handle.UnversionedBaseHash, EmptyPayloadHash))
+                {
+                    // A reservation is not authorization to replace another
+                    // client's later nonempty file. Never rebind that claim.
+                    _ownEmptyWorkbookReservations.TryRemove(name, out _);
+                    if (OwnsExcelWorkbook?.Invoke(name) != true)
+                        throw new CooperativeLocks.LockConflictException(
+                            "Office reservation changed externally; original retained");
+                }
                 _publishedOfficeTemps[name] = handle.UnversionedBaseHash;
                 Console.WriteLine("DIRECT_WEBDAV_OWNED_OFFICE_REOPEN_WITHOUT_ETAG file=" + OfficeTrace(name));
             }
@@ -507,6 +530,13 @@ internal sealed class DirectWebDavWriteStore : IDisposable
     {
         handle.ConfirmedSize = handle.Local.Length;
         handle.WrotePayload = false;
+        if (ExcelOwnerInterop.IsWorkbook(handle.RemotePath))
+        {
+            if (handle.ConfirmedSize == 0 && handle.CreatedByThisMount)
+                _ownEmptyWorkbookReservations[handle.RemotePath] = 1;
+            else
+                _ownEmptyWorkbookReservations.TryRemove(handle.RemotePath, out _);
+        }
         if (handle.ConfirmedSize > 0)
         {
             RetireOfficeSafetyCopy(handle.OfficeSafetyBackup);
@@ -579,7 +609,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
         if (StrongEtag(source.ETag))
             request.Headers.TryAddWithoutValidation("If-Match", source.ETag);
-        using var result = _http.Send(request, HttpCompletionOption.ResponseHeadersRead);
+        using var result = DirectWebDavTransport.Send(_http, request, HttpCompletionOption.ResponseHeadersRead);
         if (!result.IsSuccessStatusCode)
             throw new IOException("Workbook safety backup GET HTTP " + (int)result.StatusCode);
         string backup = SaveOfficeSafetyCopy(path, result.Content.ReadAsStream(), source.Size);
@@ -768,7 +798,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             {
                 using var request = new HttpRequestMessage(
                     HttpMethod.Delete, Remote(stage));
-                using var result = _http.Send(request,
+                using var result = DirectWebDavTransport.Send(_http, request,
                     HttpCompletionOption.ResponseHeadersRead);
                 if (!result.IsSuccessStatusCode &&
                     result.StatusCode != HttpStatusCode.NotFound)
@@ -978,7 +1008,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             create ? "*" : match);
         request.Content = new ByteArrayContent(payload);
         handle.UploadMayHaveCommitted = true;
-        using var response = _http.Send(request, HttpCompletionOption.ResponseHeadersRead);
+        using var response = DirectWebDavTransport.Send(_http, request, HttpCompletionOption.ResponseHeadersRead);
         if (response.StatusCode is HttpStatusCode.PreconditionFailed or
             HttpStatusCode.Conflict or HttpStatusCode.Locked)
         {
@@ -1093,7 +1123,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 // the server rejected the bytes. Future Flush/Close must
                 // re-read the remote content rather than re-PUT blindly.
                 handle.UploadMayHaveCommitted = true;
-                using var result = _http.Send(request,
+                using var result = DirectWebDavTransport.Send(_http, request,
                     HttpCompletionOption.ResponseHeadersRead);
                 long putMs = commitTimer.ElapsedMilliseconds - journalMs;
                 if (result.StatusCode is HttpStatusCode.PreconditionFailed or
@@ -1130,7 +1160,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     {
                         using var verify = new HttpRequestMessage(HttpMethod.Get, Remote(path));
                         verify.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
-                        using var checkedBody = _http.Send(verify, HttpCompletionOption.ResponseHeadersRead);
+                        using var checkedBody = DirectWebDavTransport.Send(_http, verify, HttpCompletionOption.ResponseHeadersRead);
                         if (!checkedBody.IsSuccessStatusCode)
                             throw new IOException("Office stage verification GET HTTP " + (int)checkedBody.StatusCode);
                         handle.Local.Position = 0;
@@ -1159,11 +1189,12 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     committed = _read.Stat(path);
                     if (committed is not null &&
                         committed.Size == handle.Local.Length &&
-                        StrongEtag(committed.ETag)) break;
+                        (StrongEtag(committed.ETag) || OfficePayload(path))) break;
+                    committed = null;
                     if (attempt < 4) Thread.Sleep(150 * (attempt + 1));
                 }
                 if (committed is null || committed.Size != handle.Local.Length ||
-                    (!newFile && !StrongEtag(committed.ETag)))
+                    (!newFile && !StrongEtag(committed.ETag) && !OfficePayload(path)))
                 {
                     SaveJournal(handle, "verification-needed");
                     Console.Error.WriteLine("DIRECT_WEBDAV_WRITE_VERIFY_METADATA_FAILED" +
@@ -1177,10 +1208,13 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 // Never re-download a newly copied file just to verify it.
                 // Existing-file edit consistency is a separate workflow.
                 if (!newFile && (handle.Local.Length <= 16 * 1024 * 1024 ||
-                    ExcelOwnerInterop.IsWorkbook(path)))
+                    OfficePayload(path)))
                 {
-                    using var check = _http.GetAsync(Remote(path),
-                        HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
+                    using var checkRequest = new HttpRequestMessage(HttpMethod.Get, Remote(path));
+                    checkRequest.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+                    if (StrongEtag(committed.ETag))
+                        checkRequest.Headers.TryAddWithoutValidation("If-Match", committed.ETag);
+                    using var check = DirectWebDavTransport.Send(_http, checkRequest, HttpCompletionOption.ResponseHeadersRead);
                     check.EnsureSuccessStatusCode();
                     using var remoteContent = check.Content.ReadAsStream();
                     handle.Local.Seek(0, SeekOrigin.Begin);
@@ -1234,7 +1268,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 "Unversioned Office save no longer has its verified owner");
         using var before = new HttpRequestMessage(HttpMethod.Get, Remote(path));
         before.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
-        using var previous = _http.Send(before, HttpCompletionOption.ResponseHeadersRead);
+        using var previous = DirectWebDavTransport.Send(_http, before, HttpCompletionOption.ResponseHeadersRead);
         if (!previous.IsSuccessStatusCode)
             throw new IOException("Office revision GET HTTP " + (int)previous.StatusCode);
         byte[] remoteHash = SHA256.HashData(previous.Content.ReadAsStream());
@@ -1261,14 +1295,14 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             put.Headers.TryAddWithoutValidation("If-Match", StrongEtag(actual) ? actual : "*");
             put.Content = new StreamContent(new NonClosingStream(handle.Local));
             handle.UploadMayHaveCommitted = true;
-            using var saved = _http.Send(put, HttpCompletionOption.ResponseHeadersRead);
+            using var saved = DirectWebDavTransport.Send(_http, put, HttpCompletionOption.ResponseHeadersRead);
             if (!saved.IsSuccessStatusCode)
                 throw new IOException("Owned Office PUT HTTP " + (int)saved.StatusCode +
                     "; local recovery copy retained");
         }
         using var verify = new HttpRequestMessage(HttpMethod.Get, Remote(path));
         verify.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
-        using var result = _http.Send(verify, HttpCompletionOption.ResponseHeadersRead);
+        using var result = DirectWebDavTransport.Send(_http, verify, HttpCompletionOption.ResponseHeadersRead);
         if (!result.IsSuccessStatusCode ||
             !CryptographicOperations.FixedTimeEquals(
                 SHA256.HashData(result.Content.ReadAsStream()), desired))
@@ -1291,12 +1325,12 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         Console.WriteLine("DIRECT_WEBDAV_OWNED_OFFICE_SAVE_WITHOUT_ETAG_VERIFIED");
     }
 
-    internal bool RetainSupersededLegacyClose(Handle handle)
+    internal bool RetainSupersededOfficeClose(Handle handle)
     {
         lock (handle.Gate)
         {
             if (!handle.Dirty || handle.Created ||
-                !Path.GetExtension(handle.RemotePath).Equals(".xls", StringComparison.OrdinalIgnoreCase) ||
+                !ExcelOwnerInterop.IsWorkbook(handle.RemotePath) ||
                 handle.UnversionedBaseHash is null ||
                 !_publishedOfficeTemps.TryGetValue(handle.RemotePath, out var latest) ||
                 CryptographicOperations.FixedTimeEquals(latest, handle.UnversionedBaseHash))
@@ -1368,13 +1402,20 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         // Compare the entire remote body before attempting another write.
         _read.Invalidate(handle.RemotePath);
         var current = _read.Stat(handle.RemotePath);
+        bool unversionedOffice = OfficePayload(handle.RemotePath) &&
+            (handle.Created || OwnsOfficeWriteSession(handle.RemotePath) ||
+                (IsOfficeSaveTemporary(handle.RemotePath) &&
+                    _publishedOfficeTemps.ContainsKey(handle.RemotePath)));
         if (current is null || current.IsDirectory ||
-            current.Size != handle.Local.Length || !StrongEtag(current.ETag))
+            current.Size != handle.Local.Length ||
+            (!StrongEtag(current.ETag) && !unversionedOffice))
             return false;
         using var request = new HttpRequestMessage(HttpMethod.Get,
             Remote(handle.RemotePath));
-        request.Headers.TryAddWithoutValidation("If-Match", current.ETag);
-        using var response = _http.Send(request, HttpCompletionOption.ResponseHeadersRead);
+        request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+        if (StrongEtag(current.ETag))
+            request.Headers.TryAddWithoutValidation("If-Match", current.ETag);
+        using var response = DirectWebDavTransport.Send(_http, request, HttpCompletionOption.ResponseHeadersRead);
         if (!response.IsSuccessStatusCode) return false;
         using var remote = response.Content.ReadAsStream();
         handle.Local.Seek(0, SeekOrigin.Begin);
@@ -1383,12 +1424,19 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         if (!CryptographicOperations.FixedTimeEquals(localHash, remoteHash))
             return false;
         _read.Invalidate(handle.RemotePath);
-        if (_read.Stat(handle.RemotePath)?.ETag != current.ETag)
+        var latest = _read.Stat(handle.RemotePath);
+        if (latest is null || latest.IsDirectory || latest.Size != current.Size ||
+            latest.ETag != current.ETag)
             return false;
         handle.ExpectedEtag = current.ETag;
         handle.CommittedEntry = current;
         handle.Created = false;
         handle.Dirty = false;
+        if (OfficePayload(handle.RemotePath))
+        {
+            _publishedOfficeTemps[handle.RemotePath] = localHash;
+            handle.UnversionedBaseHash = StrongEtag(current.ETag) ? null : localHash;
+        }
         SaveJournal(handle, "recovered-verified");
         RecordConfirmedPayload(handle);
         return true;
@@ -1547,7 +1595,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
     internal void MakeDirectory(string path)
     {
         using var request = new HttpRequestMessage(new HttpMethod("MKCOL"), Remote(path));
-        using var result = _http.Send(request);
+        using var result = DirectWebDavTransport.Send(_http, request);
         if (result.StatusCode != HttpStatusCode.Created)
             throw new IOException("WebDAV MKCOL failed HTTP " + (int)result.StatusCode);
         _read.Invalidate(path);
@@ -1582,7 +1630,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         request.Headers.TryAddWithoutValidation("Overwrite", "F");
         if (StrongEtag(originalEtag))
             request.Headers.TryAddWithoutValidation("If-Match", originalEtag);
-        using var result = _http.Send(request, HttpCompletionOption.ResponseHeadersRead);
+        using var result = DirectWebDavTransport.Send(_http, request, HttpCompletionOption.ResponseHeadersRead);
         if (result.StatusCode is not (HttpStatusCode.Created or HttpStatusCode.NoContent))
             throw new IOException("WebDAV directory MOVE failed HTTP " +
                 (int)result.StatusCode);
@@ -1625,11 +1673,10 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             get.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
             if (StrongEtag(originalEtag))
                 get.Headers.TryAddWithoutValidation("If-Match", originalEtag);
-            using var body = _http.Send(get, HttpCompletionOption.ResponseHeadersRead);
+            using var body = DirectWebDavTransport.Send(_http, get, HttpCompletionOption.ResponseHeadersRead);
             if (!body.IsSuccessStatusCode)
                 throw new IOException("Workbook source verification GET HTTP " + (int)body.StatusCode);
-            if (Path.GetExtension(to).Equals(".xls", StringComparison.OrdinalIgnoreCase) &&
-                IsOfficeSaveTemporary(from) && _publishedOfficeTemps.TryGetValue(from, out var staged))
+            if (IsOfficeSaveTemporary(from) && _publishedOfficeTemps.TryGetValue(from, out var staged))
             {
                 candidateRecovery = SaveOfficeSafetyCopy(to, body.Content.ReadAsStream(), fresh.Size);
                 using var candidate = File.OpenRead(candidateRecovery);
@@ -1668,7 +1715,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             else
             {
                 using var source = new HttpRequestMessage(HttpMethod.Get, Remote(from));
-                using var content = _http.Send(source, HttpCompletionOption.ResponseHeadersRead);
+                using var content = DirectWebDavTransport.Send(_http, source, HttpCompletionOption.ResponseHeadersRead);
                 if (!content.IsSuccessStatusCode || !CryptographicOperations.FixedTimeEquals(
                     SHA256.HashData(content.Content.ReadAsStream()), expected))
                     throw new IOException("Office temporary source changed before rename");
@@ -1688,7 +1735,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         // verified Overwrite:F guard is the destination precondition.
         if (!newOfficeDocument)
             request.Headers.TryAddWithoutValidation("If-Match", originalEtag);
-        using var result = _http.Send(request);
+        using var result = DirectWebDavTransport.Send(_http, request);
         if (result.StatusCode is not (HttpStatusCode.Created or HttpStatusCode.NoContent))
             throw new IOException("Safe WebDAV MOVE failed HTTP " + (int)result.StatusCode);
         _read.Invalidate(from);
@@ -1697,7 +1744,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         {
             using var get = new HttpRequestMessage(HttpMethod.Get, Remote(to));
             get.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
-            using var verify = _http.Send(get, HttpCompletionOption.ResponseHeadersRead);
+            using var verify = DirectWebDavTransport.Send(_http, get, HttpCompletionOption.ResponseHeadersRead);
             if (!verify.IsSuccessStatusCode)
                 throw new IOException("Office MOVE verification GET HTTP " + (int)verify.StatusCode);
             byte[]? expected = workbookHash;
@@ -1715,12 +1762,14 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     OfficeTrace(to) + " source=" + OfficeTrace(from));
                 RetireOfficeRenameBackup(to);
                 RetireOfficeSafetyCopy(candidateRecovery);
+                _ownEmptyWorkbookReservations.TryRemove(to, out _);
             }
         }
         else if (_publishedOfficeTemps.TryGetValue(from, out var movedHash) &&
             (IsOfficeSaveTemporary(to) || ExcelOwnerInterop.IsWorkbook(to)))
             _publishedOfficeTemps[to] = movedHash;
         _publishedOfficeTemps.TryRemove(from, out _);
+        _ownEmptyWorkbookReservations.TryRemove(from, out _);
         return result.Headers.ETag?.ToString();
     }
 
@@ -1754,7 +1803,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         if (!replaceIfExists)
             throw new IOException("Destination already exists");
         if ((!StrongEtag(sourceEtag) || !StrongEtag(destination.ETag)) &&
-            Path.GetExtension(to).Equals(".xls", StringComparison.OrdinalIgnoreCase) &&
+            ExcelOwnerInterop.IsWorkbook(to) &&
             IsOfficeSaveTemporary(from) && !destination.IsDirectory &&
             OwnsOfficeWriteSession(to) &&
             _publishedOfficeTemps.TryGetValue(from, out var stagedHash) &&
@@ -1776,7 +1825,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             using (var get = new HttpRequestMessage(HttpMethod.Get, Remote(from)))
             {
                 get.Headers.TryAddWithoutValidation("If-Match", sourceEtag);
-                using var response = _http.Send(get, HttpCompletionOption.ResponseHeadersRead);
+                using var response = DirectWebDavTransport.Send(_http, get, HttpCompletionOption.ResponseHeadersRead);
                 if (!response.IsSuccessStatusCode)
                     throw new IOException("Safe replacement source GET HTTP " +
                         (int)response.StatusCode);
@@ -1800,7 +1849,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 put.Headers.TryAddWithoutValidation("If-Match", destination.ETag);
                 put.Content = new StreamContent(new FileStream(stage, FileMode.Open,
                     FileAccess.Read, FileShare.Read));
-                using var result = _http.Send(put, HttpCompletionOption.ResponseHeadersRead);
+                using var result = DirectWebDavTransport.Send(_http, put, HttpCompletionOption.ResponseHeadersRead);
                 if (!result.IsSuccessStatusCode)
                     throw new IOException("Safe replacement target PUT HTTP " +
                         (int)result.StatusCode);
@@ -1808,12 +1857,14 @@ internal sealed class DirectWebDavWriteStore : IDisposable
             _read.Invalidate(to);
             var saved = _read.Stat(to);
             if (saved is null || saved.Size != new FileInfo(stage).Length ||
-                !StrongEtag(saved.ETag))
+                (!StrongEtag(saved.ETag) && !ExcelOwnerInterop.IsWorkbook(to)))
                 throw new IOException("Cannot verify replacement metadata; source retained");
             using (var request = new HttpRequestMessage(HttpMethod.Get, Remote(to)))
             {
-                request.Headers.TryAddWithoutValidation("If-Match", saved.ETag);
-                using var verified = _http.Send(request,
+                request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+                if (StrongEtag(saved.ETag))
+                    request.Headers.TryAddWithoutValidation("If-Match", saved.ETag);
+                using var verified = DirectWebDavTransport.Send(_http, request,
                     HttpCompletionOption.ResponseHeadersRead);
                 verified.EnsureSuccessStatusCode();
                 using var remote = verified.Content.ReadAsStream();
@@ -1821,6 +1872,12 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 if (!CryptographicOperations.FixedTimeEquals(
                         SHA256.HashData(local), SHA256.HashData(remote)))
                     throw new IOException("Replacement checksum mismatch; source retained");
+                if (ExcelOwnerInterop.IsWorkbook(to))
+                {
+                    local.Position = 0;
+                    _publishedOfficeTemps[to] = SHA256.HashData(local);
+                    _ownEmptyWorkbookReservations.TryRemove(to, out _);
+                }
             }
             Delete(from, sourceEtag);
             if (ExcelOwnerInterop.IsWorkbook(to))
@@ -1850,7 +1907,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     get.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
                     if (StrongEtag(sourceEtag))
                         get.Headers.TryAddWithoutValidation("If-Match", sourceEtag);
-                    using var reply = _http.Send(get, HttpCompletionOption.ResponseHeadersRead);
+                    using var reply = DirectWebDavTransport.Send(_http, get, HttpCompletionOption.ResponseHeadersRead);
                     if (!reply.IsSuccessStatusCode)
                         throw new IOException("Office replacement source GET failed");
                     using var local = new FileStream(stage, FileMode.CreateNew,
@@ -1869,7 +1926,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     get.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
                     if (StrongEtag(destination.ETag))
                         get.Headers.TryAddWithoutValidation("If-Match", destination.ETag);
-                    using var reply = _http.Send(get, HttpCompletionOption.ResponseHeadersRead);
+                    using var reply = DirectWebDavTransport.Send(_http, get, HttpCompletionOption.ResponseHeadersRead);
                     if (!reply.IsSuccessStatusCode ||
                         !CryptographicOperations.FixedTimeEquals(
                             SHA256.HashData(reply.Content.ReadAsStream()), targetHash))
@@ -1878,12 +1935,27 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 if (!OwnsOfficeWriteSession(to))
                     throw new CooperativeLocks.LockConflictException("Office replacement owner changed");
                 if (destination.Size > 0) PreserveOfficeRenameBackup(to, destination);
+                // Ownership checks and recovery writes can take time. Re-read
+                // the destination just before the destructive PUT as well.
+                using (var preflight = new HttpRequestMessage(HttpMethod.Get, Remote(to)))
+                {
+                    preflight.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+                    if (StrongEtag(destination.ETag))
+                        preflight.Headers.TryAddWithoutValidation("If-Match", destination.ETag);
+                    using var current = DirectWebDavTransport.Send(_http, preflight,
+                        HttpCompletionOption.ResponseHeadersRead);
+                    if (!current.IsSuccessStatusCode ||
+                        !CryptographicOperations.FixedTimeEquals(
+                            SHA256.HashData(current.Content.ReadAsStream()), targetHash))
+                        throw new CooperativeLocks.LockConflictException(
+                            "Office replacement target changed immediately before save");
+                }
                 using (var put = new HttpRequestMessage(HttpMethod.Put, Remote(to)))
                 {
                     put.Headers.TryAddWithoutValidation("If-Match",
                         StrongEtag(destination.ETag) ? destination.ETag : "*");
                     put.Content = new StreamContent(File.OpenRead(stage));
-                    using var result = _http.Send(put, HttpCompletionOption.ResponseHeadersRead);
+                    using var result = DirectWebDavTransport.Send(_http, put, HttpCompletionOption.ResponseHeadersRead);
                     if (!result.IsSuccessStatusCode)
                         throw new IOException("Office replacement PUT HTTP " + (int)result.StatusCode);
                 }
@@ -1891,19 +1963,20 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                 using (var get = new HttpRequestMessage(HttpMethod.Get, Remote(to)))
                 {
                     get.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
-                    using var result = _http.Send(get, HttpCompletionOption.ResponseHeadersRead);
+                    using var result = DirectWebDavTransport.Send(_http, get, HttpCompletionOption.ResponseHeadersRead);
                     if (!result.IsSuccessStatusCode ||
                         !CryptographicOperations.FixedTimeEquals(
                             SHA256.HashData(result.Content.ReadAsStream()), sourceHash))
                         throw new IOException("Office replacement readback mismatch; recovery retained");
                 }
                 _publishedOfficeTemps[to] = sourceHash;
+                _ownEmptyWorkbookReservations.TryRemove(to, out _);
                 // Delete only our exact verified temporary revision. Never
                 // remove a changed source merely because its name matches.
                 using (var get = new HttpRequestMessage(HttpMethod.Get, Remote(from)))
                 {
                     get.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
-                    using var result = _http.Send(get, HttpCompletionOption.ResponseHeadersRead);
+                    using var result = DirectWebDavTransport.Send(_http, get, HttpCompletionOption.ResponseHeadersRead);
                     if (!result.IsSuccessStatusCode ||
                         !CryptographicOperations.FixedTimeEquals(
                             SHA256.HashData(result.Content.ReadAsStream()), sourceHash))
@@ -1912,7 +1985,7 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                     string? etag = result.Headers.ETag?.ToString();
                     del.Headers.TryAddWithoutValidation("If-Match",
                         StrongEtag(etag) ? etag : "*");
-                    using var removed = _http.Send(del, HttpCompletionOption.ResponseHeadersRead);
+                    using var removed = DirectWebDavTransport.Send(_http, del, HttpCompletionOption.ResponseHeadersRead);
                     if (!removed.IsSuccessStatusCode)
                         throw new IOException("Office replacement source cleanup failed");
                 }
@@ -1954,13 +2027,13 @@ internal sealed class DirectWebDavWriteStore : IDisposable
                         using var put = new HttpRequestMessage(HttpMethod.Put, Remote(to));
                         put.Headers.TryAddWithoutValidation("If-None-Match", "*");
                         put.Content = new StreamContent(new NonClosingStream(original));
-                        using var restored = _http.Send(put, HttpCompletionOption.ResponseHeadersRead);
+                        using var restored = DirectWebDavTransport.Send(_http, put, HttpCompletionOption.ResponseHeadersRead);
                         if (restored.IsSuccessStatusCode)
                         {
                             _read.Invalidate(to);
                             using var get = new HttpRequestMessage(HttpMethod.Get, Remote(to));
                             get.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
-                            using var verified = _http.Send(get, HttpCompletionOption.ResponseHeadersRead);
+                            using var verified = DirectWebDavTransport.Send(_http, get, HttpCompletionOption.ResponseHeadersRead);
                             if (verified.IsSuccessStatusCode &&
                                 Convert.ToHexString(SHA256.HashData(verified.Content.ReadAsStream())) == expected)
                                 Console.WriteLine("DIRECT_WEBDAV_OFFICE_ORIGINAL_RESTORED file=" + OfficeTrace(to));
@@ -2002,12 +2075,13 @@ internal sealed class DirectWebDavWriteStore : IDisposable
         using var request = new HttpRequestMessage(HttpMethod.Delete, Remote(path));
         if (!directory && !explicitUserDelete && StrongEtag(etag))
             request.Headers.TryAddWithoutValidation("If-Match", etag);
-        using var result = _http.Send(request);
+        using var result = DirectWebDavTransport.Send(_http, request);
         if (!result.IsSuccessStatusCode &&
             !(explicitUserDelete && result.StatusCode == HttpStatusCode.NotFound))
             throw new IOException("WebDAV DELETE rejected HTTP " + (int)result.StatusCode);
         _read.Invalidate(path);
         _publishedOfficeTemps.TryRemove(path, out _);
+        _ownEmptyWorkbookReservations.TryRemove(path, out _);
         if (directory)
         {
             // No stale directory listing can remain after a successful

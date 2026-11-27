@@ -1,4 +1,4 @@
-﻿param([string]$Repo=(Split-Path -Parent $PSScriptRoot),[string]$ProxyRepo=$Repo,[int]$Port=19141,[int]$Latency=0,[switch]$NoPutEtag,[switch]$NoTempEtag,[switch]$NoDocumentEtag,[switch]$RejectUnversionedMove,[switch]$DenyFinalPut,[switch]$LargeWorkbook,[switch]$ExistingTarget,[switch]$SecondMount,[switch]$LegacyXls,[string]$SourceWorkbook)
+param([string]$Repo=(Split-Path -Parent $PSScriptRoot),[string]$ProxyRepo=$Repo,[int]$Port=19141,[int]$Latency=0,[switch]$NoPutEtag,[switch]$NoTempEtag,[switch]$NoDocumentEtag,[switch]$RejectUnversionedMove,[switch]$DenyFinalPut,[switch]$LargeWorkbook,[switch]$ExistingTarget,[switch]$SecondMount,[switch]$LegacyXls,[string]$SourceWorkbook,[switch]$ComplexWorkbook)
 $ErrorActionPreference='Stop'
 $extension=if($LegacyXls){'.xls'}else{'.xlsx'}
 $format=if($LegacyXls){56}else{51}
@@ -97,39 +97,87 @@ try {
  $book=$excel.Workbooks.Open((Join-Path $server $name2),0,$true)
  if($book.Worksheets.Item(1).Cells.Item(1,1).Value2 -ne 'LOCAL_TO_NAS_SAVE_AS'){throw 'SaveAs content mismatch'}
  $book.Close($false);$book=$null;Write-Output 'LOCAL_TO_NAS_KOREAN_SAVE_AS_PASS'
- if($LegacyXls){
-   Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class XlsReplaceLab { [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool MoveFileEx(string src,string dst,int flags); }'
-   $target2=Join-Path $drive 'ReplacePlaceholder.xls';$stage2=Join-Path $drive 'AABB1234'
-   [IO.File]::WriteAllBytes($target2,[byte[]]@())
-   $payload=[IO.File]::ReadAllBytes($remote)
-   [IO.File]::WriteAllBytes($stage2,$payload)
-   if(![XlsReplaceLab]::MoveFileEx($stage2,$target2,1)){throw ('Placeholder replace failed '+[Runtime.InteropServices.Marshal]::GetLastWin32Error())}
-   if((Get-FileHash (Join-Path $server 'ReplacePlaceholder.xls')).Hash -ne (Get-FileHash $remote).Hash -or (Test-Path (Join-Path $server 'AABB1234'))){throw 'Placeholder replacement hash/source cleanup mismatch'}
-   Write-Output 'XLS_ZERO_PLACEHOLDER_REPLACEMENT_PASS'
-   # Existing destination was changed by a separate writer after our snapshot.
-   $conflict=Join-Path $drive 'Conflict.xls';$conflictStage=Join-Path $drive 'AABB5678'
-   [IO.File]::WriteAllBytes($conflict,[byte[]]@())
-   [IO.File]::WriteAllBytes($conflictStage,$payload)
-   $changed=[Text.Encoding]::ASCII.GetBytes('foreign revision')
-   [IO.File]::WriteAllBytes((Join-Path $server 'Conflict.xls'),$changed)
-   if([XlsReplaceLab]::MoveFileEx($conflictStage,$conflict,1)){throw 'Foreign revision was overwritten'}
-   if([IO.File]::ReadAllText((Join-Path $server 'Conflict.xls')) -ne 'foreign revision'){throw 'Foreign content lost'}
-   Write-Output 'XLS_CHANGED_DESTINATION_PRESERVED_PASS'
-   if($SourceWorkbook){
-     # Use only an isolated local copy; never open the company NAS original for editing.
-     $clone=Join-Path $root 'ActualSample.xls'
-     Copy-Item -LiteralPath $SourceWorkbook -Destination $clone
-     $book=$excel.Workbooks.Open($clone,0,$false)
-     if($book.ReadOnly){throw 'Isolated sample read-only'}
-     $sampleName='1126_sample.xls';$sampleTarget=Join-Path $drive $sampleName
-     $book.SaveAs($sampleTarget,56)
-     if((Get-Item (Join-Path $server $sampleName)).Length -le 0){throw 'Sample SaveAs empty'}
-     $book.Save()
-     $book.Close($false);$book=$null
-     $book=$excel.Workbooks.Open((Join-Path $server $sampleName),0,$true)
-     $book.Close($false);$book=$null
-     Write-Output ('XLS_ACTUAL_SAMPLE_SAVE_AND_REOPEN_PASS bytes='+(Get-Item (Join-Path $server $sampleName)).Length)
+ # The SaveAs reservation/replace pattern is shared by XLS and XLSX.
+ Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class OfficeReplaceLab { [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool MoveFileEx(string src,string dst,int flags); }'
+ $targetName='ReplacePlaceholder'+$extension
+ $target2=Join-Path $drive $targetName;$stage2=Join-Path $drive 'AABB1234'
+ [IO.File]::WriteAllBytes($target2,[byte[]]@())
+ $payload=[IO.File]::ReadAllBytes($remote)
+ [IO.File]::WriteAllBytes($stage2,$payload)
+ if(![OfficeReplaceLab]::MoveFileEx($stage2,$target2,1)){throw ('Placeholder replace failed '+[Runtime.InteropServices.Marshal]::GetLastWin32Error())}
+ if((Get-FileHash (Join-Path $server $targetName)).Hash -ne (Get-FileHash $remote).Hash -or (Test-Path (Join-Path $server 'AABB1234'))){throw 'Placeholder replacement hash/source cleanup mismatch'}
+ Write-Output ('OFFICE_ZERO_PLACEHOLDER_REPLACEMENT_PASS '+$extension)
+ # A second client changes the remote bytes via WebDAV, not a backing
+ # directory mutation that can be temporarily invisible in rclone's cache.
+ $conflictName='Conflict'+$extension
+ $conflict=Join-Path $drive $conflictName;$conflictStage=Join-Path $drive 'AABB5678'
+ [IO.File]::WriteAllBytes($conflict,[byte[]]@())
+ [IO.File]::WriteAllBytes($conflictStage,$payload)
+ $changed='foreign revision'
+ $foreignUrl="http://127.0.0.1:$front/$conflictName"
+ $wc=New-Object Net.WebClient
+ try{
+   $wc.Headers['If-Match']='*'
+   [void]$wc.UploadData($foreignUrl,'PUT',[Text.Encoding]::ASCII.GetBytes($changed))
+   if($wc.DownloadString($foreignUrl) -ne $changed){throw 'Foreign write not yet visible via WebDAV'}
+ }finally{$wc.Dispose()}
+ if([OfficeReplaceLab]::MoveFileEx($conflictStage,$conflict,1)){throw 'Foreign revision was overwritten'}
+ if([IO.File]::ReadAllText((Join-Path $server $conflictName)) -ne $changed){throw 'Foreign content lost'}
+ Write-Output ('OFFICE_CHANGED_DESTINATION_PRESERVED_PASS '+$extension)
+
+ if($ComplexWorkbook -and !$LegacyXls){
+   # Synthetic, non-sensitive analogue of a formatted price worksheet.
+   # Exercise merged cells, formulas, custom XML, print settings and a
+   # Korean filename with spaces, without copying customer data.
+   $book=$excel.Workbooks.Add()
+   $sheet=$book.Worksheets.Item(1)
+   $sheet.Range('A1:T1').Merge()
+   $sheet.Range('A1').Value2='FileHub formatted workbook regression'
+   $sheet.Range('A1:T1').Font.Bold=$true
+   $sheet.Range('A1:T1').Interior.Color=10079487
+   $sheet.Range('A2:T24').NumberFormat='#,##0'
+   $sheet.Range('A2:T24').Borders.LineStyle=1
+   for($i=3;$i -le 18;$i++){
+     $sheet.Cells.Item($i,1).Value2='Sample item '+$i
+     $sheet.Cells.Item($i,2).Value2=[double]$i
+     $sheet.Cells.Item($i,3).Value2=[double]1000
+     $sheet.Cells.Item($i,4).Formula="=B${i}*C${i}"
    }
+   $sheet.PageSetup.PrintArea='$A$1:$T$24'
+   $sheet.PageSetup.Orientation=2
+   [void]$book.CustomXMLParts.Add('<fixture xmlns="urn:filehub:regression"><category>synthetic</category></fixture>')
+   $sampleName=([char]0xD14C)+([char]0xC2A4)+([char]0xD2B8)+' '+([char]0xACF5)+([char]0xAE09)+([char]0xAC00)+' '+([char]0xC790)+([char]0xB8CC)+'.xlsx'
+   $localSample=Join-Path $root $sampleName
+   $sampleTarget=Join-Path $drive $sampleName
+   $sampleRemote=Join-Path $server $sampleName
+   $book.SaveAs($localSample,51)
+   [IO.File]::WriteAllBytes($sampleTarget,[byte[]]@())
+   $book.SaveAs($sampleTarget,51)
+   if(!$book.Saved -or (Get-Item $sampleRemote).Length -le 0){throw 'Formatted workbook SaveAs failed'}
+   $sheet.Cells.Item(3,3).Value2=[double]2000
+   $book.Save()
+   $book.Close($false);$book=$null
+   $book=$excel.Workbooks.Open($sampleRemote,0,$true)
+   $sheet=$book.Worksheets.Item(1)
+   if($sheet.Range('D3').Value2 -ne 6000 -or !$sheet.Range('A1').MergeCells -or $sheet.Range('A1').Value2 -ne 'FileHub formatted workbook regression'){throw 'Formatted workbook content mismatch'}
+   $xmlParts=$book.CustomXMLParts.SelectByNamespace('urn:filehub:regression')
+   if($xmlParts.Count -ne 1){throw 'Formatted workbook custom XML lost'}
+   $book.Close($false);$book=$null
+   Write-Output ('OFFICE_FORMATTED_KOREAN_WORKBOOK_PASS bytes='+(Get-Item $sampleRemote).Length)
+ }
+ if($SourceWorkbook){
+   $clone=Join-Path $root ('ActualSample'+$extension)
+   Copy-Item -LiteralPath $SourceWorkbook -Destination $clone
+   $book=$excel.Workbooks.Open($clone,0,$false)
+   if($book.ReadOnly){throw 'Isolated sample read-only'}
+   $sampleName=[IO.Path]::GetFileName($SourceWorkbook);$sampleTarget=Join-Path $drive $sampleName
+   $book.SaveAs($sampleTarget,$format)
+   if(!$book.Saved -or (Get-Item (Join-Path $server $sampleName)).Length -le 0){throw 'Sample SaveAs empty'}
+   $book.Save()
+   $book.Close($false);$book=$null
+   $book=$excel.Workbooks.Open((Join-Path $server $sampleName),0,$true)
+   $book.Close($false);$book=$null
+   Write-Output ('OFFICE_SAMPLE_SAVE_AND_REOPEN_PASS bytes='+(Get-Item (Join-Path $server $sampleName)).Length)
  }
 
 }finally{

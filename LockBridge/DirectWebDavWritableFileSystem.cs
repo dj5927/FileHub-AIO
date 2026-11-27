@@ -263,6 +263,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         _leases = leases;
         _writes.OwnsExcelWorkbook = HasVerifiedExcelOwner;
         _writes.HasLegacyExcelSession = HasLegacyExcelSession;
+        _writes.HasLocalExcelSession = HasLocalExcelSession;
     }
 
     private bool HasVerifiedExcelOwner(string workbook)
@@ -285,6 +286,12 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
     {
         if (!Path.GetExtension(path).Equals(".xls", StringComparison.OrdinalIgnoreCase))
             return false;
+        return HasLocalExcelSession(path);
+    }
+
+    private bool HasLocalExcelSession(string path)
+    {
+        if (!ExcelOwnerInterop.IsWorkbook(path)) return false;
         string workbook = DirectWebDavReadOnlyBackend.Normalize(path);
         lock (_excelOwnerGate)
             if (!_localExcelEditors.ContainsKey(workbook)) return false;
@@ -546,13 +553,29 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             Interlocked.Increment(ref _activeWriteHandles);
             return Success;
         }
-        catch (Exception ex) when (ex is IOException or ArgumentException)
+        catch (Exception ex) when (DirectWebDavTransport.IsIoFailure(ex) || ex is ArgumentException)
         {
             return Failure(ex, "Create");
         }
     }
 
     public override int Open(string fileName, uint createOptions, uint grantedAccess,
+        out object fileNode, out object fileDesc, out FileInfo info,
+        out string normalizedName)
+    {
+        try
+        {
+            return OpenCore(fileName, createOptions, grantedAccess, out fileNode,
+                out fileDesc, out info, out normalizedName);
+        }
+        catch (Exception ex) when (DirectWebDavTransport.IsIoFailure(ex))
+        {
+            fileNode = null!; fileDesc = null!; info = default; normalizedName = null!;
+            return Failure(ex, "OpenTransport");
+        }
+    }
+
+    private int OpenCore(string fileName, uint createOptions, uint grantedAccess,
         out object fileNode, out object fileDesc, out FileInfo info,
         out string normalizedName)
     {
@@ -660,7 +683,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             Interlocked.Increment(ref _activeWriteHandles);
             return Success;
         }
-        catch (Exception ex) when (ex is IOException or ArgumentException)
+        catch (Exception ex) when (DirectWebDavTransport.IsIoFailure(ex) || ex is ArgumentException)
         {
             return Failure(ex, "Open");
         }
@@ -687,7 +710,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
                 transferred = (uint)count;
                 return Success;
             }
-            catch (IOException ex) { return Failure(ex, "ReadPending"); }
+            catch (Exception ex) when (DirectWebDavTransport.IsIoFailure(ex)) { return Failure(ex, "ReadPending"); }
         }
         if (fileDesc is not WriteDescriptor writer)
             return base.Read(fileNode, fileDesc, buffer, offset, length, out transferred);
@@ -702,7 +725,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             transferred = (uint)read;
             return Success;
         }
-        catch (IOException ex) { return Failure(ex, "Read"); }
+        catch (Exception ex) when (DirectWebDavTransport.IsIoFailure(ex)) { return Failure(ex, "Read"); }
     }
 
     public override int Write(object fileNode, object fileDesc, IntPtr buffer,
@@ -741,7 +764,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             _overlay[writer.Entry.Path] = writer.Entry with { Size = writer.Session.Local.Length };
             return Success;
         }
-        catch (Exception ex) when (ex is IOException or ArgumentException)
+        catch (Exception ex) when (DirectWebDavTransport.IsIoFailure(ex) || ex is ArgumentException)
         {
             return Failure(ex, "Write");
         }
@@ -767,7 +790,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             info = Describe(writer);
             return Success;
         }
-        catch (IOException ex) { return Failure(ex, "Flush"); }
+        catch (Exception ex) when (DirectWebDavTransport.IsIoFailure(ex)) { return Failure(ex, "Flush"); }
     }
 
     public override int GetFileInfo(object fileNode, object fileDesc, out FileInfo info)
@@ -796,7 +819,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
         info = default;
         if (fileDesc is not WriteDescriptor writer) return AccessDenied;
         try { _writes.SetLength(writer.Session, 0); info = Describe(writer); return Success; }
-        catch (IOException ex) { return Failure(ex, "Overwrite"); }
+        catch (Exception ex) when (DirectWebDavTransport.IsIoFailure(ex)) { return Failure(ex, "Overwrite"); }
     }
 
     public override int SetFileSize(object fileNode, object fileDesc,
@@ -817,7 +840,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             info = Describe(writer);
             return Success;
         }
-        catch (IOException ex) { return Failure(ex, "SetFileSize"); }
+        catch (Exception ex) when (DirectWebDavTransport.IsIoFailure(ex)) { return Failure(ex, "SetFileSize"); }
     }
 
     public override int SetBasicInfo(object fileNode, object fileDesc,
@@ -892,7 +915,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             // Explicit user deletes use fresh path resolution, not an ETag
             // which Synology can change after writing.
         }
-        catch (IOException ex) { return Failure(ex, "CanDelete"); }
+        catch (Exception ex) when (DirectWebDavTransport.IsIoFailure(ex)) { return Failure(ex, "CanDelete"); }
         return Success;
     }
 
@@ -953,7 +976,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             }
             return Success;
         }
-        catch (IOException ex) { return Failure(ex, "Rename"); }
+        catch (Exception ex) when (DirectWebDavTransport.IsIoFailure(ex)) { return Failure(ex, "Rename"); }
         finally
         {
             ReleaseOfficeLease(destinationLease);
@@ -999,7 +1022,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
                     if (Environment.GetEnvironmentVariable("FILEHUB_DIRECT_DEBUG") == "1")
                         Console.Error.WriteLine("DIRECT_RW_CLEANUP_COMMIT_OK path=" + fileName);
                 }
-                catch (IOException ex) { Failure(ex, "CleanupCommit"); }
+                catch (Exception ex) when (DirectWebDavTransport.IsIoFailure(ex)) { Failure(ex, "CleanupCommit"); }
             }
             return;
         }
@@ -1042,7 +1065,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             if (fileDesc is WriteDescriptor owned) owned.Deleted = true;
             _overlay.TryRemove(key, out _);
         }
-        catch (IOException ex) { Failure(ex, "CleanupDelete"); }
+        catch (Exception ex) when (DirectWebDavTransport.IsIoFailure(ex)) { Failure(ex, "CleanupDelete"); }
     }
 
     public override void Close(object fileNode, object fileDesc)
@@ -1077,7 +1100,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             if (writer.Deleted)
                 _writes.Discard(writer.Session);
             else if (writer.LeaseKey is null &&
-                _writes.RetainSupersededLegacyClose(writer.Session))
+                _writes.RetainSupersededOfficeClose(writer.Session))
             {
                 // A late cache-manager Close belongs to a superseded
                 // revision. Its journal is retained; do not touch NAS.
@@ -1089,7 +1112,7 @@ internal sealed class DirectWebDavWritableFileSystem : DirectWebDavReadOnlyFileS
             ReleaseOfficeLease(writer.LeaseKey);
             writer.LeaseKey = null;
         }
-        catch (IOException ex)
+        catch (Exception ex) when (DirectWebDavTransport.IsIoFailure(ex))
         {
             // The session's local journal is retained. NEVER pretend that
             // failure to upload at Close means the NAS saved this document.

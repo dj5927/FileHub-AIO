@@ -1,0 +1,146 @@
+name: Publish verified FileHub PC v1.3.149 WebDAV reconnect and Excel save
+on:
+  push:
+    branches: [pc/windows]
+permissions:
+  contents: write
+jobs:
+  reconstruct:
+    if: contains(github.event.head_commit.message, '[PC_V149_BINARY_HANDOFF_20261127]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify base and reconstruct exact tested Windows package
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v zstd
+          curl --fail --location --retry 3 --connect-timeout 15 --max-time 180 'https://github.com/dj5927/FileHub-AIO/releases/download/pc-v1.3.148/FileHub-AIO-PC-1.3.148-win-x64.zip' -o base.zip
+          cp .github/release-handoffs/pc-v149-handoff.zip handoff.zip
+          echo '76559962c4765716e27c72020c32605a3305f5b6963ecf8489eb180bb7406306  handoff.zip' | sha256sum -c -
+          python3 .github/release-handoffs/pc149_delta.py reconstruct base.zip handoff.zip FileHub-AIO-PC-1.3.149-win-x64.zip
+          sha256sum FileHub-AIO-PC-1.3.149-win-x64.zip > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pc149-verified-package
+          path: |
+            FileHub-AIO-PC-1.3.149-win-x64.zip
+            SHA256SUMS
+          compression-level: 0
+          retention-days: 2
+  windows-regression:
+    needs: reconstruct
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pc149-verified-package
+          path: package
+      - name: Verify and test the exact distributable Windows executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = (Resolve-Path package/FileHub-AIO-PC-1.3.149-win-x64.zip).Path
+          $sum = (Get-Content package/SHA256SUMS -Raw).Trim().Split(' ')[0]
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash -ne $sum) { throw 'Package checksum mismatch' }
+          Expand-Archive -LiteralPath $zip -DestinationPath candidate -Force
+          $exe = (Resolve-Path candidate/FileHubAIO.exe).Path
+          if ((Get-Item $exe).VersionInfo.FileVersion -ne '1.3.149.0') { throw 'Incorrect version' }
+          if ((Get-FileHash $exe).Hash -ne '879B50BDADEE232E3930F2D64531CC49F2393F2CED3F9241EA0F6123280B140D') { throw 'Application binary mismatch' }
+          if ((Get-FileHash candidate/tools/NASMountLockBridge.dll).Hash -ne 'C2C1948C9D8123FED77EBA8767739EB57A9BA74DC4803AFDEEA36F654C897178') { throw 'Bridge binary mismatch' }
+          $tests = [ordered]@{
+            'google-direct-api-policy-test' = 'GOOGLE_BROWSER_COMPLETE_HEADERS_AND_RELOAD_WITHOUT_REEXCHANGE_PASS'
+            'google-login-ui-policy-test' = 'GOOGLE_CHROME_ONLY_LOGIN_NO_USER_OAUTH_FIELDS_PASS'
+            'google-publisher-oauth-policy-test' = 'GOOGLE_PUBLISHER_OAUTH_PACKAGED_POLICY_PASS'
+            'google-cold-start-policy-test' = 'GOOGLE_COLD_MOUNT_PACING_NO_KEEPALIVE_POLICY_PASS'
+            'pc-updater-policy-test' = 'OTA_SUCCESS_PURGES_CURRENT_AND_OLD_PACKAGES_AND_BACKUPS_PASS'
+            'compact-menu-policy-test' = 'CACHE_SETTINGS_DEFAULTS_AND_LAYOUT_PASS'
+            'synology-share-policy-test' = 'SYNOLOGY_SHARING_PATH_URL_REGISTRY_POLICY_PASS'
+            'winfsp-execute-policy-test' = 'WINFSP_EXE_EXECUTE_PERMISSION_ALL_PROVIDERS_PASS'
+            'direct-webdav-routing-policy-test' = 'DIRECT_WEBDAV_ONLY_PROVIDER_ROUTING_POLICY_PASS'
+            'component-inventory-test' = 'COMPONENT_INVENTORY_DISK_README_EXE_VERSION_SHA_PASS'
+          }
+          foreach ($name in $tests.Keys) {
+            $out = Join-Path $env:RUNNER_TEMP ($name+'.out')
+            $err = Join-Path $env:RUNNER_TEMP ($name+'.err')
+            $p = Start-Process -FilePath $exe -ArgumentList ('--'+$name) -Wait -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+            $result = Get-Content -LiteralPath $out -Raw
+            Write-Output $result
+            Get-Content -LiteralPath $err
+            if ($p.ExitCode -ne 0 -or !$result.Contains($tests[$name])) { throw ('Regression failed: '+$name) }
+            if ($name -eq 'google-direct-api-policy-test' -and !$result.Contains('GOOGLE_GRANULAR_SCOPE_DENIAL_AND_ACCOUNT_CHECK_PASS')) { throw 'Selective permission regression' }
+          }
+          $updater = Get-Content (Join-Path $env:RUNNER_TEMP 'pc-updater-policy-test.out') -Raw
+          foreach ($marker in @('CACHE_30_MINUTE_CAP_AND_DIRTY_RECOVERY_PRESERVED_PASS','LOG_30_MINUTE_RETENTION_LEGACY_CLEANUP_PASS')) {
+            if (!$updater.Contains($marker)) { throw ('Storage policy missing: '+$marker) }
+          }
+          $bridge = (Resolve-Path candidate/tools/NASMountLockBridge.exe).Path
+          foreach ($name in @('self-test','winfsp-binding-compatibility-test','direct-google-progressive-policy-test','mount-control-pipe-test')) {
+            $out = Join-Path $env:RUNNER_TEMP ('bridge-'+$name+'.out')
+            $err = Join-Path $env:RUNNER_TEMP ('bridge-'+$name+'.err')
+            $p = Start-Process -FilePath $bridge -ArgumentList ('--'+$name) -Wait -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+            $result = Get-Content -LiteralPath $out -Raw
+            Write-Output $result
+            Get-Content -LiteralPath $err
+            if ($p.ExitCode -ne 0) { throw ('Bridge regression failed: '+$name) }
+            if ($name -eq 'self-test' -and !$result.Contains('DIRECT_WEBDAV_READ_CACHE_30_MINUTE_EXPIRY_PASS')) { throw 'Native read-cache regression' }
+          }
+          $env:FILEHUB_LAB_RCLONE = (Resolve-Path candidate/tools/rclone.exe).Path
+          $env:FILEHUB_TEST_PUBLISHED_BRIDGE = $bridge
+          $store = & ./tests/direct_webdav_write_store_lab.ps1 -Port 18784 | Out-String
+          Write-Output $store
+          if (-not $? -or !$store.Contains('DIRECT_WEBDAV_ZERO_WORKBOOK_COMMIT_AND_RENAME_GUARD_PASS') -or !$store.Contains('DIRECT_WEBDAV_ONE_WINFSP_WRITE_STORE_LAB_PASS') -or !$store.Contains('DIRECT_WEBDAV_COOPERATIVE_TWO_CLIENT_LAB_PASS')) {
+            throw 'Excel zero-byte guard or recovery regression'
+          }
+          Write-Output 'PC149_WINDOWS_REGRESSIONS_PASS'
+  publish:
+    needs: [reconstruct, windows-regression]
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pc149-verified-package
+      - name: Publish official Windows-only OTA
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          sha256sum -c SHA256SUMS
+          python3 .github/release-handoffs/pc149_delta.py verify .github/release-handoffs/pc-v149-handoff.zip FileHub-AIO-PC-1.3.149-win-x64.zip
+          if gh release view pc-v1.3.149 >/dev/null 2>&1; then
+            echo 'Refusing to replace existing release'
+            exit 1
+          fi
+          latest_before="$(gh api repos/$GH_REPO/releases/latest --jq .tag_name)"
+          cat > notes.txt <<'NOTES'
+          FileHub AIO PC v1.3.149
+
+          - Keep WebDAV mounts active across transient network failures and abandoned local control requests.
+          - Improve XLS/XLSX SaveAs and repeated saves, including servers without strong ETags.
+          - Verify same-session source and target bytes before replacing a reserved SaveAs destination.
+          - Preserve recovery payloads and do not replay superseded late handles.
+          - Real Excel XLS/XLSX loopback tests, conditional conflict tests and packaged self-tests passed.
+          - Live production NAS behavior still needs a disposable-file test; servers without strong ETags have optimistic concurrency limits.
+          - Windows PC OTA only; Android releases and unrelated providers unchanged.
+          NOTES
+          printf '\nArchive SHA256: %s\n' "$(cut -d ' ' -f 1 SHA256SUMS)" >> notes.txt
+          gh release create pc-v1.3.149 FileHub-AIO-PC-1.3.149-win-x64.zip SHA256SUMS --target "$GITHUB_SHA" --latest=false --title 'FileHub AIO PC v1.3.149' --notes-file notes.txt
+          gh release view pc-v1.3.149 --json tagName,isDraft,isPrerelease,assets > release.json
+          python3 - <<'PY'
+          import json, pathlib, hashlib
+          r=json.load(open('release.json'))
+          assert r['tagName']=='pc-v1.3.149' and not r['isDraft'] and not r['isPrerelease']
+          f=pathlib.Path('FileHub-AIO-PC-1.3.149-win-x64.zip')
+          a=next(a for a in r['assets'] if a['name']==f.name)
+          with f.open('rb') as stream: digest=hashlib.file_digest(stream,'sha256').hexdigest()
+          assert a['size']==f.stat().st_size and a['digest']=='sha256:'+digest
+          print('PC149_OFFICIAL_RELEASE_SUCCESS',digest)
+          PY
+          test "$(gh api repos/$GH_REPO/releases/latest --jq .tag_name)" = "$latest_before"

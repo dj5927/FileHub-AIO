@@ -124,14 +124,8 @@ internal static class ManagedDirectWebDavHost
         // One named pipe per saved profile. Existing BridgeOwnership probes
         // and the application GUI can reuse the same owner identity.
         string pipeName = "NASMountBridge_" + id.ToString("N");
-        while (true)
+        MountControlPipe.Run(pipeName, command =>
         {
-            using var pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut,
-                1, PipeTransmissionMode.Byte, PipeOptions.None);
-            pipe.WaitForConnection();
-            using var reader = new StreamReader(pipe, leaveOpen: true);
-            using var writer = new StreamWriter(pipe, leaveOpen: true) { AutoFlush = true };
-            string command = reader.ReadLine() ?? "";
             int open = provider.ActiveHandles +
                 (provider is DirectWebDavWritableFileSystem rw ? rw.ActiveWriteHandles : 0);
             bool safe = provider is DirectWebDavWritableFileSystem writableFs
@@ -139,7 +133,7 @@ internal static class ManagedDirectWebDavHost
                 : true;
             if (command is "PING" or "STATUS")
             {
-                writer.WriteLine("READY " + open +
+                return ("READY " + open +
                     " writers=" + (provider is DirectWebDavWritableFileSystem wr
                         ? wr.ActiveWriteHandles : 0) +
                     " recovery=" + (store?.PendingRecovery().Length ?? 0) +
@@ -156,21 +150,18 @@ internal static class ManagedDirectWebDavHost
                         ? c.ConfirmedUploads : 0) +
                     " canceled=" + (provider is DirectWebDavWritableFileSystem x
                         ? x.CancelledUploads : 0) +
-                    " " + (safe ? "SAFE" : "BUSY"));
-                continue;
+                    " " + (safe ? "SAFE" : "BUSY"), false);
             }
             if (command == "QUIT")
             {
                 if (!safe)
                 {
-                    writer.WriteLine("OPEN_OR_RECOVERY_PENDING " + open);
-                    continue;
+                    return ("OPEN_OR_RECOVERY_PENDING " + open, false);
                 }
-                writer.WriteLine("OK");
-                break;
+                return ("OK", true);
             }
-            writer.WriteLine("UNKNOWN");
-        }
+            return ("UNKNOWN", false);
+        });
         Console.WriteLine("DIRECT_WEBDAV_MANAGED_SAFE_UNMOUNT letter=" + target);
         Console.Out.Flush();
         return 0;

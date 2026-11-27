@@ -182,7 +182,7 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
         request.Content = new StringContent(
             "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:allprop/></d:propfind>",
             Encoding.UTF8, "application/xml");
-        using var response = _http.Send(request);
+        using var response = DirectWebDavTransport.Send(_http, request);
         if (response.StatusCode == HttpStatusCode.NotFound) return [];
         if ((int)response.StatusCode != 207)
             throw new IOException("WebDAV PROPFIND HTTP " + (int)response.StatusCode);
@@ -272,7 +272,7 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
             throw new ArgumentException("Expected an Excel owner path");
         using var request = new HttpRequestMessage(HttpMethod.Get, RemoteUrl(key));
         request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
-        using var response = _http.Send(request, HttpCompletionOption.ResponseHeadersRead);
+        using var response = DirectWebDavTransport.Send(_http, request, HttpCompletionOption.ResponseHeadersRead);
         if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
             return null;
         if (response.StatusCode != HttpStatusCode.OK)
@@ -411,7 +411,7 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
         AddStrongEtagPrecondition(request, entry);
         request.Headers.Range = new RangeHeaderValue((long)offset,
             (long)offset + count - 1);
-        using var response = _http.Send(request, HttpCompletionOption.ResponseHeadersRead);
+        using var response = DirectWebDavTransport.Send(_http, request, HttpCompletionOption.ResponseHeadersRead);
         if (response.StatusCode != HttpStatusCode.PartialContent &&
             response.StatusCode != HttpStatusCode.OK)
             throw new IOException("WebDAV GET HTTP " + (int)response.StatusCode);
@@ -457,7 +457,7 @@ internal sealed class DirectWebDavReadOnlyBackend : IDisposable
                 using var request = new HttpRequestMessage(HttpMethod.Get,
                     RemoteUrl(entry.Path));
                 AddStrongEtagPrecondition(request, entry);
-                using var response = _http.Send(request,
+                using var response = DirectWebDavTransport.Send(_http, request,
                     HttpCompletionOption.ResponseHeadersRead);
                 response.EnsureSuccessStatusCode();
                 using (var source = response.Content.ReadAsStream())

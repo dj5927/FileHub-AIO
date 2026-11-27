@@ -1,4 +1,4 @@
-param([int]$Port = 18872, [switch]$SynologyVirtualRoot)
+param([int]$Port = 18872, [switch]$SynologyVirtualRoot, [switch]$NetworkInterrupt)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $rclone = if($env:FILEHUB_LAB_RCLONE){$env:FILEHUB_LAB_RCLONE}else{
@@ -74,6 +74,33 @@ try {
  if($response -notmatch '^READY [0-9]+ .* (SAFE|BUSY)$'){
    throw ('Unexpected status command '+$response)}
  Write-Output 'DIRECT_MANAGED_STATUS_PIPE_PASS'
+ if($NetworkInterrupt){
+   $pipeName='NASMountBridge_'+([Guid]::Parse($id)).ToString('N')
+   $abandon=[IO.Pipes.NamedPipeClientStream]::new('.', $pipeName,[IO.Pipes.PipeDirection]::InOut)
+   $abandon.Connect(4500)
+   $bytes=[Text.Encoding]::ASCII.GetBytes("STATUS
+");$abandon.Write($bytes,0,$bytes.Length);$abandon.Dispose()
+   $idle=[IO.Pipes.NamedPipeClientStream]::new('.', $pipeName,[IO.Pipes.PipeDirection]::InOut)
+   try{$idle.Connect(4500);Start-Sleep -Milliseconds 5600}finally{$idle.Dispose()}
+   if((CommandToManager 'PING') -notmatch '^READY ' -or $managed.HasExited){throw 'Health-client abandonment killed mount'}
+   Write-Output 'DIRECT_MANAGED_PIPE_ABANDONMENT_SURVIVES_PASS'
+   $rel=$(if($SynologyVirtualRoot){'Shared\reconnect.txt'}else{'reconnect.txt'})
+   [IO.File]::WriteAllText((Join-Path $server $rel),'transport-reconnected')
+   Stop-Process -Id $proxy.Id -Force
+   [void]$proxy.WaitForExit(5000)
+   $failed=$false
+   try{[void][IO.File]::ReadAllText((Join-Path $drive $rel))}catch{$failed=$true}
+   if(!$failed -or $managed.HasExited -or (CommandToManager 'PING') -notmatch '^READY '){throw 'Transport outage not isolated'}
+   $proxy=Start-Process 'python.exe' -PassThru -NoNewWindow -ArgumentList @('-u',(Join-Path $PSScriptRoot 'strict_webdav_conditional_proxy.py')) -RedirectStandardOutput (Join-Path $logs 'proxy-restart.out') -RedirectStandardError (Join-Path $logs 'proxy-restart.err')
+   $recovered=$false
+   for($n=0;$n -lt 30;$n++){
+     try{if([IO.File]::ReadAllText((Join-Path $drive $rel)) -eq 'transport-reconnected'){$recovered=$true;break}}catch{}
+     Start-Sleep -Milliseconds 350
+   }
+   if(!$recovered -or $managed.HasExited){throw 'Same mounted drive did not recover'}
+   Write-Output 'DIRECT_MANAGED_TRANSPORT_DROP_SAME_MOUNT_RECOVERY_PASS'
+ }
+
  $relative=$(if($SynologyVirtualRoot){'Shared\live-open.txt'}else{'live-open.txt'})
  $target=Join-Path $drive $relative
  $file=[IO.FileStream]::new($target,[IO.FileMode]::CreateNew,

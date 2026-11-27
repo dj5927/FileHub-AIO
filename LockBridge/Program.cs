@@ -397,6 +397,11 @@ internal static class Program
                 }
                 return 0;
             }
+            if (args.Length == 1 && args[0] == "--mount-control-pipe-test")
+            {
+                MountControlPipe.RegressionTest();
+                return 0;
+            }
             if (args.Length == 3 && args[0] == "--atomic-lab-test")
             {
                 if (!Uri.TryCreate(args[1], UriKind.Absolute, out var labUri) ||
@@ -850,33 +855,24 @@ internal static class Program
             // Graceful stop requests are sent by the manager. Never unmount
             // while file handles/leases are active.
             string pipeName = "NASMountBridge_" + id.ToString("N");
-            while (true)
+            MountControlPipe.Run(pipeName, command =>
             {
-                using var pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut,
-                    1, PipeTransmissionMode.Byte, PipeOptions.None);
-                pipe.WaitForConnection();
-                using var reader = new StreamReader(pipe, leaveOpen: true);
-                using var writer = new StreamWriter(pipe, leaveOpen: true) { AutoFlush = true };
-                string command = reader.ReadLine() ?? "";
                 if (command == "PING")
                 {
-                    writer.WriteLine("READY " + leases.ActiveHandles);
-                    continue;
+                    return ("READY " + leases.ActiveHandles, false);
                 }
                 if (command == "QUIT")
                 {
                     if (!leases.CanShutdown)
                     {
-                        writer.WriteLine(leases.ActiveHandles > 0
+                        return (leases.ActiveHandles > 0
                             ? "OPEN_HANDLES " + leases.ActiveHandles
-                            : "UPLOAD_OR_LOCK_RELEASE_PENDING");
-                        continue;
+                            : "UPLOAD_OR_LOCK_RELEASE_PENDING", false);
                     }
-                    writer.WriteLine("OK");
-                    break;
+                    return ("OK", true);
                 }
-                writer.WriteLine("UNKNOWN");
-            }
+                return ("UNKNOWN", false);
+            });
             AppStore.Log("LOCKBRIDGE SAFE UNMOUNT " + id);
             return 0;
         }
