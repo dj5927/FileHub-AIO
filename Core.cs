@@ -108,9 +108,42 @@ internal static class AppStore
             current = Path.Combine(current, part);
             var directory = new DirectoryInfo(current);
             if (!directory.Exists) directory.Create(acl);
-            if ((directory.Attributes & FileAttributes.ReparsePoint) != 0)
+            // The ACL-aware Create extension does not necessarily refresh the
+            // DirectoryInfo.Exists/Attributes cache after the initial miss.
+            // Read the newly created entry directly, including on a fresh PC.
+            if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
                 throw new IOException("Private application data cannot follow reparse points");
-            directory.SetAccessControl(acl);
+            new DirectoryInfo(current).SetAccessControl(acl);
+        }
+    }
+
+    internal static void PrivateDirectoryPolicyTest()
+    {
+        string parent = Path.Combine(DirectoryPath, "acl-policy-" + Guid.NewGuid().ToString("N"));
+        string child = Path.Combine(parent, "fresh");
+        try
+        {
+            if (Directory.Exists(parent)) throw new IOException("Unexpected ACL test path collision");
+            EnsurePrivateAppDirectory(child);
+            EnsurePrivateAppDirectory(child);
+            using var identity = WindowsIdentity.GetCurrent();
+            var user = identity.User ?? throw new IOException("ACL test missing user identity");
+            var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+            foreach (string path in new[] { parent, child })
+            {
+                var acl = new DirectoryInfo(path).GetAccessControl(AccessControlSections.Access);
+                var rules = acl.GetAccessRules(true, true, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>().ToArray();
+                if (!acl.AreAccessRulesProtected || rules.Any(r => !r.IdentityReference.Equals(user) && !r.IdentityReference.Equals(system)) ||
+                    !rules.Any(r => r.IdentityReference.Equals(user) && r.AccessControlType == AccessControlType.Allow && (r.FileSystemRights & FileSystemRights.FullControl) == FileSystemRights.FullControl))
+                    throw new IOException("Private directory ACL policy mismatch");
+            }
+            Console.WriteLine("PRIVATE_DIRECTORY_FRESH_CREATION_AND_ACL_PASS");
+        }
+        finally
+        {
+            // Delete only empty, uniquely named synthetic test directories.
+            if (Directory.Exists(child)) Directory.Delete(child);
+            if (Directory.Exists(parent)) Directory.Delete(parent);
         }
     }
 

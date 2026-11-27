@@ -502,6 +502,7 @@ internal static class Program
             try
             {
                 GoogleDirectBrowserAuth.PolicyTest();
+                AppStore.PrivateDirectoryPolicyTest();
                 GoogleDirectApiPolicyTest.RunAsync().GetAwaiter().GetResult();
                 GoogleDirectCredentialStore.SelfTest();
                 GoogleDirectRecovery.PolicyTest();

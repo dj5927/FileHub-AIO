@@ -18,7 +18,7 @@ jobs:
           python3 -m pip install --disable-pip-version-check --break-system-packages zstandard==0.25.0
           curl --fail --location --retry 3 --connect-timeout 15 --max-time 180 'https://github.com/dj5927/FileHub-AIO/releases/download/pc-v1.3.149/FileHub-AIO-PC-1.3.149-win-x64.zip' -o base.zip
           cp .github/release-handoffs/pc-v150-handoff.zip handoff.zip
-          echo 'beb51c10c227dcf5b17c23c18543ea270bf6d34e40b4ffd4097f3686ccdedb99  handoff.zip' | sha256sum -c -
+          echo '074f2b0b79a55f861ac7d05c62578d69b218b501d3b84dbee47a6f645494cbaf  handoff.zip' | sha256sum -c -
           python3 .github/release-handoffs/pc150_delta.py reconstruct base.zip handoff.zip FileHub-AIO-PC-1.3.150-win-x64.zip
           sha256sum FileHub-AIO-PC-1.3.150-win-x64.zip > SHA256SUMS
       - uses: actions/upload-artifact@v4
@@ -49,8 +49,8 @@ jobs:
           Expand-Archive -LiteralPath $zip -DestinationPath candidate -Force
           $exe = (Resolve-Path candidate/FileHubAIO.exe).Path
           if ((Get-Item $exe).VersionInfo.FileVersion -ne '1.3.150.0') { throw 'Incorrect version' }
-          if ((Get-FileHash $exe).Hash -ne '55F528C6B1C6DAFC9A3C884C5514D9B43740956397AEE7541F888356F4626015') { throw 'Application binary mismatch' }
-          if ((Get-FileHash candidate/tools/NASMountLockBridge.dll).Hash -ne '09A45A7E9E6DBB6FF57B4516D0661354BC17F904887BE619335F2DC7B117F6D4') { throw 'Bridge binary mismatch' }
+          if ((Get-FileHash $exe).Hash -ne 'A652B2565E49DC76F1265B08E2DD2227FD7D3060B1C6F5815C00193E68E341AF') { throw 'Application binary mismatch' }
+          if ((Get-FileHash candidate/tools/NASMountLockBridge.dll).Hash -ne '9629C4515CE7BFBB9C1E085A3CE65395F5D41EED8D4A8338FB17B97FC9DD0B8E') { throw 'Bridge binary mismatch' }
           $tests = [ordered]@{
             'google-direct-api-policy-test' = 'GOOGLE_BROWSER_COMPLETE_HEADERS_AND_RELOAD_WITHOUT_REEXCHANGE_PASS'
             'google-login-ui-policy-test' = 'GOOGLE_CHROME_ONLY_LOGIN_NO_USER_OAUTH_FIELDS_PASS'
@@ -71,7 +71,7 @@ jobs:
             Write-Output $result
             Get-Content -LiteralPath $err
             if ($p.ExitCode -ne 0 -or !$result.Contains($tests[$name])) { throw ('Regression failed: '+$name) }
-            if ($name -eq 'google-direct-api-policy-test' -and (!$result.Contains('GOOGLE_GRANULAR_SCOPE_DENIAL_AND_ACCOUNT_CHECK_PASS') -or !$result.Contains('GOOGLE_DIRECT_LOCAL_FORGET_PASS'))) { throw 'Google permission or cleanup regression' }
+            if ($name -eq 'google-direct-api-policy-test' -and (!$result.Contains('GOOGLE_GRANULAR_SCOPE_DENIAL_AND_ACCOUNT_CHECK_PASS') -or !$result.Contains('GOOGLE_DIRECT_LOCAL_FORGET_PASS') -or !$result.Contains('PRIVATE_DIRECTORY_FRESH_CREATION_AND_ACL_PASS'))) { throw 'Google permission, cleanup or fresh-directory ACL regression' }
           }
           $updater = Get-Content (Join-Path $env:RUNNER_TEMP 'pc-updater-policy-test.out') -Raw
           foreach ($marker in @('CACHE_30_MINUTE_CAP_AND_DIRTY_RECOVERY_PRESERVED_PASS','LOG_30_MINUTE_RETENTION_LEGACY_CLEANUP_PASS','PC_UPDATE_WINDOWS_DEVICE_AND_ALIAS_NAMES_REJECTED_PASS','LOCAL_LOG_CREDENTIAL_REDACTION_AND_CONTROL_CHAR_PASS')) {
