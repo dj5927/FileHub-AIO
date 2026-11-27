@@ -33,6 +33,8 @@ internal sealed partial class MainForm : Form
     // and preventing an accidental connect+disconnect race.
     readonly ConcurrentDictionary<Guid, SemaphoreSlim> profileGates = new();
     readonly HashSet<Guid> preparingConnections = [];
+    readonly HashSet<Guid> declinedWebDavTrust = [];
+    readonly SemaphoreSlim webDavTrustPrompt = new(1, 1);
     readonly HashSet<Guid> deletingProfiles = [];
     SemaphoreSlim GateFor(NasProfile profile) =>
         profileGates.GetOrAdd(profile.Id, _ => new SemaphoreSlim(1, 1));
@@ -481,8 +483,9 @@ internal sealed partial class MainForm : Form
         try
         {
         if (!explicitRequest && manualReconnectPause.IsSuspended(p.Id)) return;
-        if (explicitRequest && p.Protocol == "WebDAV" && !p.WebDavUseHttp)
+        if (p.Protocol == "WebDAV" && !p.WebDavUseHttp)
         {
+            if (!explicitRequest && declinedWebDavTrust.Contains(p.Id)) return;
             try
             {
                 var observed = await WebDavTlsPolicy.ObserveAliasAsync(p);
@@ -491,24 +494,41 @@ internal sealed partial class MainForm : Form
                     string pin = WebDavTlsPolicy.AliasPin(p, observed);
                     if (!string.Equals(p.WebDavAliasPin, pin, StringComparison.OrdinalIgnoreCase))
                     {
-                        if (MessageBox.Show(this,
-                            "WebDAV 서버 인증서 이름이 입력한 주소와 일치하지 않습니다.\n\n" +
-                            "NAS 관리자에게 별도로 확인한 SHA-256 인증서 지문과 아래 값이 일치할 때만 승인하세요.\n" + observed +
-                            "\n\n이 주소의 이 인증서만 허용합니다.",
-                            "WebDAV 인증서 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
-                            MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
-                        string previous = p.WebDavAliasPin;
-                        p.WebDavAliasPin = pin;
-                        try { AppStore.Save(cfg); }
-                        catch { p.WebDavAliasPin = previous; throw; }
+                        await webDavTrustPrompt.WaitAsync();
+                        try
+                        {
+                            if (shutdownRequested || deletingProfiles.Contains(p.Id) ||
+                                (!explicitRequest && manualReconnectPause.IsSuspended(p.Id))) return;
+                            if (MessageBox.Show(this,
+                                "입력한 DDNS/서버 주소: " + p.Host + ":" + (p.Port > 0 ? p.Port : 5006) +
+                                "\n인증서 발급기관 검증은 통과했지만 인증서 이름이 주소와 다릅니다.\n\n" +
+                                "NAS 관리자에게 확인한 SHA-256 지문과 아래 값이 일치하면 승인하세요.\n" + observed +
+                                "\n\n승인하면 이 주소와 인증서를 저장하고 연결합니다. 다음 자동 연결에는 다시 묻지 않습니다.",
+                                "WebDAV DDNS 최초 연결 · 인증서 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+                                MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                            {
+                                declinedWebDavTrust.Add(p.Id);
+                                status.Text = p.DisplayName + " · 인증서 승인 필요 (연결 클릭)";
+                                return;
+                            }
+                            string previous = p.WebDavAliasPin;
+                            p.WebDavAliasPin = pin;
+                            try { AppStore.Save(cfg); }
+                            catch { p.WebDavAliasPin = previous; throw; }
+                            declinedWebDavTrust.Remove(p.Id);
+                        }
+                        finally { webDavTrustPrompt.Release(); }
                     }
                 }
             }
             catch (Exception ex)
             {
                 AppStore.Log("WEBDAV_TLS_PREFLIGHT_FAILED " + ex.GetType().Name);
-                MessageBox.Show(this, "WebDAV 서버의 TLS 인증서를 확인하지 못했습니다. 서버 주소와 인증서를 확인하세요.",
-                    "WebDAV 보안 연결 실패", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                retry[p.Id] = DateTime.UtcNow.AddSeconds(30);
+                status.Text = p.DisplayName + " · TLS 연결 확인 실패";
+                if (explicitRequest)
+                    MessageBox.Show(this, "입력한 서버와 포트에 TLS 연결할 수 없거나 인증서 발급기관/유효기간 검증에 실패했습니다.\n주소 종류(DDNS 업체)는 제한하지 않습니다.",
+                        "WebDAV 보안 연결 실패", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
         }

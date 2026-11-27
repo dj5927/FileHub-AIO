@@ -1,4 +1,6 @@
 using System.Net.Security;
+using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
@@ -13,30 +15,40 @@ namespace NASMount;
 /// </summary>
 internal static class WebDavTlsPolicy
 {
+    private static Uri Endpoint(NasProfile profile) =>
+        new UriBuilder("https", profile.Host, profile.Port > 0 ? profile.Port : 5006).Uri;
+
     internal static string AliasPin(NasProfile profile, string sha256) =>
-        profile.Host.ToLowerInvariant() + ":" + (profile.Port > 0 ? profile.Port : 5006) + ":" + sha256;
+        Endpoint(profile).IdnHost.ToLowerInvariant() + ":" + Endpoint(profile).Port + ":" + sha256;
 
     // Probe without sending credentials, and do not accept the mismatched TLS
     // connection during observation. The user must independently verify it.
     internal static async Task<string?> ObserveAliasAsync(NasProfile profile)
     {
         if (profile.Protocol != "WebDAV" || profile.WebDavUseHttp) return null;
-        var uri = new UriBuilder("https", profile.Host, profile.Port > 0 ? profile.Port : 5006).Uri;
+        var uri = Endpoint(profile);
         string? observed = null;
-        using var handler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false };
-        handler.ServerCertificateCustomValidationCallback = (_, cert, _, errors) =>
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var socket = new TcpClient();
+        await socket.ConnectAsync(uri.IdnHost, uri.Port, timeout.Token);
+        using var tls = new SslStream(socket.GetStream(), false, (_, cert, _, errors) =>
         {
             if (cert is not null && errors == SslPolicyErrors.RemoteCertificateNameMismatch)
                 observed = cert.GetCertHashString(HashAlgorithmName.SHA256);
             return cert is not null && errors == SslPolicyErrors.None;
-        };
-        using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
+        });
         try
         {
-            using var req = new HttpRequestMessage(HttpMethod.Options, uri);
-            using var response = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+            // TLS only: some NAS servers reject unauthenticated OPTIONS or
+            // close the HTTP connection after TLS. Neither implies bad TLS.
+            // No credentials, HTTP methods or request paths are sent here.
+            await tls.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+            {
+                TargetHost = uri.IdnHost
+            }, timeout.Token);
         }
-        catch (HttpRequestException) when (observed is not null) { }
+        catch (AuthenticationException) when (observed is not null) { }
+        catch (IOException) when (observed is not null) { }
         return observed;
     }
 
@@ -75,11 +87,11 @@ internal static class WebDavTlsPolicy
             profile.Protocol != "WebDAV" || profile.WebDavUseHttp ||
             actualRequest?.Scheme != Uri.UriSchemeHttps)
             return false;
-        int intendedPort = profile.Port > 0 ? profile.Port : 5006;
+        Uri intended = Endpoint(profile);
         return sha256 is not null && sha256.Length == 64 &&
             string.Equals(profile.WebDavAliasPin, AliasPin(profile, sha256), StringComparison.OrdinalIgnoreCase) &&
-            actualRequest.Port == intendedPort &&
-            string.Equals(actualRequest.Host, profile.Host,
+            actualRequest.Port == intended.Port &&
+            string.Equals(actualRequest.IdnHost, intended.IdnHost,
                 StringComparison.OrdinalIgnoreCase);
     }
 
@@ -114,6 +126,24 @@ internal static class WebDavTlsPolicy
         profile.WebDavUseHttp = true;
         if (Accept(SslPolicyErrors.RemoteCertificateNameMismatch))
             throw new IOException("HTTP profile unexpectedly skipped TLS");
+        // Provider names and port numbers have no influence on trust.
+        foreach (string host in new[] { "nas.iptime.org", "nas.synology.me",
+            "nas.myqnapcloud.com", "nas.duckdns.org", "nas.ddns.net",
+            "nas.dyndns.org", "nas.asuscomm.com", "nas.example.test", "192.0.2.10" })
+        {
+            var custom = new NasProfile { Protocol = "WebDAV", Host = host, Port = 8443 };
+            var endpoint = Endpoint(custom);
+            if (!AcceptCertificate(custom, endpoint, true, SslPolicyErrors.None) ||
+                AcceptCertificate(custom, endpoint, true, SslPolicyErrors.RemoteCertificateNameMismatch, fingerprint))
+                throw new IOException("DDNS provider-independent initial trust failed");
+            custom.WebDavAliasPin = AliasPin(custom, fingerprint);
+            if (!AcceptCertificate(custom, endpoint, true, SslPolicyErrors.RemoteCertificateNameMismatch, fingerprint) ||
+                AcceptCertificate(custom, new UriBuilder(endpoint) { Port = 8444 }.Uri, true,
+                    SslPolicyErrors.RemoteCertificateNameMismatch, fingerprint) ||
+                AcceptCertificate(custom, endpoint, true, SslPolicyErrors.RemoteCertificateChainErrors, fingerprint))
+                throw new IOException("DDNS provider-independent pin failed");
+        }
+        Console.WriteLine("WEBDAV_ALL_DDNS_CUSTOM_PORT_PIN_POLICY_PASS");
         Console.WriteLine("WEBDAV_DDNS_ALIAS_TLS_POLICY_PASS");
     }
 }
